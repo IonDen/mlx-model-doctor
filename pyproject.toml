@@ -1,0 +1,120 @@
+[build-system]
+requires = ["hatchling>=1.27", "hatch-vcs>=0.4"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mlx-model-doctor"
+description = "Validate MLX model repositories before loading them."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Denis Ineshin", email = "denis.ineshin@gmail.com" }]
+keywords = ["mlx", "apple-silicon", "huggingface", "model-validation", "mlx-lm"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS :: MacOS X",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Typing :: Typed",
+]
+dynamic = ["version"]
+dependencies = [
+  "huggingface-hub>=0.24",
+  "safetensors>=0.4",
+]
+
+[project.optional-dependencies]
+mlx-lm = ["mlx-lm>=0.31.3"]
+
+[project.urls]
+Homepage = "https://github.com/IonDen/mlx-model-doctor"
+Source = "https://github.com/IonDen/mlx-model-doctor"
+Issues = "https://github.com/IonDen/mlx-model-doctor/issues"
+
+[project.scripts]
+mlx-model-doctor = "mlx_model_doctor.cli:main"
+
+[dependency-groups]
+test = ["pytest>=8.3", "pytest-cov>=5.0", "hypothesis>=6.130"]
+typecheck = ["mypy>=1.13"]
+lint = ["ruff>=0.7"]
+docs = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.27"]
+dev = [
+  { include-group = "test" },
+  { include-group = "typecheck" },
+  { include-group = "lint" },
+  { include-group = "docs" },
+]
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/mlx_model_doctor/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mlx_model_doctor"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [".codegraph/", ".hypothesis/", "docs/superpowers/", "tests/live/*.cache"]
+
+[tool.ruff]
+src = ["src"]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+  "E", "W", "F", "I", "B", "UP", "RUF", "SIM", "C4", "PIE", "PT", "RET",
+  "PTH", "TID", "TCH", "N", "D", "ANN", "PYI", "PERF", "FURB",
+]
+ignore = ["ANN401", "E501"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D", "ANN", "S101"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unreachable = true
+enable_error_code = ["redundant-expr", "truthy-bool", "ignore-without-code"]
+files = ["src/mlx_model_doctor"]
+
+[[tool.mypy.overrides]]
+module = ["mlx_lm.*", "mlx.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra --strict-markers --strict-config"
+testpaths = ["tests"]
+xfail_strict = true
+markers = [
+  "network: test requires network access",
+  "smoke: optional runtime smoke test",
+  "gpu: test requires a Metal-backed MLX runtime",
+  "benchmark: performance regression test",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["mlx_model_doctor"]
+parallel = true
+omit = ["src/mlx_model_doctor/_version.py"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "@overload", "raise NotImplementedError"]
+show_missing = true
+fail_under = 85
