@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
-from mlx_model_doctor.errors import TargetError
+from mlx_model_doctor.errors import TargetError, raise_for_hf_target_error
 from mlx_model_doctor.targets import ModelTarget
 
 _UNSET = object()
@@ -42,7 +42,11 @@ class CheckContext:
                 return None
             raw_config = self.target.read_text("config.json")
             parsed_config: object = json.loads(raw_config)
-        except (FileNotFoundError, TargetError, json.JSONDecodeError, UnicodeError):
+        except TargetError as exc:
+            raise_for_hf_target_error(exc)
+            self._config_json = None
+            return None
+        except (FileNotFoundError, json.JSONDecodeError, UnicodeError):
             self._config_json = None
             return None
 

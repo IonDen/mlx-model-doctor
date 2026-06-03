@@ -15,6 +15,12 @@ class TargetError(ModelDoctorError, ValueError):
         self.source = source
 
 
+def raise_for_hf_target_error(exc: TargetError) -> None:
+    """Propagate Hugging Face target errors as tool-level failures."""
+    if exc.source == "hf":
+        raise exc
+
+
 class DependencyError(ModelDoctorError, ImportError):
     """An explicitly requested optional dependency is missing."""
 

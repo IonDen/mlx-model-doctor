@@ -9,7 +9,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Literal, cast
 
-from mlx_model_doctor.api import check_local_model
+from mlx_model_doctor.api import check_hf_model, check_local_model
 from mlx_model_doctor.context import CheckOptions
 from mlx_model_doctor.environment import detect_venv, package_status
 from mlx_model_doctor.errors import ModelDoctorError
@@ -70,26 +70,42 @@ def _cmd_plugins(_args: argparse.Namespace) -> int:
 
 
 def _cmd_check_local(args: argparse.Namespace) -> int:
+    options = _options_from_args(args)
+    report = check_local_model(args.path, options=options, plugin_name=args.plugin)
+    rendered = _render_report(report, args.format)
+    _emit_report(rendered, args.output)
+    return exit_code_for(report, fail_on=cast("Literal['error', 'warn', 'never']", args.fail_on))
+
+
+def _cmd_check_hf(args: argparse.Namespace) -> int:
+    options = _options_from_args(args)
+    report = check_hf_model(args.repo_id, options=options, plugin_name=args.plugin)
+    rendered = _render_report(report, args.format)
+    _emit_report(rendered, args.output)
+    return exit_code_for(report, fail_on=cast("Literal['error', 'warn', 'never']", args.fail_on))
+
+
+def _options_from_args(args: argparse.Namespace) -> CheckOptions:
     max_memory_bytes = _parse_optional_memory(args.max_memory)
     context_length = _positive_context_length(args.context_length)
-    options = CheckOptions(
+    return CheckOptions(
         max_memory_bytes=max_memory_bytes,
         context_length=context_length,
         include_weights=args.include_weights,
         smoke=False,
         verbosity=_verbosity(args),
     )
-    report = check_local_model(args.path, options=options, plugin_name=args.plugin)
-    rendered = _render_report(report, args.format)
-    if args.output is None:
+
+
+def _emit_report(rendered: str, output: str | None) -> None:
+    if output is None:
         print(rendered)
-    else:
-        output_path = Path(args.output)
-        try:
-            output_path.write_text(rendered, encoding="utf-8")
-        except OSError as exc:
-            raise ModelDoctorError(f"Could not write report to {output_path}: {exc}") from exc
-    return exit_code_for(report, fail_on=cast("Literal['error', 'warn', 'never']", args.fail_on))
+        return
+    output_path = Path(output)
+    try:
+        output_path.write_text(rendered, encoding="utf-8")
+    except OSError as exc:
+        raise ModelDoctorError(f"Could not write report to {output_path}: {exc}") from exc
 
 
 def _parse_optional_memory(value: str | None) -> int | None:
@@ -150,36 +166,45 @@ def build_parser() -> argparse.ArgumentParser:
     check_subparsers = check.add_subparsers(dest="check_command", required=True)
     local = check_subparsers.add_parser("local", help="check a local model repository")
     local.add_argument("path", help="path to a local model repository")
-    local.add_argument("--plugin", default="text", help="plugin name to run")
-    local.add_argument(
+    _add_check_options(local)
+    local.set_defaults(func=_cmd_check_local)
+
+    hf = check_subparsers.add_parser("hf", help="check a Hugging Face model repository")
+    hf.add_argument("repo_id", help="Hugging Face model repository ID")
+    _add_check_options(hf)
+    hf.set_defaults(func=_cmd_check_hf)
+    return parser
+
+
+def _add_check_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--plugin", default="text", help="plugin name to run")
+    parser.add_argument(
         "--format",
         choices=("text", "json", "markdown"),
         default="text",
         help="report output format",
     )
-    local.add_argument("--output", help="write rendered report to a file")
-    local.add_argument("--max-memory", help="memory budget such as 32gb or 512mb")
-    local.add_argument(
+    parser.add_argument("--output", help="write rendered report to a file")
+    parser.add_argument("--max-memory", help="memory budget such as 32gb or 512mb")
+    parser.add_argument(
         "--context-length",
         type=int,
         default=4096,
         help="context length used by memory estimates",
     )
-    local.add_argument(
+    parser.add_argument(
         "--fail-on",
         choices=("error", "warn", "never"),
         default="error",
         help="exit-code strictness",
     )
-    local.add_argument(
+    parser.add_argument(
         "--include-weights",
         action="store_true",
         help="include weight content checks when available",
     )
-    local.add_argument("--quiet", action="store_true", help="reduce diagnostic verbosity")
-    local.add_argument("--verbose", action="store_true", help="include verbose diagnostics")
-    local.set_defaults(func=_cmd_check_local)
-    return parser
+    parser.add_argument("--quiet", action="store_true", help="reduce diagnostic verbosity")
+    parser.add_argument("--verbose", action="store_true", help="include verbose diagnostics")
 
 
 def main(argv: list[str] | None = None) -> int:

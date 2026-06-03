@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from mlx_model_doctor.context import CheckContext
-from mlx_model_doctor.errors import TargetError
+from mlx_model_doctor.errors import TargetError, raise_for_hf_target_error
 from mlx_model_doctor.report import CheckResult
 
 
@@ -25,6 +25,7 @@ class ConfigJsonCheck:
         except FileNotFoundError:
             return self._missing_result()
         except TargetError as exc:
+            raise_for_hf_target_error(exc)
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,

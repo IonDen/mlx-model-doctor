@@ -4,8 +4,12 @@ from pathlib import Path
 
 import pytest
 
+import mlx_model_doctor.targets as targets
 from mlx_model_doctor import cli
+from mlx_model_doctor.context import CheckOptions
 from mlx_model_doctor.errors import TargetError
+from mlx_model_doctor.report import CheckResult, DoctorReport
+from mlx_model_doctor.targets import HfSiblingProtocol
 
 
 def test_version_command_prints_executable(capsys) -> None:
@@ -67,6 +71,19 @@ def test_check_without_leaf_subcommand_is_argparse_error(capsys) -> None:
 
     assert exc_info.value.code == 2
     assert "required" in capsys.readouterr().err
+
+
+def test_parser_accepts_check_hf_and_no_bare_hf_command(capsys) -> None:
+    args = cli.build_parser().parse_args(["check", "hf", "org/model"])
+
+    assert args.check_command == "hf"
+    assert args.repo_id == "org/model"
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["hf", "org/model"])
+
+    assert exc_info.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
 
 
 def test_check_local_returns_zero_for_valid_fixture(tmp_path: Path, capsys) -> None:
@@ -200,6 +217,137 @@ def test_check_local_non_positive_context_length_returns_tool_error(
     assert "context-length must be positive" in captured.err
 
 
+def test_check_hf_json_format_dispatches_options_and_plugin(monkeypatch, capsys) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_check_hf_model(
+        repo_id: str,
+        *,
+        options: CheckOptions | None = None,
+        plugin_name: str = "text",
+    ) -> DoctorReport:
+        captured["repo_id"] = repo_id
+        captured["options"] = options
+        captured["plugin_name"] = plugin_name
+        return hf_report(
+            results=(
+                CheckResult(
+                    check_id="text/memory.estimate",
+                    title="Memory estimate",
+                    status="warn",
+                    severity="low",
+                    message="memory warning",
+                ),
+            )
+        )
+
+    monkeypatch.setattr(cli, "check_hf_model", fake_check_hf_model)
+
+    code = cli.main(
+        [
+            "check",
+            "hf",
+            "org/model",
+            "--format",
+            "json",
+            "--plugin",
+            "text",
+            "--max-memory",
+            "1b",
+            "--context-length",
+            "8",
+            "--include-weights",
+            "--quiet",
+        ]
+    )
+    data = json.loads(capsys.readouterr().out)
+    options = captured["options"]
+
+    assert code == 0
+    assert data["source"] == "hf"
+    assert data["target"] == "org/model"
+    assert captured["repo_id"] == "org/model"
+    assert captured["plugin_name"] == "text"
+    assert isinstance(options, CheckOptions)
+    assert options.max_memory_bytes == 1
+    assert options.context_length == 8
+    assert options.include_weights is True
+    assert options.verbosity == "quiet"
+
+
+def test_check_hf_markdown_output_and_fail_on_warn(monkeypatch, tmp_path: Path, capsys) -> None:
+    def fake_check_hf_model(
+        repo_id: str,
+        *,
+        options: CheckOptions | None = None,
+        plugin_name: str = "text",
+    ) -> DoctorReport:
+        return hf_report(
+            results=(
+                CheckResult(
+                    check_id="text/tokenizer.files",
+                    title="Tokenizer files",
+                    status="warn",
+                    severity="medium",
+                    message="tokenizer warning",
+                ),
+            )
+        )
+
+    monkeypatch.setattr(cli, "check_hf_model", fake_check_hf_model)
+    output_path = tmp_path / "hf-report.md"
+
+    code = cli.main(
+        [
+            "check",
+            "hf",
+            "org/model",
+            "--format",
+            "markdown",
+            "--output",
+            str(output_path),
+            "--fail-on",
+            "warn",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert code == 1
+    assert captured.out == ""
+    assert output_path.read_text(encoding="utf-8").startswith("# MLX Model Doctor")
+
+
+def test_check_hf_target_error_returns_exit_two_without_traceback(monkeypatch, capsys) -> None:
+    def fake_check_hf_model(
+        repo_id: str,
+        *,
+        options: CheckOptions | None = None,
+        plugin_name: str = "text",
+    ) -> DoctorReport:
+        raise TargetError("private Hugging Face repo", target=repo_id, source="hf")
+
+    monkeypatch.setattr(cli, "check_hf_model", fake_check_hf_model)
+
+    code = cli.main(["check", "hf", "org/private"])
+    captured = capsys.readouterr()
+
+    assert code == 2
+    assert "private Hugging Face repo" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_check_hf_download_error_returns_exit_two_without_traceback(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(targets, "DefaultHfHub", DownloadErrorHub)
+
+    code = cli.main(["check", "hf", "org/model"])
+    captured = capsys.readouterr()
+
+    assert code == 2
+    assert "Could not read Hugging Face model file config.json" in captured.err
+    assert "network unavailable" in captured.err
+    assert "Traceback" not in captured.err
+
+
 def write_local_model(root: Path) -> Path:
     model = root / "model"
     model.mkdir()
@@ -219,3 +367,33 @@ def write_local_model(root: Path) -> Path:
     (model / "config.json").write_text(json.dumps(config), encoding="utf-8")
     (model / "tokenizer.json").write_text("{}", encoding="utf-8")
     return model
+
+
+def hf_report(*, results: tuple[CheckResult, ...]) -> DoctorReport:
+    return DoctorReport(target="org/model", source="hf", plugin="text", results=results)
+
+
+class FakeHfSibling:
+    def __init__(self, *, rfilename: str, size: int | None) -> None:
+        self.rfilename = rfilename
+        self.size = size
+
+
+class FakeHfModelInfo:
+    def __init__(self, *, siblings: tuple[HfSiblingProtocol, ...]) -> None:
+        self.siblings = siblings
+
+
+class DownloadErrorHub:
+    def model_info(self, repo_id: str, *, files_metadata: bool) -> FakeHfModelInfo:
+        return FakeHfModelInfo(
+            siblings=(
+                FakeHfSibling(rfilename="config.json", size=2),
+                FakeHfSibling(rfilename="tokenizer.json", size=2),
+            )
+        )
+
+    def download_bytes(self, repo_id: str, filename: str) -> bytes:
+        if filename == "config.json":
+            raise RuntimeError("network unavailable")
+        return b"{}"

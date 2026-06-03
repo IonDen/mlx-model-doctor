@@ -52,6 +52,18 @@ def test_context_returns_none_for_invalid_utf8_or_target_errors() -> None:
     assert CheckContext(target=TargetErrorTarget(files={}), options=options()).config_json() is None
 
 
+def test_context_propagates_hf_target_errors() -> None:
+    ctx = CheckContext(
+        target=TargetErrorTarget(files={}, _source="hf"),
+        options=options(),
+    )
+
+    with pytest.raises(TargetError, match="read failed") as exc_info:
+        ctx.config_json()
+
+    assert exc_info.value.source == "hf"
+
+
 def test_context_does_not_hide_unexpected_target_bugs() -> None:
     ctx = CheckContext(target=KeyErrorTarget(files={"config.json": b"{}"}), options=options())
 

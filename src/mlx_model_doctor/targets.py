@@ -3,7 +3,7 @@
 from collections.abc import Sequence
 from pathlib import Path
 from stat import S_ISREG
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 
 from mlx_model_doctor.errors import TargetError
 
@@ -33,6 +33,49 @@ class ModelTarget(Protocol):
 
     def read_text(self, path: str, *, max_bytes: int | None = None) -> str:
         """Read UTF-8 text from a target-relative path."""
+
+
+class HfSiblingProtocol(Protocol):
+    """Hugging Face repository sibling metadata."""
+
+    rfilename: str
+    size: int | None
+
+
+class HfModelInfoProtocol(Protocol):
+    """Hugging Face model info metadata used by the target."""
+
+    siblings: Sequence[HfSiblingProtocol]
+
+
+class HfHubProtocol(Protocol):
+    """Small Hugging Face Hub adapter boundary."""
+
+    def model_info(self, repo_id: str, *, files_metadata: bool) -> HfModelInfoProtocol:
+        """Return model repository metadata."""
+
+    def download_bytes(self, repo_id: str, filename: str) -> bytes:
+        """Download a single repository file as bytes."""
+
+
+class DefaultHfHub:
+    """Hugging Face Hub adapter using targeted metadata and file reads."""
+
+    def model_info(self, repo_id: str, *, files_metadata: bool) -> HfModelInfoProtocol:
+        """Return model repository metadata from huggingface_hub."""
+        from huggingface_hub import model_info
+
+        return cast(
+            "HfModelInfoProtocol",
+            model_info(repo_id=repo_id, files_metadata=files_metadata),
+        )
+
+    def download_bytes(self, repo_id: str, filename: str) -> bytes:
+        """Download a single file from huggingface_hub and read it as bytes."""
+        from huggingface_hub import hf_hub_download
+
+        downloaded_path = hf_hub_download(repo_id=repo_id, filename=filename)
+        return Path(downloaded_path).read_bytes()
 
 
 class LocalTarget:
@@ -131,3 +174,75 @@ class LocalTarget:
 
     def _target_error(self, message: str, path: str | Path) -> TargetError:
         return TargetError(message, target=str(path), source=self.source)
+
+
+class HfTarget:
+    """Readable target backed by Hugging Face Hub model metadata."""
+
+    __slots__ = ("_hub", "_metadata", "_repo_id")
+
+    def __init__(self, repo_id: str, *, hub: HfHubProtocol | None = None) -> None:
+        """Initialize a Hugging Face target from model repository metadata."""
+        self._repo_id = repo_id
+        self._hub = hub if hub is not None else DefaultHfHub()
+        try:
+            info = self._hub.model_info(repo_id, files_metadata=True)
+        except TargetError:
+            raise
+        except Exception as exc:
+            raise TargetError(
+                f"Could not inspect Hugging Face model {repo_id}: {exc}",
+                target=repo_id,
+                source="hf",
+            ) from exc
+        self._metadata = {
+            sibling.rfilename: sibling.size
+            for sibling in info.siblings
+        }
+
+    @property
+    def name(self) -> str:
+        """Return the Hugging Face repository ID."""
+        return self._repo_id
+
+    @property
+    def source(self) -> Literal["hf"]:
+        """Return the Hugging Face source kind."""
+        return "hf"
+
+    def exists(self, path: str) -> bool:
+        """Return whether a file exists in repository metadata."""
+        return path in self._metadata
+
+    def list_files(self) -> Sequence[str]:
+        """Return sorted repository file paths from metadata."""
+        return tuple(sorted(self._metadata))
+
+    def size(self, path: str) -> int | None:
+        """Return file size from repository metadata."""
+        return self._metadata.get(path)
+
+    def read_bytes(self, path: str, *, max_bytes: int | None = None) -> bytes:
+        """Download and read bytes for one metadata-listed repository file."""
+        if path not in self._metadata:
+            raise self._target_error(
+                f"Hugging Face target path is not listed in repo metadata: {path}",
+                path,
+            )
+        try:
+            data = self._hub.download_bytes(self._repo_id, path)
+        except TargetError:
+            raise
+        except Exception as exc:
+            raise self._target_error(
+                f"Could not read Hugging Face model file {path}: {exc}",
+                path,
+            ) from exc
+        return data if max_bytes is None else data[:max_bytes]
+
+    def read_text(self, path: str, *, max_bytes: int | None = None) -> str:
+        """Read UTF-8 text from one repository file."""
+        return self.read_bytes(path, max_bytes=max_bytes).decode("utf-8")
+
+    def _target_error(self, message: str, path: str) -> TargetError:
+        return TargetError(message, target=f"{self._repo_id}:{path}", source=self.source)

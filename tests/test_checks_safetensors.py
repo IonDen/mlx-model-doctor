@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from mlx_model_doctor.checks.safetensors import SafetensorsIndexCheck
 from mlx_model_doctor.context import CheckContext
 from mlx_model_doctor.errors import TargetError
@@ -88,6 +90,18 @@ def test_safetensors_index_check_warns_when_listed_index_disappears() -> None:
     assert result.severity == "medium"
     assert "model.safetensors.index.json" in result.message
     assert result.details["index_path"] == "model.safetensors.index.json"
+
+
+def test_safetensors_index_check_propagates_hf_index_read_error() -> None:
+    target = HfIndexReadErrorTarget(
+        files={"model.safetensors.index.json": b'{"weight_map":{}}'},
+        _source="hf",
+    )
+
+    with pytest.raises(TargetError, match="index download failed") as exc_info:
+        SafetensorsIndexCheck().run(CheckContext(target=target, options=check_options()))
+
+    assert exc_info.value.source == "hf"
 
 
 def test_safetensors_index_check_discovers_non_default_index_name() -> None:
@@ -180,6 +194,13 @@ class DisappearingIndexTarget(FakeTarget):
     def read_text(self, path: str, *, max_bytes: int | None = None) -> str:
         if path == "model.safetensors.index.json":
             raise FileNotFoundError(path)
+        return super().read_text(path, max_bytes=max_bytes)
+
+
+class HfIndexReadErrorTarget(FakeTarget):
+    def read_text(self, path: str, *, max_bytes: int | None = None) -> str:
+        if path == "model.safetensors.index.json":
+            raise TargetError("index download failed", target=path, source=self.source)
         return super().read_text(path, max_bytes=max_bytes)
 
 

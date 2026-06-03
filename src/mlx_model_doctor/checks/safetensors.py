@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from mlx_model_doctor.context import CheckContext
-from mlx_model_doctor.errors import TargetError
+from mlx_model_doctor.errors import TargetError, raise_for_hf_target_error
 from mlx_model_doctor.report import CheckResult
 
 SAFETENSORS_INDEX_SUFFIX = ".safetensors.index.json"
@@ -29,6 +29,7 @@ class SafetensorsIndexCheck:
                 )
             )
         except TargetError as exc:
+            raise_for_hf_target_error(exc)
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,
@@ -91,7 +92,18 @@ def _validate_index(
             remediation=f"Ensure {index_path} still exists and is readable UTF-8 JSON.",
             details={"index_path": index_path},
         )
-    except (TargetError, UnicodeError) as exc:
+    except TargetError as exc:
+        raise_for_hf_target_error(exc)
+        return CheckResult(
+            check_id=check_id,
+            title=title,
+            status="warn",
+            severity="medium",
+            message=f"Could not read safetensors index {index_path}: {exc}",
+            remediation=f"Ensure {index_path} is readable UTF-8 JSON.",
+            details={"index_path": index_path},
+        )
+    except UnicodeError as exc:
         return CheckResult(
             check_id=check_id,
             title=title,
@@ -156,7 +168,12 @@ def _validate_index(
     for shard in shard_names:
         try:
             shard_exists = ctx.target.exists(shard)
-        except (TargetError, UnicodeError):
+        except TargetError as exc:
+            raise_for_hf_target_error(exc)
+            missing_shards.append(shard)
+            invalid_shards.append(shard)
+            continue
+        except UnicodeError:
             missing_shards.append(shard)
             invalid_shards.append(shard)
             continue

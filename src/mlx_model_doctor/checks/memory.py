@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from mlx_model_doctor.context import CheckContext
-from mlx_model_doctor.errors import TargetError
+from mlx_model_doctor.errors import TargetError, raise_for_hf_target_error
 from mlx_model_doctor.report import CheckResult
 
 EstimateSource = Literal["config", "file_sizes", "unknown"]
@@ -164,7 +164,8 @@ def _kv_hidden_size(config: dict[str, object], hidden_size: int) -> int:
 def _file_size_estimate(ctx: CheckContext) -> MemoryEstimate | None:
     try:
         files = ctx.target.list_files()
-    except TargetError:
+    except TargetError as exc:
+        raise_for_hf_target_error(exc)
         return None
     measured_bytes, unavailable_weight_paths = _measured_weight_bytes(ctx, files)
     if measured_bytes <= 0:
@@ -191,7 +192,8 @@ def _measured_weight_bytes(ctx: CheckContext, files: Sequence[str]) -> tuple[int
             continue
         try:
             size = ctx.target.size(path)
-        except TargetError:
+        except TargetError as exc:
+            raise_for_hf_target_error(exc)
             unavailable_paths.append(path)
             continue
         if size is None:

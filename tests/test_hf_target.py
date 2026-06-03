@@ -1,0 +1,129 @@
+from dataclasses import dataclass
+
+import pytest
+
+from mlx_model_doctor.errors import TargetError
+from mlx_model_doctor.targets import HfTarget
+
+
+@dataclass(frozen=True, slots=True)
+class FakeSibling:
+    rfilename: str
+    size: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class FakeModelInfo:
+    siblings: tuple[FakeSibling, ...]
+
+
+class FakeHub:
+    def __init__(
+        self,
+        *,
+        files: dict[str, bytes] | None = None,
+        sizes: dict[str, int | None] | None = None,
+        model_info_error: Exception | None = None,
+        download_error: Exception | None = None,
+    ) -> None:
+        self.files = files if files is not None else {}
+        self.sizes = sizes if sizes is not None else {
+            path: len(data) for path, data in self.files.items()
+        }
+        self.model_info_error = model_info_error
+        self.download_error = download_error
+        self.model_info_calls: list[tuple[str, bool]] = []
+        self.download_calls: list[tuple[str, str]] = []
+
+    def model_info(self, repo_id: str, *, files_metadata: bool) -> FakeModelInfo:
+        self.model_info_calls.append((repo_id, files_metadata))
+        if self.model_info_error is not None:
+            raise self.model_info_error
+        return FakeModelInfo(
+            siblings=tuple(
+                FakeSibling(rfilename=path, size=size)
+                for path, size in self.sizes.items()
+            )
+        )
+
+    def download_bytes(self, repo_id: str, filename: str) -> bytes:
+        self.download_calls.append((repo_id, filename))
+        if self.download_error is not None:
+            raise self.download_error
+        return self.files[filename]
+
+
+def test_hf_target_loads_model_info_once_with_file_metadata() -> None:
+    hub = FakeHub(files={"config.json": b"{}"})
+
+    target = HfTarget("org/model", hub=hub)
+
+    assert target.name == "org/model"
+    assert target.source == "hf"
+    assert hub.model_info_calls == [("org/model", True)]
+
+
+def test_hf_target_metadata_methods_do_not_download_and_list_files_sorted() -> None:
+    hub = FakeHub(
+        files={
+            "z-tokenizer.json": b"{}",
+            "config.json": b"{}",
+            "weights.safetensors": b"1234",
+        },
+        sizes={"z-tokenizer.json": 2, "config.json": 2, "weights.safetensors": None},
+    )
+    target = HfTarget("org/model", hub=hub)
+
+    assert target.exists("config.json")
+    assert not target.exists("missing.json")
+    assert target.size("weights.safetensors") is None
+    assert target.size("missing.json") is None
+    assert target.list_files() == ("config.json", "weights.safetensors", "z-tokenizer.json")
+    assert hub.download_calls == []
+
+
+def test_hf_target_read_text_downloads_only_requested_file() -> None:
+    hub = FakeHub(files={"config.json": b'{"model_type":"llama"}', "tokenizer.json": b"{}"})
+    target = HfTarget("org/model", hub=hub)
+
+    assert target.read_text("config.json") == '{"model_type":"llama"}'
+
+    assert hub.download_calls == [("org/model", "config.json")]
+
+
+def test_hf_target_read_bytes_max_bytes_slices_bytes_not_characters() -> None:
+    hub = FakeHub(files={"tokenizer.json": "éabc".encode()})
+    target = HfTarget("org/model", hub=hub)
+
+    assert target.read_bytes("tokenizer.json", max_bytes=3) == b"\xc3\xa9a"
+
+
+def test_hf_target_model_info_external_error_wraps_to_target_error() -> None:
+    hub = FakeHub(model_info_error=RuntimeError("private repo"))
+
+    with pytest.raises(TargetError, match="Could not inspect Hugging Face model") as exc_info:
+        HfTarget("org/private", hub=hub)
+
+    assert exc_info.value.source == "hf"
+    assert exc_info.value.target == "org/private"
+
+
+def test_hf_target_download_external_error_wraps_to_target_error() -> None:
+    hub = FakeHub(files={"config.json": b"{}"}, download_error=RuntimeError("rate limited"))
+    target = HfTarget("org/model", hub=hub)
+
+    with pytest.raises(TargetError, match="Could not read Hugging Face model file") as exc_info:
+        target.read_bytes("config.json")
+
+    assert exc_info.value.source == "hf"
+    assert exc_info.value.target == "org/model:config.json"
+
+
+def test_hf_target_unknown_path_fails_cleanly_without_download() -> None:
+    hub = FakeHub(files={"config.json": b"{}"})
+    target = HfTarget("org/model", hub=hub)
+
+    with pytest.raises(TargetError, match="not listed"):
+        target.read_text("missing.json")
+
+    assert hub.download_calls == []
