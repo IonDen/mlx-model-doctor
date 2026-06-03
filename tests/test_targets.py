@@ -1,0 +1,110 @@
+from pathlib import Path
+
+import pytest
+
+from mlx_model_doctor.errors import TargetError
+from mlx_model_doctor.targets import LocalTarget
+
+
+def test_local_target_lists_sizes_and_reads_files(tmp_path: Path) -> None:
+    model = tmp_path / "model"
+    nested = model / "nested"
+    nested.mkdir(parents=True)
+    (model / "config.json").write_text('{"model_type":"llama"}', encoding="utf-8")
+    (model / "weights.safetensors").write_bytes(b"weights")
+    (nested / "tokenizer.json").write_text('{"tokens":[]}', encoding="utf-8")
+
+    target = LocalTarget(model)
+
+    assert target.name == str(model)
+    assert target.source == "local"
+    assert target.list_files() == (
+        "config.json",
+        "nested/tokenizer.json",
+        "weights.safetensors",
+    )
+    assert target.exists("config.json")
+    assert not target.exists("missing.json")
+    assert target.size("weights.safetensors") == len(b"weights")
+    assert target.size("missing.json") is None
+    assert target.read_bytes("weights.safetensors") == b"weights"
+    assert target.read_text("nested/tokenizer.json") == '{"tokens":[]}'
+
+
+def test_local_target_honors_max_bytes_for_byte_and_text_reads(tmp_path: Path) -> None:
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "tokens.txt").write_text("abcdef", encoding="utf-8")
+
+    target = LocalTarget(model)
+
+    assert target.read_bytes("tokens.txt", max_bytes=3) == b"abc"
+    assert target.read_text("tokens.txt", max_bytes=4) == "abcd"
+
+
+def test_local_target_rejects_paths_outside_root(tmp_path: Path) -> None:
+    model = tmp_path / "model"
+    model.mkdir()
+    target = LocalTarget(model)
+
+    with pytest.raises(TargetError, match="outside"):
+        target.read_text("../secret.txt")
+
+
+def test_local_target_list_files_excludes_symlinks_outside_root(tmp_path: Path) -> None:
+    model = tmp_path / "model"
+    model.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+    (model / "outside_link").symlink_to(outside)
+
+    target = LocalTarget(model)
+
+    assert target.list_files() == ()
+    with pytest.raises(TargetError, match="outside"):
+        target.read_text("outside_link")
+
+
+def test_local_target_allows_symlinks_resolving_inside_root(tmp_path: Path) -> None:
+    model = tmp_path / "model"
+    model.mkdir()
+    target_file = model / "config.json"
+    target_file.write_text("{}", encoding="utf-8")
+    (model / "config-link.json").symlink_to(target_file)
+
+    target = LocalTarget(model)
+
+    assert target.list_files() == ("config-link.json", "config.json")
+    assert target.read_text("config-link.json") == "{}"
+
+
+def test_local_target_rejects_outside_root_exists_checks(tmp_path: Path) -> None:
+    model = tmp_path / "model"
+    model.mkdir()
+    target = LocalTarget(model)
+
+    with pytest.raises(TargetError, match="outside"):
+        target.exists("../secret.txt")
+
+
+def test_local_target_rejects_outside_root_size_checks(tmp_path: Path) -> None:
+    model = tmp_path / "model"
+    model.mkdir()
+    target = LocalTarget(model)
+
+    with pytest.raises(TargetError, match="outside"):
+        target.size("../secret.txt")
+
+
+def test_local_target_requires_existing_directory(tmp_path: Path) -> None:
+    with pytest.raises(TargetError, match="directory"):
+        LocalTarget(tmp_path / "missing")
+
+
+def test_local_target_wraps_malformed_paths(tmp_path: Path) -> None:
+    model = tmp_path / "model"
+    model.mkdir()
+    target = LocalTarget(model)
+
+    with pytest.raises(TargetError, match="Invalid local target path"):
+        target.exists("bad\0path")
