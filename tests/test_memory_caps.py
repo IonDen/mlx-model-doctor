@@ -1,4 +1,4 @@
-import conftest
+from tests import conftest
 
 GIB = 1024**3
 

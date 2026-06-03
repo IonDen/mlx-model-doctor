@@ -101,6 +101,7 @@ minversion = "8.0"
 addopts = "-ra --strict-markers --strict-config"
 testpaths = ["tests"]
 xfail_strict = true
+filterwarnings = ["error"]
 markers = [
   "network: test requires network access",
   "smoke: optional runtime smoke test",
