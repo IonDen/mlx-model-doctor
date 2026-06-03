@@ -2,6 +2,26 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+from mlx_model_doctor.context import CheckContext, CheckOptions
+
+
+def check_options() -> CheckOptions:
+    return CheckOptions(
+        max_memory_bytes=None,
+        context_length=4096,
+        include_weights=False,
+        smoke=False,
+        verbosity="normal",
+    )
+
+
+def context_for_files(
+    files: dict[str, bytes],
+    *,
+    source: Literal["local", "hf"] = "local",
+) -> CheckContext:
+    return CheckContext(target=FakeTarget(files=files, _source=source), options=check_options())
+
 
 @dataclass(slots=True)
 class FakeTarget:
