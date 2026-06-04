@@ -61,6 +61,8 @@ def _cmd_man(_args: argparse.Namespace) -> int:
                 "  mlx-model-doctor version",
                 "  mlx-model-doctor plugins",
                 "  mlx-model-doctor check local ./model",
+                "  mlx-model-doctor check hf mlx-community/Llama-3.2-3B-Instruct-4bit",
+                "  mlx-model-doctor sample hf --author mlx-community --limit 5",
                 "",
                 "Exit codes:",
                 "  0: checks passed or informational command completed",

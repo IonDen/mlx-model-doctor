@@ -8,6 +8,7 @@ description = "Validate MLX model repositories before loading them."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Denis Ineshin", email = "denis.ineshin@gmail.com" }]
 keywords = ["mlx", "apple-silicon", "huggingface", "model-validation", "mlx-lm"]
 classifiers = [
@@ -36,6 +37,8 @@ mlx-lm = ["mlx-lm>=0.31.3"]
 Homepage = "https://github.com/IonDen/mlx-model-doctor"
 Source = "https://github.com/IonDen/mlx-model-doctor"
 Issues = "https://github.com/IonDen/mlx-model-doctor/issues"
+Changelog = "https://github.com/IonDen/mlx-model-doctor/blob/master/CHANGELOG.md"
+Roadmap = "https://github.com/IonDen/mlx-model-doctor/blob/master/ROADMAP.md"
 
 [project.scripts]
 mlx-model-doctor = "mlx_model_doctor.cli:main"
@@ -62,7 +65,7 @@ version-file = "src/mlx_model_doctor/_version.py"
 packages = ["src/mlx_model_doctor"]
 
 [tool.hatch.build.targets.sdist]
-exclude = [".codegraph/", ".hypothesis/", "docs/superpowers/", "tests/live/*.cache"]
+exclude = [".codegraph/", ".hypothesis/", ".coverage", "docs/superpowers/", "tests/live/*.cache"]
 
 [tool.ruff]
 src = ["src"]
