@@ -1,18 +1,14 @@
 """Hugging Face live sampling helpers."""
 
-from __future__ import annotations
-
 import json
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Protocol, cast
+from typing import Literal, Protocol, cast
 
 from mlx_model_doctor.api import check_hf_model
 from mlx_model_doctor.context import CheckOptions
 from mlx_model_doctor.errors import ModelDoctorError
 from mlx_model_doctor.report import DoctorReport, render_json
-
-if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Sequence
 
 ItemStatus = Literal["checked", "tool-error"]
 _MODEL_METADATA_EXPAND: list[str] = ["tags", "library_name"]
