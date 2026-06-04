@@ -16,6 +16,13 @@ from mlx_model_doctor.errors import ModelDoctorError
 from mlx_model_doctor.exit_codes import exit_code_for, exit_code_for_error
 from mlx_model_doctor.memory import parse_memory
 from mlx_model_doctor.report import DoctorReport, render_json, render_markdown, render_text
+from mlx_model_doctor.sampling import (
+    SampleBatchReport,
+    render_sample_batch_json,
+    render_sample_batch_markdown,
+    render_sample_batch_text,
+    run_hf_sample,
+)
 
 Command = Callable[[argparse.Namespace], int]
 Verbosity = Literal["quiet", "normal", "verbose"]
@@ -85,6 +92,17 @@ def _cmd_check_hf(args: argparse.Namespace) -> int:
     return exit_code_for(report, fail_on=cast("Literal['error', 'warn', 'never']", args.fail_on))
 
 
+def _cmd_sample_hf(args: argparse.Namespace) -> int:
+    batch = run_hf_sample(
+        author=args.author,
+        task=args.task,
+        limit=args.limit,
+        plugin_name=args.plugin,
+    )
+    print(_render_sample_batch(batch, args.format))
+    return 0
+
+
 def _options_from_args(args: argparse.Namespace) -> CheckOptions:
     max_memory_bytes = _parse_optional_memory(args.max_memory)
     context_length = _positive_context_length(args.context_length)
@@ -139,6 +157,14 @@ def _render_report(report: DoctorReport, output_format: str) -> str:
     return render_text(report)
 
 
+def _render_sample_batch(batch: SampleBatchReport, output_format: str) -> str:
+    if output_format == "json":
+        return render_sample_batch_json(batch)
+    if output_format == "markdown":
+        return render_sample_batch_markdown(batch)
+    return render_sample_batch_text(batch)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
     parser = argparse.ArgumentParser(
@@ -161,6 +187,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     plugins = subparsers.add_parser("plugins", help="list registered plugins")
     plugins.set_defaults(func=_cmd_plugins)
+
+    sample = subparsers.add_parser("sample", help="sample live model repositories")
+    sample_subparsers = sample.add_subparsers(dest="sample_command", required=True)
+    sample_hf = sample_subparsers.add_parser("hf", help="sample Hugging Face model repositories")
+    sample_hf.add_argument("--author", default="mlx-community", help="Hugging Face author filter")
+    sample_hf.add_argument(
+        "--task",
+        default=None,
+        help="Hugging Face pipeline task filter, mapped to pipeline_tag",
+    )
+    sample_hf.add_argument("--limit", type=int, default=10, help="number of candidates to check")
+    sample_hf.add_argument("--plugin", default="text", help="plugin name to run")
+    sample_hf.add_argument(
+        "--format",
+        choices=("text", "json", "markdown"),
+        default="text",
+        help="batch report output format",
+    )
+    sample_hf.set_defaults(func=_cmd_sample_hf)
 
     check = subparsers.add_parser("check", help="run model checks")
     check_subparsers = check.add_subparsers(dest="check_command", required=True)

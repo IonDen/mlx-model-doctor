@@ -1,0 +1,4 @@
+[[models]]
+repo = "mlx-model-doctor/nonexistent-model-for-live-test"
+expected = "fail"
+notes = "Intentionally nonexistent repo used to document expected-failure records; strict tests assert tool behavior, not this repo's live status."

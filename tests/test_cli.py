@@ -285,6 +285,92 @@ def test_parser_accepts_smoke_for_check_local_and_hf() -> None:
     assert cli._options_from_args(hf_args).smoke is True
 
 
+def test_sample_hf_command_parser_has_author_limit_and_format() -> None:
+    args = cli.build_parser().parse_args(
+        ["sample", "hf", "--author", "mlx-community", "--limit", "5", "--format", "markdown"]
+    )
+
+    assert args.command == "sample"
+    assert args.sample_command == "hf"
+    assert args.author == "mlx-community"
+    assert args.limit == 5
+    assert args.format == "markdown"
+
+
+def test_sample_without_leaf_subcommand_is_argparse_error(capsys) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["sample"])
+
+    assert exc_info.value.code == 2
+    assert "required" in capsys.readouterr().err
+
+
+def test_sample_hf_dispatches_fake_batch_runner_without_network(monkeypatch, capsys) -> None:
+    from mlx_model_doctor.sampling import SampleBatchReport, SampledModelResult
+
+    captured: dict[str, object] = {}
+
+    def fake_run_hf_sample(
+        *,
+        author: str = "mlx-community",
+        task: str | None = None,
+        limit: int = 10,
+        plugin_name: str = "text",
+    ) -> SampleBatchReport:
+        captured.update(
+            {
+                "author": author,
+                "task": task,
+                "limit": limit,
+                "plugin_name": plugin_name,
+            }
+        )
+        return SampleBatchReport(
+            author=author,
+            task=task,
+            limit=limit,
+            plugin=plugin_name,
+            items=(
+                SampledModelResult(
+                    repo_id="mlx-community/model",
+                    signal="author:mlx-community",
+                    status="checked",
+                    report=hf_report(results=()),
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(cli, "run_hf_sample", fake_run_hf_sample)
+
+    code = cli.main(
+        [
+            "sample",
+            "hf",
+            "--author",
+            "mlx-community",
+            "--task",
+            "text-generation",
+            "--limit",
+            "5",
+            "--format",
+            "json",
+            "--plugin",
+            "text",
+        ]
+    )
+    data = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert captured == {
+        "author": "mlx-community",
+        "task": "text-generation",
+        "limit": 5,
+        "plugin_name": "text",
+    }
+    assert data["items"][0]["repo_id"] == "mlx-community/model"
+    assert data["items"][0]["signal"] == "author:mlx-community"
+
+
 def test_check_hf_markdown_output_and_fail_on_warn(monkeypatch, tmp_path: Path, capsys) -> None:
     def fake_check_hf_model(
         repo_id: str,
