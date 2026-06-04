@@ -1,5 +1,11 @@
 .codegraph/
 .hypothesis/
+
+# Workspace working-state must never live inside the repo (mac/ convention) —
+# specs/plans/reviews and the granular backlog live at the workspace root.
+docs/superpowers/
+docs/backlog/
+
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
