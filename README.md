@@ -100,6 +100,13 @@ Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Validating a model repo
 - [Apple ML Explore](https://github.com/ml-explore/mlx) for MLX and [`mlx-lm`](https://github.com/ml-explore/mlx-lm).
 - [Hugging Face](https://github.com/huggingface/huggingface_hub) for the Hub client and `safetensors`.
 
+## Sister projects
+
+Other MLX libraries for Apple Silicon:
+
+- [mlx-taef](https://github.com/IonDen/mlx-taef) — tiny autoencoders for fast diffusion-latent previews and low-memory decode (FLUX / SD).
+- [mlx-teacache](https://github.com/IonDen/mlx-teacache) — TeaCache residual caching to skip redundant FLUX denoising steps.
+
 ---
 
 By Denis Ineshin · [ineshin.space](https://ineshin.space)
