@@ -41,6 +41,40 @@ def test_smoke_runner_refuses_over_budget_estimate_without_calling_backend() -> 
     assert results[0].details["smoke_budget_bytes"] == 10 * GIB
 
 
+def test_smoke_runner_refuses_marked_over_budget_estimate_with_custom_check_id() -> None:
+    check = RecordingCheck()
+    ctx = CheckContext(
+        target=FakeTarget(files={}),
+        options=replace(check_options(), smoke=True, max_memory_bytes=10 * GIB),
+    )
+    memory_result = memory_estimate_result(
+        check_id="custom/runtime.memory_floor",
+        lower_bound_bytes=11 * GIB,
+    )
+
+    results = run_smoke_checks(ctx, (check,), (memory_result,))
+
+    assert check.calls == 0
+    assert len(results) == 1
+    assert results[0].check_id == "custom/smoke.memory_budget"
+    assert results[0].status == "fail"
+    assert results[0].details["memory_lower_bound_bytes"] == 11 * GIB
+
+
+def test_smoke_runner_ignores_unmarked_lower_bound_details() -> None:
+    check = RecordingCheck()
+    ctx = CheckContext(
+        target=FakeTarget(files={}),
+        options=replace(check_options(), smoke=True, max_memory_bytes=10 * GIB),
+    )
+    memory_result = memory_estimate_result(lower_bound_bytes=11 * GIB, marked=False)
+
+    results = run_smoke_checks(ctx, (check,), (memory_result,))
+
+    assert check.calls == 1
+    assert [result.check_id for result in results] == ["text/recording"]
+
+
 def test_smoke_runner_calls_check_when_estimate_is_under_budget() -> None:
     check = RecordingCheck()
     ctx = CheckContext(
@@ -101,18 +135,26 @@ def test_smoke_runner_propagates_model_doctor_errors() -> None:
         run_smoke_checks(ctx, (TargetErrorCheck(),), ())
 
 
-def memory_estimate_result(*, lower_bound_bytes: int) -> CheckResult:
+def memory_estimate_result(
+    *,
+    lower_bound_bytes: int,
+    check_id: str = "text/memory.estimate",
+    marked: bool = True,
+) -> CheckResult:
+    details: dict[str, object] = {
+        "estimate_source": "config",
+        "context_length": 4096,
+        "lower_bound_bytes": lower_bound_bytes,
+    }
+    if marked:
+        details["memory_lower_bound_kind"] = "model_runtime"
     return CheckResult(
-        check_id="text/memory.estimate",
+        check_id=check_id,
         title="Memory estimate",
         status="warn",
         severity="low",
         message="estimate",
-        details={
-            "estimate_source": "config",
-            "context_length": 4096,
-            "lower_bound_bytes": lower_bound_bytes,
-        },
+        details=details,
     )
 
 

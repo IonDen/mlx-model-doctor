@@ -10,7 +10,7 @@ from typing import Protocol, cast
 
 from mlx_model_doctor.context import CheckContext
 from mlx_model_doctor.environment import format_install_hint, has_uv_context
-from mlx_model_doctor.errors import DependencyError, ModelDoctorError
+from mlx_model_doctor.errors import DependencyError, MemorySafetyError, ModelDoctorError
 from mlx_model_doctor.memory import install_mlx_memory_caps
 from mlx_model_doctor.report import CheckResult
 
@@ -78,6 +78,10 @@ class MlxLmBackend:
         """Load the target with mlx-lm and generate a tiny completion."""
         mx, mlx_lm = _import_optional_dependencies()
         caps_gib = install_mlx_memory_caps(mx)
+        if caps_gib[0] <= 0 or caps_gib[1] <= 0:
+            raise MemorySafetyError(
+                "MLX memory caps could not be installed; refusing to load model uncapped."
+            )
         mx.reset_peak_memory()
         model, tokenizer = mlx_lm.load(ctx.target.name)
         text = mlx_lm.generate(

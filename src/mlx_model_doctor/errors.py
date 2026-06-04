@@ -5,6 +5,10 @@ class ModelDoctorError(Exception):
     """Base error for tool-level model doctor failures."""
 
 
+class MemorySafetyError(ModelDoctorError):
+    """A requested runtime operation could not be bounded by memory caps."""
+
+
 class TargetError(ModelDoctorError, ValueError):
     """A target could not be resolved or read."""
 

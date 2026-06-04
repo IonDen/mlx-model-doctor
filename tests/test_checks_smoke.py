@@ -5,7 +5,7 @@ import pytest
 import mlx_model_doctor.checks.smoke as smoke_module
 from mlx_model_doctor.checks.smoke import MlxLmBackend, MlxLmSmokeCheck, SmokeGeneration
 from mlx_model_doctor.context import CheckContext
-from mlx_model_doctor.errors import DependencyError
+from mlx_model_doctor.errors import DependencyError, MemorySafetyError, ModelDoctorError
 from mlx_model_doctor.memory import GIB
 from tests.fakes import FakeTarget, check_options
 
@@ -83,6 +83,33 @@ def test_mlx_lm_backend_lazily_imports_installs_caps_and_records_peak(monkeypatc
     assert mlx_lm.generate_kwargs == {"prompt": "Hello", "max_tokens": 8, "verbose": False}
 
 
+@pytest.mark.parametrize(
+    "failure",
+    ["device_info", "set_wired_limit", "set_memory_limit"],
+)
+def test_mlx_lm_backend_refuses_to_load_when_memory_caps_are_unavailable(
+    monkeypatch,
+    failure: str,
+) -> None:
+    mx = FakeMx(cap_failure=failure)
+    mlx_lm = LoadForbiddenMlxLm()
+
+    def import_module(name: str) -> object:
+        if name == "mlx.core":
+            return mx
+        if name == "mlx_lm":
+            return mlx_lm
+        raise ImportError(name)
+
+    monkeypatch.setattr(smoke_module.importlib, "import_module", import_module)
+
+    with pytest.raises(MemorySafetyError, match="memory caps") as exc_info:
+        MlxLmBackend().generate(CheckContext(target=FakeTarget(files={}), options=check_options()))
+
+    assert isinstance(exc_info.value, ModelDoctorError)
+    assert mlx_lm.load_calls == 0
+
+
 def test_mlx_lm_backend_missing_dependencies_raise_install_hint(monkeypatch) -> None:
     def import_module(_name: str) -> object:
         raise ImportError("missing")
@@ -108,18 +135,25 @@ class FakeSmokeBackend:
 
 
 class FakeMx:
-    def __init__(self) -> None:
+    def __init__(self, *, cap_failure: str | None = None) -> None:
+        self._cap_failure = cap_failure
         self.wired_limit: int | None = None
         self.memory_limit: int | None = None
         self.peak_was_reset = False
 
     def device_info(self) -> dict[str, object]:
+        if self._cap_failure == "device_info":
+            raise RuntimeError("device unavailable")
         return {"max_recommended_working_set_size": 25 * GIB}
 
     def set_wired_limit(self, value: int) -> None:
+        if self._cap_failure == "set_wired_limit":
+            raise RuntimeError("wired limit unavailable")
         self.wired_limit = value
 
     def set_memory_limit(self, value: int) -> None:
+        if self._cap_failure == "set_memory_limit":
+            raise RuntimeError("memory limit unavailable")
         self.memory_limit = value
 
     def reset_peak_memory(self) -> None:
@@ -156,3 +190,22 @@ class FakeMlxLm:
             "verbose": verbose,
         }
         return "generated"
+
+
+class LoadForbiddenMlxLm:
+    load_calls = 0
+
+    def load(self, path_or_repo: str) -> tuple[object, object]:
+        self.load_calls += 1
+        raise AssertionError("mlx_lm.load() must not be called without MLX memory caps")
+
+    def generate(
+        self,
+        model: object,
+        tokenizer: object,
+        *,
+        prompt: str,
+        max_tokens: int,
+        verbose: bool,
+    ) -> str:
+        raise AssertionError("mlx_lm.generate() must not be called without MLX memory caps")

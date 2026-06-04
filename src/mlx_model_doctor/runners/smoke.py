@@ -1,17 +1,18 @@
 """Generic smoke check runner with a memory pre-flight gate."""
 
 import importlib
-import traceback
 from collections.abc import Mapping, Sequence
 from typing import cast
 
 from mlx_model_doctor.checks.base import ModelCheck
+from mlx_model_doctor.checks.memory import (
+    MEMORY_LOWER_BOUND_KIND_DETAIL,
+    MODEL_RUNTIME_MEMORY_LOWER_BOUND_KIND,
+)
 from mlx_model_doctor.context import CheckContext
-from mlx_model_doctor.errors import ModelDoctorError
 from mlx_model_doctor.memory import smoke_budget_from_device_info
 from mlx_model_doctor.report import CheckResult
-
-_MEMORY_ESTIMATE_SUFFIX = "/memory.estimate"
+from mlx_model_doctor.runners.core import run_checks
 
 
 def run_smoke_checks(
@@ -27,27 +28,7 @@ def run_smoke_checks(
     if gate_result is not None:
         return [gate_result]
 
-    results: list[CheckResult] = []
-    for check in checks:
-        try:
-            results.append(check.run(ctx))
-        except ModelDoctorError:
-            raise
-        except Exception as exc:
-            details: dict[str, object] = {}
-            if ctx.options.verbosity == "verbose":
-                details["traceback"] = traceback.format_exc()
-            results.append(
-                CheckResult(
-                    check_id=check.check_id,
-                    title=check.title,
-                    status="fail",
-                    severity="high",
-                    message=f"check crashed: {exc}",
-                    details=details,
-                )
-            )
-    return results
+    return run_checks(ctx, checks)
 
 
 def _memory_gate_result(
@@ -91,7 +72,10 @@ class _SmokeBudget:
 
 def _memory_lower_bound(results: Sequence[CheckResult]) -> _MemoryEstimate | None:
     for result in results:
-        if not result.check_id.endswith(_MEMORY_ESTIMATE_SUFFIX):
+        if (
+            result.details.get(MEMORY_LOWER_BOUND_KIND_DETAIL)
+            != MODEL_RUNTIME_MEMORY_LOWER_BOUND_KIND
+        ):
             continue
         lower_bound = result.details.get("lower_bound_bytes")
         if type(lower_bound) is not int or lower_bound <= 0:

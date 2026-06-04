@@ -9,6 +9,8 @@ from mlx_model_doctor.errors import TargetError, raise_for_hf_target_error
 from mlx_model_doctor.report import CheckResult
 
 EstimateSource = Literal["config", "file_sizes", "unknown"]
+MEMORY_LOWER_BOUND_KIND_DETAIL = "memory_lower_bound_kind"
+MODEL_RUNTIME_MEMORY_LOWER_BOUND_KIND = "model_runtime"
 _WEIGHT_SUFFIXES = (".safetensors", ".bin", ".pt", ".pth")
 _FP16_BYTES = 2
 
@@ -95,6 +97,8 @@ def _estimate_details(
         "weight_lower_bound_bytes": estimate.weight_lower_bound_bytes,
         "kv_cache_lower_bound_bytes": estimate.kv_cache_lower_bound_bytes,
     }
+    if estimate.lower_bound_bytes > 0:
+        details[MEMORY_LOWER_BOUND_KIND_DETAIL] = MODEL_RUNTIME_MEMORY_LOWER_BOUND_KIND
     if estimate.estimate_source == "file_sizes":
         details["measured_bytes"] = estimate.lower_bound_bytes
     if estimate.unavailable_weight_paths:

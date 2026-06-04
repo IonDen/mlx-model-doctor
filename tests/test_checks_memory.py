@@ -45,6 +45,7 @@ def test_memory_estimate_check_uses_config_and_includes_kv_cache_term() -> None:
     assert result.severity == "low"
     assert result.details["estimate_source"] == "config"
     assert result.details["context_length"] == 16
+    assert result.details["memory_lower_bound_kind"] == "model_runtime"
     assert result.details["kv_cache_lower_bound_bytes"] == expected_kv
     assert result.details["lower_bound_bytes"] == expected_weights + expected_kv
 
