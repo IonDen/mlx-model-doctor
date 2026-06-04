@@ -15,6 +15,8 @@ mlx-model-doctor check local ./my-model
 mlx-model-doctor check hf mlx-community/Llama-3.2-3B-Instruct-4bit
 ```
 
+See [EXAMPLES.md](EXAMPLES.md) for real, dated transcripts of every command.
+
 ## Install
 
 ```bash
