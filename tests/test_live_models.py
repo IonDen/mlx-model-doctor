@@ -282,7 +282,9 @@ def sample_report(
     *,
     status: Literal["pass", "warn", "fail", "skip"],
 ) -> DoctorReport:
-    severity: Literal["info", "low", "medium", "high"] = "info" if status in {"pass", "skip"} else "high"
+    severity: Literal["info", "low", "medium", "high"] = (
+        "info" if status in {"pass", "skip"} else "high"
+    )
     return DoctorReport(
         target=target,
         source="hf",

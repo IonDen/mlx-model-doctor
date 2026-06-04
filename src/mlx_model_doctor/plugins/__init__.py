@@ -8,9 +8,7 @@ from mlx_model_doctor.plugins.base import DoctorPlugin
 from mlx_model_doctor.plugins.text import TextModelPlugin
 
 TEXT_PLUGIN: DoctorPlugin = TextModelPlugin()
-BUILTIN_PLUGINS: Mapping[str, DoctorPlugin] = MappingProxyType(
-    {"text": TEXT_PLUGIN}
-)
+BUILTIN_PLUGINS: Mapping[str, DoctorPlugin] = MappingProxyType({"text": TEXT_PLUGIN})
 
 
 def get_plugin(name: str) -> DoctorPlugin:

@@ -27,9 +27,9 @@ class FakeHub:
         download_error: Exception | None = None,
     ) -> None:
         self.files = files if files is not None else {}
-        self.sizes = sizes if sizes is not None else {
-            path: len(data) for path, data in self.files.items()
-        }
+        self.sizes = (
+            sizes if sizes is not None else {path: len(data) for path, data in self.files.items()}
+        )
         self.model_info_error = model_info_error
         self.download_error = download_error
         self.model_info_calls: list[tuple[str, bool]] = []
@@ -41,8 +41,7 @@ class FakeHub:
             raise self.model_info_error
         return FakeModelInfo(
             siblings=tuple(
-                FakeSibling(rfilename=path, size=size)
-                for path, size in self.sizes.items()
+                FakeSibling(rfilename=path, size=size) for path, size in self.sizes.items()
             )
         )
 

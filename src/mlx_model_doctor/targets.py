@@ -195,10 +195,7 @@ class HfTarget:
                 target=repo_id,
                 source="hf",
             ) from exc
-        self._metadata = {
-            sibling.rfilename: sibling.size
-            for sibling in info.siblings
-        }
+        self._metadata = {sibling.rfilename: sibling.size for sibling in info.siblings}
 
     @property
     def name(self) -> str:

@@ -31,11 +31,7 @@ def test_memory_estimate_check_uses_config_and_includes_kv_cache_term() -> None:
     expected_weights = int(
         (
             vocab_size * hidden_size
-            + layers
-            * (
-                4 * hidden_size * hidden_size
-                + 3 * hidden_size * intermediate_size
-            )
+            + layers * (4 * hidden_size * hidden_size + 3 * hidden_size * intermediate_size)
         )
         * bytes_per_weight
     )
@@ -124,9 +120,7 @@ def test_memory_estimate_check_keeps_measurable_file_sizes_when_one_size_fails()
         }
     )
 
-    result = MemoryEstimateCheck().run(
-        CheckContext(target=target, options=check_options())
-    )
+    result = MemoryEstimateCheck().run(CheckContext(target=target, options=check_options()))
 
     assert result.status == "warn"
     assert result.severity == "low"
@@ -145,9 +139,7 @@ def test_memory_estimate_check_reports_listed_weight_with_unavailable_size() -> 
         unavailable_paths=("model-00002-of-00002.safetensors",),
     )
 
-    result = MemoryEstimateCheck().run(
-        CheckContext(target=target, options=check_options())
-    )
+    result = MemoryEstimateCheck().run(CheckContext(target=target, options=check_options()))
 
     assert result.status == "warn"
     assert result.severity == "low"
@@ -170,9 +162,7 @@ def test_memory_estimate_check_skip_reports_all_listed_weights_with_unavailable_
         ),
     )
 
-    result = MemoryEstimateCheck().run(
-        CheckContext(target=target, options=check_options())
-    )
+    result = MemoryEstimateCheck().run(CheckContext(target=target, options=check_options()))
 
     assert result.status == "skip"
     assert result.severity == "info"
@@ -185,7 +175,9 @@ def test_memory_estimate_check_skip_reports_all_listed_weights_with_unavailable_
 
 
 def test_memory_estimate_check_skips_when_no_estimate_is_available() -> None:
-    result = MemoryEstimateCheck().run(context_for_files({"config.json": b'{"model_type":"llama"}'}))
+    result = MemoryEstimateCheck().run(
+        context_for_files({"config.json": b'{"model_type":"llama"}'})
+    )
 
     assert result.status == "skip"
     assert result.severity == "info"

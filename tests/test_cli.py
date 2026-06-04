@@ -185,7 +185,9 @@ def test_check_local_memory_options_are_reflected_in_json_report(
         ]
     )
     data = json.loads(capsys.readouterr().out)
-    memory = next(result for result in data["results"] if result["check_id"] == "text/memory.estimate")
+    memory = next(
+        result for result in data["results"] if result["check_id"] == "text/memory.estimate"
+    )
 
     assert code == 0
     assert memory["status"] == "warn"
