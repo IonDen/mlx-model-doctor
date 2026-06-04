@@ -7,15 +7,15 @@ name = "mlx-model-doctor"
 description = "Validate MLX model repositories before loading them."
 readme = "README.md"
 requires-python = ">=3.11"
-license = "MIT"
-license-files = ["LICENSE"]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Denis Ineshin", email = "denis.ineshin@gmail.com" }]
 keywords = ["mlx", "apple-silicon", "huggingface", "model-validation", "mlx-lm"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
   "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: MIT License",
+  "License :: OSI Approved :: Apache Software License",
   "Operating System :: MacOS :: MacOS X",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.11",
