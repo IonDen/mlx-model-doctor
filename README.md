@@ -2,7 +2,7 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/mlx-model-doctor.svg)](https://pypi.org/project/mlx-model-doctor/)
 [![Python versions](https://img.shields.io/pypi/pyversions/mlx-model-doctor.svg)](https://pypi.org/project/mlx-model-doctor/)
-[![License: MIT](https://img.shields.io/pypi/l/mlx-model-doctor.svg)](https://github.com/IonDen/mlx-model-doctor/blob/master/LICENSE)
+[![License: Apache 2.0](https://img.shields.io/pypi/l/mlx-model-doctor.svg)](https://github.com/IonDen/mlx-model-doctor/blob/master/LICENSE)
 
 Validate an MLX / Hugging Face model repository before you load it.
 
@@ -93,7 +93,7 @@ Exit codes: `0` checks passed (under the fail policy), `1` checks found failures
 
 ## License
 
-MIT. See [LICENSE](LICENSE). Validating a model repository does not touch the model's own weights or license; those belong to their respective authors.
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). Validating a model repository does not touch the model's own weights or license; those belong to their respective authors.
 
 ## Acknowledgements
 
