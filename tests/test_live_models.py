@@ -19,6 +19,7 @@ from mlx_model_doctor.sampling import (
     render_sample_batch_markdown,
     render_sample_batch_text,
     run_hf_sample,
+    sample_batch_exit_code,
 )
 
 
@@ -248,6 +249,65 @@ def test_sample_batch_renderers_include_repo_signals_statuses_reports_and_errors
     assert "tool-error" in markdown
     assert "b/bad" in text
     assert "not found" in text
+    assert "checked: 1" in text
+    assert "tool-error: 1" in text
+
+
+def test_sample_batch_exit_code_is_two_when_no_models_could_be_checked() -> None:
+    # Every attempted model errored, so the tool validated nothing: exit 2
+    # (the documented "tool error" code). Catches _cmd_sample_hf hardcoding 0.
+    batch = SampleBatchReport(
+        author="mlx-community",
+        task=None,
+        limit=2,
+        plugin="text",
+        items=(
+            SampledModelResult(repo_id="a/x", signal="tag:mlx", status="tool-error", error="boom"),
+            SampledModelResult(repo_id="b/y", signal="tag:mlx", status="tool-error", error="boom"),
+        ),
+    )
+
+    assert sample_batch_exit_code(batch) == 2
+
+
+def test_sample_batch_exit_code_is_zero_when_any_model_was_checked() -> None:
+    # A mixed batch is still a successful survey; per-model errors are data,
+    # not a tool failure. Catches an over-strict "any tool-error -> 2" policy.
+    batch = SampleBatchReport(
+        author="mlx-community",
+        task=None,
+        limit=2,
+        plugin="text",
+        items=(
+            SampledModelResult(
+                repo_id="a/x",
+                signal="tag:mlx",
+                status="checked",
+                report=sample_report("a/x", status="pass"),
+            ),
+            SampledModelResult(repo_id="b/y", signal="tag:mlx", status="tool-error", error="boom"),
+        ),
+    )
+
+    assert sample_batch_exit_code(batch) == 0
+
+
+def test_sample_batch_exit_code_is_zero_for_empty_batch() -> None:
+    # No MLX candidates matched the filter is a valid empty survey, not an error.
+    batch = SampleBatchReport(author="mlx-community", task=None, limit=2, plugin="text", items=())
+
+    assert sample_batch_exit_code(batch) == 0
+
+
+def test_run_hf_sample_rejects_negative_limit_before_listing() -> None:
+    # The limit guard must fire before any listing call, so a negative limit
+    # never reaches the (possibly networked) lister.
+    lister = FakeLister((FakeModel(id="a/model", tags=("mlx",)),))
+
+    with pytest.raises(ModelDoctorError, match="non-negative"):
+        run_hf_sample(limit=-1, lister=lister, check_model=unused_check)
+
+    assert lister.calls == []
 
 
 def _live_records() -> tuple[dict[str, str], ...]:

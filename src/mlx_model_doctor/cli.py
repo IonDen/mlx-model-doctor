@@ -22,6 +22,7 @@ from mlx_model_doctor.sampling import (
     render_sample_batch_markdown,
     render_sample_batch_text,
     run_hf_sample,
+    sample_batch_exit_code,
 )
 
 Command = Callable[[argparse.Namespace], int]
@@ -100,7 +101,7 @@ def _cmd_sample_hf(args: argparse.Namespace) -> int:
         plugin_name=args.plugin,
     )
     print(_render_sample_batch(batch, args.format))
-    return 0
+    return sample_batch_exit_code(batch)
 
 
 def _options_from_args(args: argparse.Namespace) -> CheckOptions:
@@ -197,7 +198,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Hugging Face pipeline task filter, mapped to pipeline_tag",
     )
-    sample_hf.add_argument("--limit", type=int, default=10, help="number of candidates to check")
+    sample_hf.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="max repos to list before MLX-candidate filtering (fewer may be checked)",
+    )
     sample_hf.add_argument("--plugin", default="text", help="plugin name to run")
     sample_hf.add_argument(
         "--format",

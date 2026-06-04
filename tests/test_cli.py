@@ -373,6 +373,42 @@ def test_sample_hf_dispatches_fake_batch_runner_without_network(monkeypatch, cap
     assert data["items"][0]["signal"] == "author:mlx-community"
 
 
+def test_sample_hf_exits_two_when_no_models_could_be_checked(monkeypatch, capsys) -> None:
+    from mlx_model_doctor.sampling import SampleBatchReport, SampledModelResult
+
+    def fake_run_hf_sample(
+        *,
+        author: str = "mlx-community",
+        task: str | None = None,
+        limit: int = 10,
+        plugin_name: str = "text",
+    ) -> SampleBatchReport:
+        return SampleBatchReport(
+            author=author,
+            task=task,
+            limit=limit,
+            plugin=plugin_name,
+            items=(
+                SampledModelResult(
+                    repo_id="mlx-community/broken",
+                    signal="author:mlx-community",
+                    status="tool-error",
+                    error="model metadata is unavailable",
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(cli, "run_hf_sample", fake_run_hf_sample)
+
+    code = cli.main(["sample", "hf", "--format", "json"])
+    captured = capsys.readouterr()
+
+    assert code == 2
+    assert "Traceback" not in captured.err
+    # The non-zero exit must not suppress the survey output.
+    assert json.loads(captured.out)["items"][0]["status"] == "tool-error"
+
+
 def test_check_hf_markdown_output_and_fail_on_warn(monkeypatch, tmp_path: Path, capsys) -> None:
     def fake_check_hf_model(
         repo_id: str,
