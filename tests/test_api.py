@@ -276,8 +276,7 @@ class FakeHub:
             raise self.model_info_error
         return FakeModelInfo(
             siblings=tuple(
-                FakeSibling(rfilename=path, size=len(data))
-                for path, data in self.files.items()
+                FakeSibling(rfilename=path, size=len(data)) for path, data in self.files.items()
             )
         )
 

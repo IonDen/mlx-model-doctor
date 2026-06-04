@@ -6,7 +6,9 @@ from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
 from typing import Protocol, cast
 
-_MEMORY_PATTERN = re.compile(r"^\s*(?P<amount>(?:\d+(?:\.\d+)?)|(?:\.\d+))\s*(?P<unit>[kmgt]?i?b)\s*$", re.IGNORECASE)
+_MEMORY_PATTERN = re.compile(
+    r"^\s*(?P<amount>(?:\d+(?:\.\d+)?)|(?:\.\d+))\s*(?P<unit>[kmgt]?i?b)\s*$", re.IGNORECASE
+)
 _UNIT_MULTIPLIERS = {
     "b": 1,
     "kb": 1024,

@@ -38,9 +38,7 @@ def test_safetensors_index_check_passes_when_referenced_shard_exists() -> None:
         }
     )
 
-    result = SafetensorsIndexCheck().run(
-        CheckContext(target=target, options=check_options())
-    )
+    result = SafetensorsIndexCheck().run(CheckContext(target=target, options=check_options()))
 
     assert result.status == "pass"
     assert result.severity == "info"
@@ -65,9 +63,7 @@ def test_safetensors_index_check_sorts_discovered_indexes_and_shards() -> None:
         ),
     )
 
-    result = SafetensorsIndexCheck().run(
-        CheckContext(target=target, options=check_options())
-    )
+    result = SafetensorsIndexCheck().run(CheckContext(target=target, options=check_options()))
 
     assert result.status == "pass"
     assert result.details["index_paths"] == (
@@ -78,13 +74,9 @@ def test_safetensors_index_check_sorts_discovered_indexes_and_shards() -> None:
 
 
 def test_safetensors_index_check_warns_when_listed_index_disappears() -> None:
-    target = DisappearingIndexTarget(
-        files={"model.safetensors.index.json": b'{"weight_map":{}}'}
-    )
+    target = DisappearingIndexTarget(files={"model.safetensors.index.json": b'{"weight_map":{}}'})
 
-    result = SafetensorsIndexCheck().run(
-        CheckContext(target=target, options=check_options())
-    )
+    result = SafetensorsIndexCheck().run(CheckContext(target=target, options=check_options()))
 
     assert result.status == "warn"
     assert result.severity == "medium"
@@ -128,9 +120,7 @@ def test_safetensors_index_check_fails_when_shard_reference_is_invalid() -> None
         files={"model.safetensors.index.json": json.dumps(index).encode()}
     )
 
-    result = SafetensorsIndexCheck().run(
-        CheckContext(target=target, options=check_options())
-    )
+    result = SafetensorsIndexCheck().run(CheckContext(target=target, options=check_options()))
 
     assert result.status == "fail"
     assert result.severity == "high"
@@ -151,9 +141,7 @@ def test_safetensors_index_check_fails_on_invalid_json() -> None:
 
 
 def test_safetensors_index_check_warns_when_index_is_not_an_object() -> None:
-    result = SafetensorsIndexCheck().run(
-        context_for_files({"model.safetensors.index.json": b"[]"})
-    )
+    result = SafetensorsIndexCheck().run(context_for_files({"model.safetensors.index.json": b"[]"}))
 
     assert result.status == "warn"
     assert result.severity == "medium"

@@ -1,18 +1,14 @@
 """Hugging Face live sampling helpers."""
 
-from __future__ import annotations
-
 import json
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Protocol, cast
+from typing import Literal, Protocol, cast
 
 from mlx_model_doctor.api import check_hf_model
 from mlx_model_doctor.context import CheckOptions
 from mlx_model_doctor.errors import ModelDoctorError
 from mlx_model_doctor.report import DoctorReport, render_json
-
-if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Sequence
 
 ItemStatus = Literal["checked", "tool-error"]
 _MODEL_METADATA_EXPAND: list[str] = ["tags", "library_name"]
@@ -207,7 +203,9 @@ def run_hf_sample(
     items: list[SampledModelResult] = []
     for model in sampled_models:
         signal = candidate_signal(model)
-        if signal is None:
+        # deterministic_sample only yields models with a signal; this guard is an
+        # unreachable type-narrowing safeguard (candidate_signal returns str | None).
+        if signal is None:  # pragma: no cover
             continue
         try:
             report = checker(model.id, options=options, plugin_name=plugin_name)
@@ -237,6 +235,20 @@ def run_hf_sample(
         plugin=plugin_name,
         items=tuple(items),
     )
+
+
+def sample_batch_exit_code(batch: SampleBatchReport) -> int:
+    """Return the process exit code for a completed Hugging Face sample batch.
+
+    A sample is a survey: a per-model tool error is recorded as a batch item and
+    does not, on its own, fail the run. The tool failed only if it attempted
+    models but could check none of them — every item is a ``tool-error`` — which
+    maps to exit code 2 (the documented "tool error" code). An empty batch (no
+    MLX candidates matched the filter) is a valid informational result: exit 0.
+    """
+    if batch.items and batch.summary["checked"] == 0:
+        return 2
+    return 0
 
 
 def render_sample_batch_json(batch: SampleBatchReport) -> str:
