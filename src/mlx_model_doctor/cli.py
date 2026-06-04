@@ -92,7 +92,7 @@ def _options_from_args(args: argparse.Namespace) -> CheckOptions:
         max_memory_bytes=max_memory_bytes,
         context_length=context_length,
         include_weights=args.include_weights,
-        smoke=False,
+        smoke=args.smoke,
         verbosity=_verbosity(args),
     )
 
@@ -202,6 +202,11 @@ def _add_check_options(parser: argparse.ArgumentParser) -> None:
         "--include-weights",
         action="store_true",
         help="include weight content checks when available",
+    )
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="run optional runtime smoke checks",
     )
     parser.add_argument("--quiet", action="store_true", help="reduce diagnostic verbosity")
     parser.add_argument("--verbose", action="store_true", help="include verbose diagnostics")

@@ -3,9 +3,12 @@ from pathlib import Path
 
 import pytest
 
+import mlx_model_doctor.api as api
 from mlx_model_doctor.api import check_hf_model, check_local_model
-from mlx_model_doctor.context import CheckOptions
+from mlx_model_doctor.checks.base import ModelCheck
+from mlx_model_doctor.context import CheckContext, CheckOptions
 from mlx_model_doctor.errors import ModelDoctorError, TargetError
+from mlx_model_doctor.report import CheckResult
 
 
 def test_check_local_model_returns_text_report_for_valid_local_model(tmp_path: Path) -> None:
@@ -147,6 +150,62 @@ def test_check_hf_model_propagates_download_target_error() -> None:
     assert exc_info.value.source == "hf"
 
 
+def test_check_local_model_includes_smoke_results_only_when_requested(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    model = write_local_model(tmp_path)
+    monkeypatch.setattr(api, "get_plugin", lambda _name: FakePlugin())
+
+    without_smoke = check_local_model(
+        model,
+        options=CheckOptions(
+            max_memory_bytes=None,
+            context_length=4096,
+            include_weights=False,
+            smoke=False,
+            verbosity="normal",
+        ),
+    )
+    with_smoke = check_local_model(
+        model,
+        options=CheckOptions(
+            max_memory_bytes=None,
+            context_length=4096,
+            include_weights=False,
+            smoke=True,
+            verbosity="normal",
+        ),
+    )
+
+    assert [result.check_id for result in without_smoke.results] == ["text/static.fake"]
+    assert [result.check_id for result in with_smoke.results] == [
+        "text/static.fake",
+        "text/smoke.fake",
+    ]
+
+
+def test_check_hf_model_includes_smoke_results_when_requested(monkeypatch) -> None:
+    monkeypatch.setattr(api, "get_plugin", lambda _name: FakePlugin())
+
+    report = check_hf_model(
+        "org/model",
+        hub=FakeHub(files=valid_hf_files()),
+        options=CheckOptions(
+            max_memory_bytes=None,
+            context_length=4096,
+            include_weights=False,
+            smoke=True,
+            verbosity="normal",
+        ),
+    )
+
+    assert [result.check_id for result in report.results] == [
+        "text/static.fake",
+        "text/smoke.fake",
+    ]
+
+
 def write_local_model(root: Path) -> Path:
     model = root / "model"
     model.mkdir()
@@ -226,3 +285,29 @@ class FakeHub:
         if filename in self.download_errors:
             raise self.download_errors[filename]
         return self.files[filename]
+
+
+class FakePlugin:
+    name = "text"
+
+    def static_checks(self) -> tuple[ModelCheck, ...]:
+        return (FakeCheck("text/static.fake"),)
+
+    def smoke_checks(self) -> tuple[ModelCheck, ...]:
+        return (FakeCheck("text/smoke.fake"),)
+
+
+class FakeCheck:
+    title = "Fake check"
+
+    def __init__(self, check_id: str) -> None:
+        self.check_id = check_id
+
+    def run(self, _ctx: CheckContext) -> CheckResult:
+        return CheckResult(
+            check_id=self.check_id,
+            title=self.title,
+            status="pass",
+            severity="info",
+            message="ok",
+        )

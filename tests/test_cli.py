@@ -257,6 +257,7 @@ def test_check_hf_json_format_dispatches_options_and_plugin(monkeypatch, capsys)
             "--context-length",
             "8",
             "--include-weights",
+            "--smoke",
             "--quiet",
         ]
     )
@@ -272,7 +273,16 @@ def test_check_hf_json_format_dispatches_options_and_plugin(monkeypatch, capsys)
     assert options.max_memory_bytes == 1
     assert options.context_length == 8
     assert options.include_weights is True
+    assert options.smoke is True
     assert options.verbosity == "quiet"
+
+
+def test_parser_accepts_smoke_for_check_local_and_hf() -> None:
+    local_args = cli.build_parser().parse_args(["check", "local", "./model", "--smoke"])
+    hf_args = cli.build_parser().parse_args(["check", "hf", "org/model", "--smoke"])
+
+    assert cli._options_from_args(local_args).smoke is True
+    assert cli._options_from_args(hf_args).smoke is True
 
 
 def test_check_hf_markdown_output_and_fail_on_warn(monkeypatch, tmp_path: Path, capsys) -> None:

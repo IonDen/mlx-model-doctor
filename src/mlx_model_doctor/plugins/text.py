@@ -10,6 +10,7 @@ from mlx_model_doctor.checks.files import RequiredConfigCheck
 from mlx_model_doctor.checks.memory import MemoryEstimateCheck
 from mlx_model_doctor.checks.quantization import QuantizationMetadataCheck
 from mlx_model_doctor.checks.safetensors import SafetensorsIndexCheck
+from mlx_model_doctor.checks.smoke import MlxLmSmokeCheck
 from mlx_model_doctor.checks.tokenizer import SpecialTokensCheck, TokenizerFilesCheck
 
 
@@ -37,4 +38,4 @@ class TextModelPlugin:
 
     def smoke_checks(self) -> Sequence[ModelCheck]:
         """Return smoke checks for this plugin."""
-        return ()
+        return cast("Sequence[ModelCheck]", (MlxLmSmokeCheck(),))

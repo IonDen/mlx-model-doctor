@@ -5,6 +5,7 @@ from pathlib import Path
 from mlx_model_doctor.context import CheckContext, CheckOptions
 from mlx_model_doctor.plugins import get_plugin
 from mlx_model_doctor.report import DoctorReport
+from mlx_model_doctor.runners.smoke import run_smoke_checks
 from mlx_model_doctor.runners.static import run_static_checks
 from mlx_model_doctor.targets import HfHubProtocol, HfTarget, LocalTarget
 
@@ -22,7 +23,12 @@ def check_local_model(
         target=target,
         options=options if options is not None else _default_options(),
     )
-    results = run_static_checks(ctx, plugin.static_checks())
+    static_results = run_static_checks(ctx, plugin.static_checks())
+    smoke_checks = plugin.smoke_checks() if ctx.options.smoke else ()
+    results = [
+        *static_results,
+        *run_smoke_checks(ctx, smoke_checks, static_results),
+    ]
     return DoctorReport(
         target=target.name,
         source=target.source,
@@ -45,7 +51,12 @@ def check_hf_model(
         target=target,
         options=options if options is not None else _default_options(),
     )
-    results = run_static_checks(ctx, plugin.static_checks())
+    static_results = run_static_checks(ctx, plugin.static_checks())
+    smoke_checks = plugin.smoke_checks() if ctx.options.smoke else ()
+    results = [
+        *static_results,
+        *run_smoke_checks(ctx, smoke_checks, static_results),
+    ]
     return DoctorReport(
         target=target.name,
         source=target.source,
