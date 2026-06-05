@@ -4,7 +4,8 @@ import pytest
 
 from mlx_model_doctor.context import _MAX_METADATA_BYTES, CheckContext, CheckOptions
 from mlx_model_doctor.errors import TargetError
-from tests.fakes import FakeTarget, context_for_files
+from mlx_model_doctor.safetensors_header import SafetensorsHeader
+from tests.fakes import FakeTarget, check_options, context_for_files
 
 
 def options() -> CheckOptions:
@@ -154,3 +155,47 @@ def test_config_json_still_parses_and_is_cached() -> None:
     ctx = context_for_files({"config.json": json.dumps({"model_type": "llama"}).encode()})
     assert ctx.config_json() == {"model_type": "llama"}
     assert ctx.config_json() is ctx.config_json()
+
+
+# ---------------------------------------------------------------------------
+# safetensors_header accessor tests
+# ---------------------------------------------------------------------------
+
+
+def test_context_caches_safetensors_header_one_call() -> None:
+    header = SafetensorsHeader(files=(), weight_map={}, sharded=False, param_count_by_dtype={})
+
+    class CountingHeaderTarget(FakeTarget):
+        calls: int = 0
+
+        def safetensors_header(self) -> SafetensorsHeader | None:
+            CountingHeaderTarget.calls += 1
+            return header
+
+    ctx = CheckContext(target=CountingHeaderTarget(files={}), options=check_options())
+    assert ctx.safetensors_header() is header
+    assert ctx.safetensors_header() is header
+    assert CountingHeaderTarget.calls == 1
+
+
+def test_context_routes_hf_header_target_error() -> None:
+    from mlx_model_doctor.errors import TargetError
+
+    class HfErrorTarget(FakeTarget):
+        def safetensors_header(self) -> SafetensorsHeader | None:
+            raise TargetError("boom", target="org/repo", source="hf")
+
+    ctx = CheckContext(target=HfErrorTarget(files={}, _source="hf"), options=check_options())
+    with pytest.raises(TargetError):
+        ctx.safetensors_header()
+
+
+def test_context_swallows_local_header_parse_error() -> None:
+    from mlx_model_doctor.safetensors_header import SafetensorsHeaderError
+
+    class BadHeaderTarget(FakeTarget):
+        def safetensors_header(self) -> SafetensorsHeader | None:
+            raise SafetensorsHeaderError("corrupt")
+
+    ctx = CheckContext(target=BadHeaderTarget(files={}), options=check_options())
+    assert ctx.safetensors_header() is None

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Literal, cast
 
 from mlx_model_doctor.errors import TargetError, raise_for_hf_target_error
+from mlx_model_doctor.safetensors_header import SafetensorsHeader, SafetensorsHeaderError
 from mlx_model_doctor.targets import ModelTarget
 
 _MAX_METADATA_BYTES = 16 * 1024 * 1024
@@ -53,6 +54,24 @@ class CheckContext:
         text = self._read_text_guarded("chat_template.jinja")
         self._file_cache[key] = text
         return text
+
+    def safetensors_header(self) -> SafetensorsHeader | None:
+        """Return the cached safetensors header (one fetch shared across checks)."""
+        key = "safetensors:header"
+        if key in self._file_cache:
+            return cast("SafetensorsHeader | None", self._file_cache[key])
+        header = self._load_safetensors_header()
+        self._file_cache[key] = header
+        return header
+
+    def _load_safetensors_header(self) -> SafetensorsHeader | None:
+        try:
+            return self.target.safetensors_header()
+        except SafetensorsHeaderError:
+            return None
+        except TargetError as exc:
+            raise_for_hf_target_error(exc)
+            return None
 
     def _read_json_file(self, name: str) -> dict[str, object] | None:
         if name in self._file_cache:
