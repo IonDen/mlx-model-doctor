@@ -13,6 +13,8 @@ from mlx_model_doctor.report import DoctorReport, render_json
 ItemStatus = Literal["checked", "tool-error"]
 _MODEL_METADATA_EXPAND: list[str] = ["tags", "library_name"]
 _ITEM_STATUSES: tuple[ItemStatus, ...] = ("checked", "tool-error")
+_OVERFETCH_FACTOR = 5
+_OVERFETCH_CEILING = 200
 
 
 class ModelCandidate(Protocol):
@@ -182,9 +184,10 @@ def run_hf_sample(
         raise ModelDoctorError("sample limit must be non-negative")
 
     model_lister = lister if lister is not None else DefaultHfModelLister()
+    fetch_limit = min(max(limit * _OVERFETCH_FACTOR, limit), _OVERFETCH_CEILING)
     try:
         listed_models = tuple(
-            model_lister.list_models(author=author, pipeline_tag=task, limit=limit)
+            model_lister.list_models(author=author, pipeline_tag=task, limit=fetch_limit)
         )
     except ModelDoctorError:
         raise

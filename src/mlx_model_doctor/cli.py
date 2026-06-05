@@ -204,7 +204,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit",
         type=int,
         default=10,
-        help="max repos to list before MLX-candidate filtering (fewer may be checked)",
+        help="number of MLX candidates to check (best-effort within a capped listing window)",
     )
     sample_hf.add_argument("--plugin", default="text", help="plugin name to run")
     sample_hf.add_argument(

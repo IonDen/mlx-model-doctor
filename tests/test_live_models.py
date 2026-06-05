@@ -163,9 +163,10 @@ def test_run_hf_sample_checks_only_sampled_repos_with_static_options() -> None:
         check_model=fake_check,
     )
 
-    assert lister.calls == [
-        {"author": "mlx-community", "pipeline_tag": "text-generation", "limit": 1}
-    ]
+    assert lister.calls[0]["author"] == "mlx-community"
+    assert lister.calls[0]["pipeline_tag"] == "text-generation"
+    # Over-fetch: the lister is called with a window larger than the user limit.
+    assert lister.calls[0]["limit"] > 1
     assert [item.repo_id for item in batch.items] == ["a/model"]
     assert [item.signal for item in batch.items] == ["tag:mlx"]
     assert [item.status for item in batch.items] == ["checked"]
@@ -368,3 +369,30 @@ def unused_check(
     plugin_name: str = "text",
 ) -> DoctorReport:
     raise AssertionError(f"unexpected check call for {repo_id}")
+
+
+def test_run_hf_sample_overfetches_so_limit_counts_mlx_candidates() -> None:
+    # Non-MLX repos ("aaa/plain-1", "aab/plain-2") sort before the two MLX ones.
+    # With the old code (list limit=2), both listed repos are non-MLX, so 0 MLX
+    # candidates are checked. After the fix, run_hf_sample over-fetches (>2), sees
+    # all four candidates, filters to the 2 MLX ones, and checks exactly 2.
+    candidates = (
+        FakeModel(id="aaa/plain-1"),
+        FakeModel(id="aab/plain-2"),
+        FakeModel(id="mlx-community/m1", tags=("mlx",)),
+        FakeModel(id="mlx-community/m2", tags=("mlx",)),
+    )
+    lister = FakeLister(candidates)
+
+    def ok_check(
+        repo_id: str,
+        *,
+        options: CheckOptions | None = None,
+        plugin_name: str = "text",
+    ) -> DoctorReport:
+        return sample_report(repo_id, status="pass")
+
+    batch = run_hf_sample(limit=2, lister=lister, check_model=ok_check)
+
+    assert batch.summary["checked"] == 2
+    assert lister.calls[0]["limit"] > 2  # over-fetched beyond the user limit
