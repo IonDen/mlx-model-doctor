@@ -210,6 +210,47 @@ def test_check_hf_model_includes_smoke_results_when_requested(monkeypatch) -> No
     ]
 
 
+def test_check_local_model_chat_model_passes_new_checks(tmp_path: Path) -> None:
+    model = tmp_path / "chat-model"
+    model.mkdir()
+    config = {
+        "model_type": "llama",
+        "hidden_size": 128,
+        "num_hidden_layers": 2,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2,
+        "head_dim": 32,
+        "vocab_size": 256,
+        "intermediate_size": 512,
+        "eos_token_id": 2,
+        "pad_token_id": 0,
+        "quantization": {"mode": "affine", "bits": 4, "group_size": 64},
+    }
+    (model / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    (model / "tokenizer.json").write_text("{}", encoding="utf-8")
+    (model / "tokenizer_config.json").write_text(
+        json.dumps(
+            {
+                "eos_token": "<|im_end|>",
+                "added_tokens_decoder": {"2": {"content": "<|im_end|>"}},
+                "chat_template": "{{ messages }}<|im_end|>",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (model / "generation_config.json").write_text(
+        json.dumps({"eos_token_id": 2, "pad_token_id": 0}), encoding="utf-8"
+    )
+
+    report = check_local_model(model)
+    by_id = {result.check_id: result for result in report.results}
+    assert by_id["text/chat_template.presence"].status == "pass"
+    assert by_id["text/chat_template.special_tokens"].status == "pass"
+    assert by_id["text/generation_config.tokens"].status == "pass"
+    assert by_id["text/quantization.mode"].status == "pass"
+    assert report.summary["fail"] == 0
+
+
 def write_local_model(root: Path) -> Path:
     model = root / "model"
     model.mkdir()
