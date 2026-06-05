@@ -1,3 +1,4 @@
+import json
 import struct
 from pathlib import Path
 
@@ -113,8 +114,6 @@ def test_local_target_wraps_malformed_paths(tmp_path: Path) -> None:
 
 
 def _write_safetensors(path: Path, header: dict[str, object], data: bytes = b"") -> None:
-    import json
-
     raw = json.dumps(header).encode("utf-8")
     path.write_bytes(struct.pack("<Q", len(raw)) + raw + data)
 
@@ -142,3 +141,36 @@ def test_local_target_returns_none_without_safetensors(tmp_path: Path) -> None:
     model.mkdir()
     (model / "config.json").write_text("{}", encoding="utf-8")
     assert LocalTarget(model).safetensors_header() is None
+
+
+def test_local_target_uses_index_weight_map_for_sharded_model(tmp_path: Path) -> None:
+    model = tmp_path / "m"
+    model.mkdir()
+    _write_safetensors(
+        model / "model-00001-of-00002.safetensors",
+        {"a": {"dtype": "BF16", "shape": [2], "data_offsets": [0, 4]}},
+        data=b"\x00" * 4,
+    )
+    _write_safetensors(
+        model / "model-00002-of-00002.safetensors",
+        {"b": {"dtype": "BF16", "shape": [2], "data_offsets": [0, 4]}},
+        data=b"\x00" * 4,
+    )
+    (model / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "weight_map": {
+                    "a": "model-00001-of-00002.safetensors",
+                    "b": "model-00002-of-00002.safetensors",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    header = LocalTarget(model).safetensors_header()
+    assert header is not None
+    assert header.sharded is True
+    assert header.weight_map == {
+        "a": "model-00001-of-00002.safetensors",
+        "b": "model-00002-of-00002.safetensors",
+    }
