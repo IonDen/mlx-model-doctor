@@ -2,9 +2,10 @@ import json
 
 import pytest
 
-from mlx_model_doctor.checks.safetensors import SafetensorsIndexCheck
+from mlx_model_doctor.checks.safetensors import SafetensorsIndexCheck, SafetensorsOffsetScanCheck
 from mlx_model_doctor.context import _MAX_METADATA_BYTES, CheckContext
 from mlx_model_doctor.errors import TargetError
+from mlx_model_doctor.safetensors_header import FileHeader, SafetensorsHeader, TensorEntry
 from tests.fakes import FakeTarget, check_options, context_for_files
 
 
@@ -214,3 +215,81 @@ class OversizedReadAssertTarget(FakeTarget):
         if self.size(path) is not None and self.size(path) > _MAX_METADATA_BYTES:
             raise AssertionError(f"SafetensorsIndexCheck must not read oversized file {path!r}")
         return super().read_text(path, max_bytes=max_bytes)
+
+
+# ---------------------------------------------------------------------------
+# SafetensorsOffsetScanCheck tests
+# ---------------------------------------------------------------------------
+
+
+def _entry(dtype: str, begin: int, end: int) -> TensorEntry:
+    return TensorEntry(
+        dtype=dtype, shape=(end - begin,), data_offsets=(begin, end), parameter_count=end - begin
+    )
+
+
+def _offsets_header(
+    tensors: dict[str, TensorEntry], *, file_size: int | None, header_length: int | None = 10
+) -> SafetensorsHeader:
+    fh = FileHeader(
+        filename="model.safetensors",
+        tensors=tensors,
+        metadata={},
+        header_length=header_length,
+        file_size=file_size,
+    )
+    return SafetensorsHeader(
+        files=(fh,),
+        weight_map=dict.fromkeys(tensors, "model.safetensors"),
+        sharded=False,
+        param_count_by_dtype={},
+    )
+
+
+def _run_offsets(header: SafetensorsHeader | None):
+    return SafetensorsOffsetScanCheck().run(
+        CheckContext(
+            target=FakeTarget(files={}, _safetensors_header=header), options=check_options()
+        )
+    )
+
+
+def test_offsets_pass_for_contiguous_in_bounds_tensors() -> None:
+    # file_size = 8 + header_length(10) + data(8) = 26
+    header = _offsets_header({"a": _entry("F32", 0, 4), "b": _entry("F32", 4, 8)}, file_size=26)
+    assert _run_offsets(header).status == "pass"
+
+
+def test_offsets_fail_on_overlap() -> None:
+    header = _offsets_header({"a": _entry("F32", 0, 8), "b": _entry("F32", 4, 12)}, file_size=30)
+    result = _run_offsets(header)
+    assert result.status == "fail"
+    assert result.severity == "high"
+    assert result.details["overlapping"]
+
+
+def test_offsets_fail_on_out_of_bounds_when_size_known() -> None:
+    # data_section_length = 26 - 8 - 10 = 8, but tensor ends at 12
+    header = _offsets_header({"a": _entry("F32", 0, 12)}, file_size=26)
+    result = _run_offsets(header)
+    assert result.status == "fail"
+    assert result.severity == "high"
+    assert result.details["out_of_bounds"]
+
+
+def test_offsets_warn_when_size_unavailable() -> None:
+    header = _offsets_header({"a": _entry("F32", 0, 12)}, file_size=None, header_length=None)
+    result = _run_offsets(header)
+    assert result.status == "warn"
+    assert result.details["size_unknown"] is True
+
+
+def test_offsets_warn_on_unknown_dtype() -> None:
+    header = _offsets_header({"a": _entry("WEIRD8", 0, 4)}, file_size=22)
+    result = _run_offsets(header)
+    assert result.status == "warn"
+    assert result.details["unknown_dtypes"]
+
+
+def test_offsets_skip_without_header() -> None:
+    assert _run_offsets(None).status == "skip"

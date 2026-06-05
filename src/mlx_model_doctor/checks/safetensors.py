@@ -7,6 +7,7 @@ from typing import cast
 from mlx_model_doctor.context import _MAX_METADATA_BYTES, CheckContext
 from mlx_model_doctor.errors import TargetError, raise_for_hf_target_error
 from mlx_model_doctor.report import CheckResult
+from mlx_model_doctor.safetensors_header import FileHeader
 
 SAFETENSORS_INDEX_SUFFIX = ".safetensors.index.json"
 
@@ -216,3 +217,118 @@ def _validate_index(
         message="Safetensors index references shard files that are present.",
         details={"index_path": index_path, "shards": shard_names},
     )
+
+
+_KNOWN_ST_DTYPES = frozenset(
+    {
+        "BOOL",
+        "U8",
+        "I8",
+        "F8_E5M2",
+        "F8_E4M3",
+        "I16",
+        "U16",
+        "F16",
+        "BF16",
+        "I32",
+        "U32",
+        "F32",
+        "F64",
+        "I64",
+        "U64",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SafetensorsOffsetScanCheck:
+    """Scan safetensors header offsets for corruption (no weight download)."""
+
+    check_id: str = "text/safetensors.offsets"
+    title: str = "Safetensors offsets"
+
+    def run(self, ctx: CheckContext) -> CheckResult:
+        """Return whether tensor data offsets are well-formed and in bounds."""
+        header = ctx.safetensors_header()
+        if header is None:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="skip",
+                severity="info",
+                message="No safetensors header to scan.",
+            )
+        out_of_bounds: list[str] = []
+        overlapping: list[str] = []
+        unknown_dtypes: list[str] = []
+        gaps: list[str] = []
+        size_unknown = False
+        for file_header in header.files:
+            size_unknown = (
+                self._scan_file(file_header, out_of_bounds, overlapping, unknown_dtypes, gaps)
+                or size_unknown
+            )
+        if out_of_bounds or overlapping:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="fail",
+                severity="high",
+                message="Safetensors header has corrupt tensor offsets (overlap or out of bounds).",
+                remediation="Re-save the safetensors shard; its tensor offsets are inconsistent.",
+                details={
+                    "out_of_bounds": tuple(out_of_bounds),
+                    "overlapping": tuple(overlapping),
+                },
+            )
+        if unknown_dtypes or gaps or size_unknown:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="warn",
+                severity="medium",
+                message="Safetensors header offsets are usable but could not be fully validated.",
+                remediation="Review unknown dtypes or non-contiguous offsets; file size may be unavailable.",
+                details={
+                    "unknown_dtypes": tuple(unknown_dtypes),
+                    "gaps": tuple(gaps),
+                    "size_unknown": size_unknown,
+                },
+            )
+        return CheckResult(
+            check_id=self.check_id,
+            title=self.title,
+            status="pass",
+            severity="info",
+            message="Safetensors header tensor offsets are well-formed and in bounds.",
+        )
+
+    def _scan_file(
+        self,
+        file_header: FileHeader,
+        out_of_bounds: list[str],
+        overlapping: list[str],
+        unknown_dtypes: list[str],
+        gaps: list[str],
+    ) -> bool:
+        data_section_length = file_header.data_section_length
+        entries = sorted(file_header.tensors.items(), key=lambda kv: kv[1].data_offsets[0])
+        prev_end = 0
+        prev_name: str | None = None
+        for name, entry in entries:
+            begin, end = entry.data_offsets
+            label = f"{file_header.filename}:{name}"
+            if begin < 0 or end < begin:
+                out_of_bounds.append(label)
+                continue
+            if data_section_length is not None and end > data_section_length:
+                out_of_bounds.append(label)
+            if prev_name is not None and begin < prev_end:
+                overlapping.append(f"{file_header.filename}:{prev_name}->{name}")
+            elif prev_name is not None and begin > prev_end:
+                gaps.append(label)
+            if entry.dtype not in _KNOWN_ST_DTYPES:
+                unknown_dtypes.append(f"{label}({entry.dtype})")
+            prev_end = max(prev_end, end)
+            prev_name = name
+        return data_section_length is None
