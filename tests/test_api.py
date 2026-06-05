@@ -26,8 +26,12 @@ def test_check_local_model_returns_text_report_for_valid_local_model(tmp_path: P
         "text/config.model_type",
         "text/tokenizer.files",
         "text/tokenizer.special_tokens",
+        "text/chat_template.presence",
+        "text/chat_template.special_tokens",
         "text/safetensors.index",
         "text/quantization.metadata",
+        "text/quantization.mode",
+        "text/generation_config.tokens",
         "text/memory.estimate",
     }
 
