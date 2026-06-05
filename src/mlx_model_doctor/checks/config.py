@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import cast
 
-from mlx_model_doctor.context import CheckContext
+from mlx_model_doctor.context import _MAX_METADATA_BYTES, CheckContext
 from mlx_model_doctor.errors import TargetError, raise_for_hf_target_error
 from mlx_model_doctor.report import CheckResult
 
@@ -21,6 +21,16 @@ class ConfigJsonCheck:
         try:
             if not ctx.target.exists("config.json"):
                 return self._missing_result()
+            size = ctx.target.size("config.json")
+            if size is not None and size > _MAX_METADATA_BYTES:
+                return CheckResult(
+                    check_id=self.check_id,
+                    title=self.title,
+                    status="fail",
+                    severity="high",
+                    message=f"config.json is too large to validate ({size} bytes).",
+                    remediation="Ensure config.json is a normal model configuration file.",
+                )
             raw_config = ctx.target.read_text("config.json")
         except FileNotFoundError:
             return self._missing_result()

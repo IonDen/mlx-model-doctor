@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from typing import cast
 
-from mlx_model_doctor.context import CheckContext
+from mlx_model_doctor.context import _MAX_METADATA_BYTES, CheckContext
 from mlx_model_doctor.errors import TargetError, raise_for_hf_target_error
 from mlx_model_doctor.report import CheckResult
 
@@ -81,6 +81,17 @@ def _validate_index(
     index_path: str,
 ) -> CheckResult:
     try:
+        size = ctx.target.size(index_path)
+        if size is not None and size > _MAX_METADATA_BYTES:
+            return CheckResult(
+                check_id=check_id,
+                title=title,
+                status="warn",
+                severity="medium",
+                message=f"Safetensors index {index_path} is too large to validate ({size} bytes).",
+                remediation=f"Ensure {index_path} is a normal safetensors index file.",
+                details={"index_path": index_path},
+            )
         raw_index = ctx.target.read_text(index_path)
     except FileNotFoundError:
         return CheckResult(

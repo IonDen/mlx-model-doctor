@@ -3,7 +3,7 @@ import json
 import pytest
 
 from mlx_model_doctor.checks.safetensors import SafetensorsIndexCheck
-from mlx_model_doctor.context import CheckContext
+from mlx_model_doctor.context import _MAX_METADATA_BYTES, CheckContext
 from mlx_model_doctor.errors import TargetError
 from tests.fakes import FakeTarget, check_options, context_for_files
 
@@ -197,3 +197,20 @@ class InvalidShardPathTarget(FakeTarget):
         if path == "../outside.safetensors":
             raise TargetError("outside model root", target=path, source=self.source)
         return super().exists(path)
+
+
+def test_safetensors_index_check_handles_oversized_index_without_reading() -> None:
+    oversized = b"{}" + b" " * (_MAX_METADATA_BYTES + 1)
+    target = OversizedReadAssertTarget(files={"model.safetensors.index.json": oversized})
+    result = SafetensorsIndexCheck().run(CheckContext(target=target, options=check_options()))
+    assert result.status in {"warn", "fail"}
+    assert "too large" in result.message
+
+
+class OversizedReadAssertTarget(FakeTarget):
+    """Raises if read_text is called on an oversized file (guard must fire before read)."""
+
+    def read_text(self, path: str, *, max_bytes: int | None = None) -> str:
+        if self.size(path) is not None and self.size(path) > _MAX_METADATA_BYTES:
+            raise AssertionError(f"SafetensorsIndexCheck must not read oversized file {path!r}")
+        return super().read_text(path, max_bytes=max_bytes)

@@ -2,6 +2,7 @@ import json
 
 from mlx_model_doctor.checks.config import ConfigJsonCheck, ModelTypeCheck
 from mlx_model_doctor.checks.tokenizer import SpecialTokensCheck
+from mlx_model_doctor.context import _MAX_METADATA_BYTES
 from mlx_model_doctor.errors import TargetError
 from mlx_model_doctor.report import DoctorReport, render_json
 from tests.fakes import FakeTarget, check_options, context_for_files
@@ -147,3 +148,11 @@ def test_invalid_config_checks_render_clean_report_shape() -> None:
     assert data["summary"] == {"pass": 0, "warn": 0, "fail": 1, "skip": 2}
     assert [result["status"] for result in data["results"]] == ["fail", "skip", "skip"]
     assert all("runner" not in result["message"].lower() for result in data["results"])
+
+
+def test_config_json_check_fails_for_oversized_config_without_reading() -> None:
+    oversized = b"{}" + b" " * (_MAX_METADATA_BYTES + 1)
+    result = ConfigJsonCheck().run(context_for_files({"config.json": oversized}))
+    assert result.status == "fail"
+    assert result.severity == "high"
+    assert "too large" in result.message
