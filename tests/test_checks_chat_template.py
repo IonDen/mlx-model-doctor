@@ -69,10 +69,53 @@ def test_special_tokens_warns_on_template_literal_not_registered() -> None:
     result = ChatTemplateSpecialTokensCheck().run(context_for_files(files))
     assert result.status == "warn"
     assert result.severity == "medium"
-    assert "<|im_end|>" in result.message or "register" in result.message.lower()
+    assert list(result.details["unregistered"]) == ["<|im_end|>"]
 
 
 def test_special_tokens_skips_without_template() -> None:
     files = {"tokenizer_config.json": _tokenizer_config("<|im_end|>", ["<|im_end|>"])}
     result = ChatTemplateSpecialTokensCheck().run(context_for_files(files))
     assert result.status == "skip"
+
+
+def test_presence_passes_for_list_form_chat_template() -> None:
+    files = {
+        "tokenizer_config.json": json.dumps(
+            {"chat_template": [{"name": "default", "template": "{{ m }}<|im_end|>"}]}
+        ).encode()
+    }
+    result = ChatTemplatePresenceCheck().run(_ctx(files))
+    assert result.status == "pass"
+
+
+def test_special_tokens_detects_typo_in_list_form_template() -> None:
+    # template (list form) emits <|im_end|> but registered EOS has the typo <|im_end>
+    files = {
+        "tokenizer_config.json": json.dumps(
+            {
+                "chat_template": [{"name": "default", "template": "{{ m }}<|im_end|>"}],
+                "eos_token": "<|im_end>",
+                "added_tokens_decoder": {"0": {"content": "<|im_end>"}},
+            }
+        ).encode()
+    }
+    result = ChatTemplateSpecialTokensCheck().run(_ctx(files))
+    assert result.status == "warn"
+    assert list(result.details["unregistered"]) == ["<|im_end|>"]
+
+
+def test_special_tokens_no_false_warn_for_jinja_variable_only_template() -> None:
+    files = {
+        "tokenizer_config.json": _tokenizer_config("<|im_end|>", ["<|im_end|>"]),
+        "chat_template.jinja": b"{{ bos_token }}{{ messages }}{{ eos_token }}",
+    }
+    result = ChatTemplateSpecialTokensCheck().run(_ctx(files))
+    assert result.status == "pass"
+
+
+def test_presence_warns_medium_when_tokenizer_config_unparseable_with_empty_jinja() -> None:
+    files = {"tokenizer_config.json": b"{not-json", "chat_template.jinja": b"   "}
+    result = ChatTemplatePresenceCheck().run(_ctx(files))
+    assert result.status == "warn"
+    assert result.severity == "medium"
+    assert "parse" in result.message.lower()
