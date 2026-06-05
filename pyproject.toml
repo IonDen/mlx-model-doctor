@@ -71,6 +71,7 @@ exclude = [".codegraph/", ".hypothesis/", ".coverage", "docs/superpowers/", "tes
 src = ["src"]
 line-length = 100
 target-version = "py311"
+extend-exclude = ["src/mlx_model_doctor/_version.py"]
 
 [tool.ruff.lint]
 select = [
