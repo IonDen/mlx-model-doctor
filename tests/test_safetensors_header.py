@@ -145,3 +145,16 @@ def test_map_hf_repo_metadata_threads_file_sizes_and_maps_tensors() -> None:
     assert header.tensor("w") == TensorEntry(
         dtype="U32", shape=(4, 16), data_offsets=(0, 256), parameter_count=64
     )
+
+
+def test_build_local_header_multi_shard_synthesizes_and_aggregates_two_dtypes() -> None:
+    a = TensorEntry(dtype="BF16", shape=(2, 2), data_offsets=(0, 16), parameter_count=4)
+    b = TensorEntry(dtype="F16", shape=(3,), data_offsets=(0, 6), parameter_count=3)
+    header = build_local_header(
+        [_fh("s1.safetensors", {"a": a}), _fh("s2.safetensors", {"b": b})],
+        weight_map=None,
+    )
+    assert header.sharded is True
+    assert header.weight_map == {"a": "s1.safetensors", "b": "s2.safetensors"}
+    assert header.param_count_by_dtype == {"BF16": 4, "F16": 3}
+    assert header.total_parameter_count() == 7
