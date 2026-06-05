@@ -124,9 +124,9 @@ def _gib_from_device_value(value: object) -> int:
 
 
 def _positive_device_bytes(value: object) -> int:
-    if isinstance(value, int):
+    if type(value) is int:
         return max(0, value)
-    if isinstance(value, float):
+    if type(value) is float:
         return max(0, int(value))
     if not isinstance(value, str):
         return 0
