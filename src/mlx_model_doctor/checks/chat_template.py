@@ -10,7 +10,7 @@ _TOKEN_RE = re.compile(r"<\|[^\s|>]+\|?>")
 
 
 def _template_string(ctx: CheckContext) -> str | None:
-    """Return the effective chat-template string from either location, if a string."""
+    """Return the effective chat-template string from either location, if available."""
     jinja = ctx.chat_template_text()
     if jinja is not None and jinja.strip():
         return jinja
@@ -19,6 +19,14 @@ def _template_string(ctx: CheckContext) -> str | None:
         template = tokenizer_config.get("chat_template")
         if isinstance(template, str) and template.strip():
             return template
+        if isinstance(template, list):
+            bodies = [
+                entry["template"]
+                for entry in template
+                if isinstance(entry, dict) and isinstance(entry.get("template"), str)
+            ]
+            if bodies:
+                return "\n".join(bodies)
     return None
 
 
@@ -52,15 +60,6 @@ class ChatTemplatePresenceCheck:
                 severity="info",
                 message="No tokenizer metadata, so a chat template cannot be checked.",
             )
-        if has_tokenizer_config and ctx.tokenizer_config_json() is None and not has_jinja:
-            return CheckResult(
-                check_id=self.check_id,
-                title=self.title,
-                status="warn",
-                severity="medium",
-                message="tokenizer_config.json is present but could not be parsed.",
-                remediation="Ensure tokenizer_config.json is valid JSON.",
-            )
         if _has_template(ctx):
             return CheckResult(
                 check_id=self.check_id,
@@ -72,6 +71,15 @@ class ChatTemplatePresenceCheck:
                     "tokenizer_config": has_tokenizer_config,
                     "chat_template_jinja": has_jinja,
                 },
+            )
+        if has_tokenizer_config and ctx.tokenizer_config_json() is None:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="warn",
+                severity="medium",
+                message="tokenizer_config.json is present but could not be parsed.",
+                remediation="Ensure tokenizer_config.json is valid JSON.",
             )
         return CheckResult(
             check_id=self.check_id,

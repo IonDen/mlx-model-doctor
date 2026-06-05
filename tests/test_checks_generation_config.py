@@ -55,3 +55,23 @@ def test_warns_when_generation_config_present_but_unparseable() -> None:
     result = GenerationConfigTokensCheck().run(ctx)
     assert result.status == "warn"
     assert "parse" in result.message.lower() or "read" in result.message.lower()
+
+
+def test_warns_on_cross_file_bos_disagreement() -> None:
+    files = {
+        "config.json": {"bos_token_id": 1, "eos_token_id": 2, "pad_token_id": 0},
+        "generation_config.json": {"bos_token_id": 9, "eos_token_id": 2, "pad_token_id": 0},
+    }
+    result = GenerationConfigTokensCheck().run(_ctx(files))
+    assert result.status == "warn"
+    assert "bos" in result.message.lower()
+
+
+def test_bool_token_id_is_treated_as_absent() -> None:
+    # eos_token_id=True must NOT count as token id 1 (no eos-without-pad warn)
+    files = {
+        "config.json": {"model_type": "llama"},
+        "generation_config.json": {"eos_token_id": True},
+    }
+    result = GenerationConfigTokensCheck().run(_ctx(files))
+    assert result.status == "skip"
