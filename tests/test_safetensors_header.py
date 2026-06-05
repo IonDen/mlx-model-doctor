@@ -1,0 +1,79 @@
+import json
+import struct
+
+import pytest
+
+from mlx_model_doctor.safetensors_header import (
+    SafetensorsHeaderError,
+    TensorEntry,
+    parse_file_header,
+)
+
+
+def _header_bytes(header: dict[str, object], data_len: int = 0) -> bytes:
+    raw = json.dumps(header).encode("utf-8")
+    return struct.pack("<Q", len(raw)) + raw + (b"\x00" * data_len)
+
+
+def test_parse_file_header_reads_one_tensor() -> None:
+    raw = _header_bytes(
+        {"w": {"dtype": "BF16", "shape": [4, 8], "data_offsets": [0, 64]}},
+        data_len=64,
+    )
+    header = parse_file_header("model.safetensors", raw, file_size=len(raw))
+    assert header.tensors["w"] == TensorEntry(
+        dtype="BF16", shape=(4, 8), data_offsets=(0, 64), parameter_count=32
+    )
+    assert header.header_length == len(
+        json.dumps({"w": {"dtype": "BF16", "shape": [4, 8], "data_offsets": [0, 64]}}).encode()
+    )
+    assert header.data_section_length == 64
+
+
+def test_parse_file_header_lifts_metadata_out_of_tensors() -> None:
+    raw = _header_bytes(
+        {
+            "__metadata__": {"format": "mlx"},
+            "w": {"dtype": "F16", "shape": [2], "data_offsets": [0, 4]},
+        }
+    )
+    header = parse_file_header("m.safetensors", raw, file_size=None)
+    assert header.metadata == {"format": "mlx"}
+    assert set(header.tensors) == {"w"}
+    assert header.data_section_length is None  # file_size unknown
+
+
+def test_parse_file_header_rejects_truncated_prefix() -> None:
+    with pytest.raises(SafetensorsHeaderError, match="prefix"):
+        parse_file_header("m.safetensors", b"\x01\x02", file_size=2)
+
+
+def test_parse_file_header_rejects_oversized_header_length() -> None:
+    raw = struct.pack("<Q", 25_000_001) + b"{}"
+    with pytest.raises(SafetensorsHeaderError, match="too large"):
+        parse_file_header("m.safetensors", raw, file_size=len(raw))
+
+
+def test_parse_file_header_rejects_invalid_json() -> None:
+    raw = struct.pack("<Q", 3) + b"{ x"
+    with pytest.raises(SafetensorsHeaderError, match="JSON"):
+        parse_file_header("m.safetensors", raw, file_size=len(raw))
+
+
+def test_parse_file_header_rejects_non_object_header() -> None:
+    arr = b"[1, 2, 3]"
+    raw = struct.pack("<Q", len(arr)) + arr
+    with pytest.raises(SafetensorsHeaderError, match="object"):
+        parse_file_header("m.safetensors", raw, file_size=len(raw))
+
+
+def test_parse_file_header_rejects_bad_data_offsets() -> None:
+    raw = _header_bytes({"w": {"dtype": "F16", "shape": [2], "data_offsets": [0, 4, 8]}})
+    with pytest.raises(SafetensorsHeaderError, match="data_offsets"):
+        parse_file_header("m.safetensors", raw, file_size=len(raw))
+
+
+def test_parse_file_header_rejects_missing_dtype() -> None:
+    raw = _header_bytes({"w": {"shape": [2], "data_offsets": [0, 4]}})
+    with pytest.raises(SafetensorsHeaderError, match="dtype"):
+        parse_file_header("m.safetensors", raw, file_size=len(raw))
