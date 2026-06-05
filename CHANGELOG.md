@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-06-05
+
+Static correctness expansion: four config-level checks that catch the "loads
+fine, then crashes at generation or fails at MLX convert" class of problems,
+without downloading weights.
+
+### Added
+- Chat-template presence (`text/chat_template.presence`): a chat/instruct model
+  declares a chat template in `tokenizer_config.json` or a sibling
+  `chat_template.jinja`. A missing template only crashes at `apply_chat_template`
+  time, never at load.
+- Chat-template token consistency (`text/chat_template.special_tokens`): the
+  end-of-turn token the template emits is a registered special token. A one-
+  character typo in a stop token loads fine and then never stops generating.
+- Generation token IDs (`text/generation_config.tokens`): `eos` / `pad` / `bos`
+  IDs are present and agree across `config.json`, `generation_config.json`, and
+  `tokenizer_config.json`.
+- MLX quantization mode (`text/quantization.mode`): validates the quantization
+  mode and its group size and bit width against what MLX accepts (`affine`,
+  `mxfp4`, `mxfp8`, `nvfp4`). An unknown mode is a hard failure, since MLX
+  rejects it at convert or load.
+- Size-bounded reads: untrusted metadata files are checked against a size cap
+  before they are read, so a malicious or corrupt repo cannot make the tool pull
+  a huge file into memory.
+
+### Fixed
+- `sample hf --limit N` over-fetches before filtering, so it checks up to `N`
+  MLX candidates even when an author's listing leads with non-MLX repos
+  (best-effort within a capped window).
+- `_positive_device_bytes` no longer treats a boolean device value as a byte
+  count.
+- README quantization wording no longer implies tensor-level validation; the
+  quantization checks are config-level.
+- The release workflow uses a Node 24 build of `actions/download-artifact`, ahead
+  of the GitHub Node 20 sunset.
+
 ## [0.1.0] — 2026-06-04
 
 Initial public release.

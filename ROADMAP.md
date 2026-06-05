@@ -5,6 +5,10 @@ as priorities change.
 
 ## Released
 
+- **v0.2.0** (2026-06-05) — static correctness expansion. Config-level checks for
+  chat-template presence, end-of-turn token consistency, generation token IDs, and
+  MLX quantization modes; size-bounded reads of untrusted metadata; a `sample hf
+  --limit` over-fetch fix.
 - **v0.1.0** (2026-06-04) — initial public release. Static validation for local
   model repositories; the Hugging Face target (`check hf`, `sample hf`); the
   optional memory-safe `mlx-lm` smoke check; text / JSON / Markdown reports; the
