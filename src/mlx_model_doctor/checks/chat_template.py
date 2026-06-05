@@ -85,3 +85,76 @@ class ChatTemplatePresenceCheck:
             ),
             remediation="Add a chat_template to tokenizer_config.json or a chat_template.jinja file.",
         )
+
+
+def _registered_literals(ctx: CheckContext) -> set[str]:
+    literals: set[str] = set()
+    tokenizer_config = ctx.tokenizer_config_json() or {}
+    decoder = tokenizer_config.get("added_tokens_decoder")
+    if isinstance(decoder, dict):
+        for entry in decoder.values():
+            if isinstance(entry, dict) and isinstance(entry.get("content"), str):
+                literals.add(entry["content"])
+    for source in (tokenizer_config, ctx.special_tokens_map_json() or {}):
+        for key in ("eos_token", "bos_token", "pad_token", "unk_token"):
+            value = source.get(key)
+            if isinstance(value, str):
+                literals.add(value)
+            elif isinstance(value, dict) and isinstance(value.get("content"), str):
+                literals.add(value["content"])
+        extra = source.get("additional_special_tokens")
+        if isinstance(extra, list):
+            literals.update(item for item in extra if isinstance(item, str))
+    return literals
+
+
+@dataclass(frozen=True, slots=True)
+class ChatTemplateSpecialTokensCheck:
+    """Check that chat-template end-of-turn literals are registered special tokens."""
+
+    check_id: str = "text/chat_template.special_tokens"
+    title: str = "Chat template tokens"
+
+    def run(self, ctx: CheckContext) -> CheckResult:
+        """Return whether template-emitted literals match registered special tokens."""
+        template = _template_string(ctx)
+        if template is None:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="skip",
+                severity="info",
+                message="No chat template string, so token consistency cannot be checked.",
+            )
+        registered = _registered_literals(ctx)
+        if not registered:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="skip",
+                severity="info",
+                message="No special-token metadata to cross-check against the template.",
+            )
+        unregistered = sorted(set(_TOKEN_RE.findall(template)) - registered)
+        if unregistered:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="warn",
+                severity="medium",
+                message=(
+                    f"Chat template uses token literal(s) {unregistered} not registered as "
+                    "special tokens; a typo here (e.g. a missing delimiter) makes generation "
+                    "never stop. (A typo that is itself registered, or sub-word fragmentation, "
+                    "needs the full tokenizer.json — not checked here.)"
+                ),
+                remediation="Register the template's end-of-turn token, or fix the registered literal.",
+                details={"unregistered": unregistered},
+            )
+        return CheckResult(
+            check_id=self.check_id,
+            title=self.title,
+            status="pass",
+            severity="info",
+            message="Chat-template token literals are registered special tokens.",
+        )
