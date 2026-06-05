@@ -1,11 +1,23 @@
 """Model target abstractions."""
 
+import json
+import struct
 from collections.abc import Sequence
 from pathlib import Path
 from stat import S_ISREG
 from typing import Literal, Protocol, cast
 
 from mlx_model_doctor.errors import TargetError
+from mlx_model_doctor.safetensors_header import (
+    _MAX_HEADER_BYTES,
+    FileHeader,
+    HfSafetensorsRepoMetadata,
+    SafetensorsHeader,
+    SafetensorsHeaderError,
+    build_local_header,
+    map_hf_repo_metadata,
+    parse_file_header,
+)
 
 
 class ModelTarget(Protocol):
@@ -34,6 +46,9 @@ class ModelTarget(Protocol):
     def read_text(self, path: str, *, max_bytes: int | None = None) -> str:
         """Read UTF-8 text from a target-relative path."""
 
+    def safetensors_header(self) -> SafetensorsHeader | None:
+        """Return the aggregated safetensors header, or None when unavailable."""
+
 
 class HfSiblingProtocol(Protocol):
     """Hugging Face repository sibling metadata."""
@@ -57,6 +72,9 @@ class HfHubProtocol(Protocol):
     def download_bytes(self, repo_id: str, filename: str) -> bytes:
         """Download a single repository file as bytes."""
 
+    def safetensors_metadata(self, repo_id: str) -> HfSafetensorsRepoMetadata | None:
+        """Return safetensors header metadata via Range requests, or None when absent."""
+
 
 class DefaultHfHub:
     """Hugging Face Hub adapter using targeted metadata and file reads."""
@@ -76,6 +94,22 @@ class DefaultHfHub:
 
         downloaded_path = hf_hub_download(repo_id=repo_id, filename=filename)
         return Path(downloaded_path).read_bytes()
+
+    def safetensors_metadata(self, repo_id: str) -> HfSafetensorsRepoMetadata | None:
+        """Read safetensors header metadata from huggingface_hub (Range, no download)."""
+        from huggingface_hub import HfApi
+        from huggingface_hub.errors import NotASafetensorsRepoError, SafetensorsParsingError
+
+        try:
+            return cast("HfSafetensorsRepoMetadata", HfApi().get_safetensors_metadata(repo_id))
+        except (NotASafetensorsRepoError, SafetensorsParsingError):
+            return None
+        except Exception as exc:
+            raise TargetError(
+                f"Could not read safetensors metadata for {repo_id}: {exc}",
+                target=repo_id,
+                source="hf",
+            ) from exc
 
 
 class LocalTarget:
@@ -157,6 +191,42 @@ class LocalTarget:
     def read_text(self, path: str, *, max_bytes: int | None = None) -> str:
         """Read UTF-8 text from a model-relative path."""
         return self.read_bytes(path, max_bytes=max_bytes).decode("utf-8")
+
+    def safetensors_header(self) -> SafetensorsHeader | None:
+        """Read and aggregate safetensors headers from disk without reading weights."""
+        shard_paths = sorted(p for p in self.list_files() if p.endswith(".safetensors"))
+        if not shard_paths:
+            return None
+        weight_map = self._safetensors_index_weight_map()
+        file_headers = [self._read_local_file_header(path) for path in shard_paths]
+        return build_local_header(file_headers, weight_map=weight_map)
+
+    def _read_local_file_header(self, path: str) -> FileHeader:
+        prefix = self.read_bytes(path, max_bytes=8)
+        if len(prefix) < 8:
+            raise SafetensorsHeaderError(f"{path}: truncated safetensors header prefix")
+        header_length = int(struct.unpack("<Q", prefix)[0])
+        if header_length > _MAX_HEADER_BYTES:
+            raise SafetensorsHeaderError(f"{path}: safetensors header too large")
+        raw = self.read_bytes(path, max_bytes=8 + header_length)
+        return parse_file_header(path, raw, file_size=self.size(path))
+
+    def _safetensors_index_weight_map(self) -> dict[str, str] | None:
+        index_paths = [p for p in self.list_files() if p.endswith(".safetensors.index.json")]
+        if not index_paths:
+            return None
+        merged: dict[str, str] = {}
+        for index_path in index_paths:
+            try:
+                parsed = json.loads(self.read_text(index_path))
+            except (json.JSONDecodeError, UnicodeError, TargetError):
+                continue
+            weight_map = parsed.get("weight_map") if isinstance(parsed, dict) else None
+            if isinstance(weight_map, dict):
+                merged.update(
+                    {key: value for key, value in weight_map.items() if isinstance(value, str)}
+                )
+        return merged or None
 
     def _path(self, path: str) -> Path:
         try:
@@ -240,6 +310,14 @@ class HfTarget:
     def read_text(self, path: str, *, max_bytes: int | None = None) -> str:
         """Read UTF-8 text from one repository file."""
         return self.read_bytes(path, max_bytes=max_bytes).decode("utf-8")
+
+    def safetensors_header(self) -> SafetensorsHeader | None:
+        """Map the Hugging Face safetensors header metadata, no weight download."""
+        repo_meta = self._hub.safetensors_metadata(self._repo_id)
+        if repo_meta is None:
+            return None
+        file_sizes = {name: self._metadata.get(name) for name in repo_meta.files_metadata}
+        return map_hf_repo_metadata(repo_meta, file_sizes=file_sizes)
 
     def _target_error(self, message: str, path: str) -> TargetError:
         return TargetError(message, target=f"{self._repo_id}:{path}", source=self.source)

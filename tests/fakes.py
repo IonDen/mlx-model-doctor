@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from mlx_model_doctor.context import CheckContext, CheckOptions
+from mlx_model_doctor.safetensors_header import SafetensorsHeader
 
 
 def check_options() -> CheckOptions:
@@ -28,10 +29,14 @@ class FakeTarget:
     files: dict[str, bytes]
     name: str = "fake"
     _source: Literal["local", "hf"] = "local"
+    _safetensors_header: SafetensorsHeader | None = None
 
     @property
     def source(self) -> Literal["local", "hf"]:
         return self._source
+
+    def safetensors_header(self) -> SafetensorsHeader | None:
+        return self._safetensors_header
 
     def exists(self, path: str) -> bool:
         return path in self.files
