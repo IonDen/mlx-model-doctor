@@ -6,7 +6,7 @@
 
 Validate an MLX / Hugging Face model repository before you load it.
 
-A model repo can be broken in ways you only discover halfway through `load()`: a `config.json` that disagrees with the weights, a missing tokenizer file, a `model.safetensors.index.json` that points at shards that aren't there, quantization metadata that doesn't match the tensors, or a model that simply won't fit in the memory you have. `mlx-model-doctor` checks those up front and prints a report, so a bad repo fails fast with a clear reason instead of a confusing crash.
+A model repo can be broken in ways you only discover halfway through `load()`: a `config.json` that's missing or internally inconsistent, a missing tokenizer file, a `model.safetensors.index.json` that points at shards that aren't there, quantization metadata that uses a mode or group size MLX rejects, a chat template that's absent or whose stop token has a typo, or a model that simply won't fit in the memory you have. `mlx-model-doctor` checks those up front and prints a report, so a bad repo fails fast with a clear reason instead of a confusing crash.
 
 The static checks read repository metadata only — `config.json`, the tokenizer files, the safetensors index, quantization fields. They need no GPU or MLX and don't download the weights, so they're cheap to run anywhere. An optional `--smoke` check loads the model through `mlx-lm` (Apple Silicon) under a memory cap, to confirm it loads and generates.
 
@@ -48,8 +48,10 @@ The built-in `text` plugin runs these against a model repository, in order:
 - **Required files** — `config.json` is present and readable.
 - **Config consistency** — `config.json` parses, and its `model_type` is set.
 - **Tokenizer** — the tokenizer files a text model needs are present, and the special-token configuration is coherent.
+- **Chat template** — a chat/instruct model declares a chat template (in `tokenizer_config.json` or a `chat_template.jinja`), and the end-of-turn token its template emits is a registered special token. A typo'd stop token loads fine and then never stops generating.
 - **Safetensors index** — when the weights are sharded, `model.safetensors.index.json` is valid and every shard it references exists.
-- **Quantization metadata** — quantization fields in the config are consistent with what the weights actually carry.
+- **Quantization metadata** — quantization fields are present and use a valid MLX mode with a valid group size and bit width (`affine`, `mxfp4`, `mxfp8`, `nvfp4`). This reads the metadata, not the tensors.
+- **Generation tokens** — the `eos` / `pad` / `bos` token IDs are present and agree across `config.json`, `generation_config.json`, and `tokenizer_config.json`.
 - **Memory budget** — an estimate of the memory the model needs at your context length, compared against a budget you pass with `--max-memory`.
 
 Each check returns a result with a status (`pass` / `warn` / `fail` / `skip`), a message, and — when something is wrong — a remediation hint. The report aggregates them, and the process exit code reflects the worst result under your fail policy.
@@ -60,7 +62,7 @@ Each check returns a result with a status (`pass` / `warn` / `fail` / `skip`), a
 from mlx_model_doctor import check_local_model, check_hf_model
 
 report = check_local_model("./my-model")
-print(report.summary)            # {"pass": 6, "warn": 1, "fail": 0, "skip": 1}
+print(report.summary)            # {"pass": 9, "warn": 1, "fail": 0, "skip": 2}
 for result in report.results:
     print(result.status, result.check_id, result.message)
 
@@ -91,7 +93,7 @@ Exit codes: `0` checks passed (under the fail policy), `1` checks found failures
 
 ## Status
 
-**Alpha (0.1.0).** The static `check local` path and the report/CLI surface are solid and well tested. The Hugging Face path (`check hf`, `sample hf`) is implemented and tested offline against fakes; its live behavior is exercised by opt-in network tests. The API may still shift before 1.0 — pin a version if you depend on it.
+**Alpha (0.2.0).** The static `check local` path and the report/CLI surface are solid and well tested. 0.2.0 adds config-level checks for chat-template presence, end-of-turn token consistency, generation token IDs, and MLX quantization modes. The Hugging Face path (`check hf`, `sample hf`) is implemented and tested offline against fakes; its live behavior is exercised by opt-in network tests. The API may still shift before 1.0 — pin a version if you depend on it.
 
 ## License
 

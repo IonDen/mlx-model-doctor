@@ -2,13 +2,13 @@
 
 Real output from `mlx-model-doctor`, captured by running the tool — so you can see exactly what you get before installing it. Each block shows a command and its actual response.
 
-> Captured with **mlx-model-doctor 0.1.0** on **2026-06-04**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub — they change over time, which is why they're dated.
+> Captured with **mlx-model-doctor 0.2.0** on **2026-06-05**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub — they change over time, which is why they're dated.
 
 ## 1. `version` — environment and dependency status
 
 ```console
 $ mlx-model-doctor version
-mlx-model-doctor 0.1.0
+mlx-model-doctor 0.2.0
 Python: 3.13.12
 Executable: /path/to/.venv/bin/python3
 Virtualenv: /path/to/.venv
@@ -44,17 +44,17 @@ Exit code `0`.
 
 ## 3. `check local` — validate a local model directory
 
-This directory is deliberately broken: it has a `config.json` but no tokenizer, and a `model.safetensors.index.json` that points at shards which aren't there. The report flags both.
+This directory is deliberately broken: it has a `config.json` but no tokenizer, and a `model.safetensors.index.json` that points at a shard which isn't there. The report flags both, skips the checks it can't run, and confirms the quantization mode is valid.
 
 ```console
 $ mlx-model-doctor check local ./model
 MLX Model Doctor: /path/to/model
 
 Summary:
-  pass: 4
+  pass: 5
   warn: 2
   fail: 1
-  skip: 1
+  skip: 4
 
 PASS info text/files.required
   Required config file: config.json is present.
@@ -72,12 +72,24 @@ WARN medium text/tokenizer.files
 SKIP info text/tokenizer.special_tokens
   Special token IDs: pad_token_id or eos_token_id is unavailable in config.json.
 
+SKIP info text/chat_template.presence
+  Chat template: No tokenizer metadata, so a chat template cannot be checked.
+
+SKIP info text/chat_template.special_tokens
+  Chat template tokens: No chat template string, so token consistency cannot be checked.
+
 FAIL high text/safetensors.index
   Safetensors index: Safetensors index model.safetensors.index.json references invalid or missing shard model-00001-of-00002.safetensors.
   Fix: Add the missing safetensors shard or fix the index weight_map.
 
 PASS info text/quantization.metadata
   Quantization metadata: config.json contains MLX quantization metadata.
+
+PASS info text/quantization.mode
+  Quantization mode: MLX quantization mode 'affine' has valid group_size/bits.
+
+SKIP info text/generation_config.tokens
+  Generation-config tokens: No generation token IDs declared, so consistency cannot be checked.
 
 WARN low text/memory.estimate
   Memory estimate: Estimated lower bound memory is advisory and may be below runtime use.
@@ -88,14 +100,14 @@ Exit code `1` — a `fail` result under the default `--fail-on error` policy. A 
 
 ## 4. `check hf` — validate a model on the Hugging Face Hub
 
-Reads repository metadata over the network; it does not download the weights.
+Reads repository metadata over the network; it does not download the weights. This healthy instruct model passes the chat-template, quantization-mode, and generation-token checks.
 
 ```console
 $ mlx-model-doctor check hf mlx-community/Qwen2.5-0.5B-Instruct-4bit
 MLX Model Doctor: mlx-community/Qwen2.5-0.5B-Instruct-4bit
 
 Summary:
-  pass: 6
+  pass: 10
   warn: 1
   fail: 0
   skip: 1
@@ -115,11 +127,23 @@ PASS info text/tokenizer.files
 SKIP info text/tokenizer.special_tokens
   Special token IDs: pad_token_id or eos_token_id is unavailable in config.json.
 
+PASS info text/chat_template.presence
+  Chat template: A chat template is present.
+
+PASS info text/chat_template.special_tokens
+  Chat template tokens: Chat-template token literals are registered special tokens.
+
 PASS info text/safetensors.index
   Safetensors index: Safetensors indexes reference shard files that are present.
 
 PASS info text/quantization.metadata
   Quantization metadata: config.json contains MLX quantization metadata.
+
+PASS info text/quantization.mode
+  Quantization mode: MLX quantization mode 'affine' has valid group_size/bits.
+
+PASS info text/generation_config.tokens
+  Generation-config tokens: Generation token IDs are present and consistent.
 
 WARN low text/memory.estimate
   Memory estimate: Estimated lower bound memory is advisory and may be below runtime use.
@@ -130,7 +154,7 @@ Exit code `0`.
 
 ## 5. `sample hf` — survey an author's likely-MLX repos
 
-Lists an author's repositories, keeps the ones that look like MLX models, and validates a deterministic sample. Each model is reported as its own batch item; a per-model error is recorded and the run continues.
+Lists an author's repositories, keeps the ones that look like MLX models, and validates a deterministic sample. `--limit 5` over-fetches the listing so it checks five MLX candidates even when the author's first listed repos aren't all MLX. Each model is reported as its own batch item; a per-model error is recorded and the run continues.
 
 ```console
 $ mlx-model-doctor sample hf --author mlx-community --limit 5
@@ -144,25 +168,25 @@ Summary:
   checked: 5
   tool-error: 0
 
+CHECKED mlx-community/LFM2.5-8B-A1B-MLX-8bit
+  Signal: tag:mlx
+  Results: pass=10 warn=2 fail=0 skip=0
+
 CHECKED mlx-community/LocateAnything-3B-4bit
   Signal: tag:mlx
-  Results: pass=6 warn=1 fail=0 skip=1
+  Results: pass=9 warn=2 fail=0 skip=1
 
-CHECKED mlx-community/Qwen3.6-27B-4bit
+CHECKED mlx-community/MiniCPM5-1B-OptiQ-4bit
   Signal: tag:mlx
-  Results: pass=6 warn=1 fail=0 skip=1
+  Results: pass=9 warn=3 fail=0 skip=0
 
-CHECKED mlx-community/Qwen3.6-27B-OptiQ-4bit
+CHECKED mlx-community/Qwen3-Coder-30B-A3B-Instruct-4bit
   Signal: tag:mlx
-  Results: pass=6 warn=1 fail=0 skip=1
+  Results: pass=9 warn=2 fail=0 skip=1
 
-CHECKED mlx-community/Qwen3.6-35B-A3B-4bit
+CHECKED mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16
   Signal: tag:mlx
-  Results: pass=6 warn=1 fail=0 skip=1
-
-CHECKED mlx-community/gemma-4-12B-it-8bit
-  Signal: tag:mlx
-  Results: pass=6 warn=1 fail=0 skip=1
+  Results: pass=5 warn=3 fail=0 skip=4
 ```
 
 Exit code `0`. (Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output.)
