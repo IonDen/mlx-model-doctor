@@ -1,6 +1,6 @@
 import json
 
-from mlx_model_doctor.checks.quantization import QuantizationMetadataCheck
+from mlx_model_doctor.checks.quantization import MlxQuantizationModeCheck, QuantizationMetadataCheck
 from tests.fakes import context_for_files
 
 
@@ -78,3 +78,52 @@ def _assert_incomplete_mlx_quantization_warns(quantization: dict[str, object]) -
     assert "incomplete" in result.message
     assert result.remediation is not None
     assert result.details["quantization"] == quantization
+
+
+def test_quant_mode_passes_for_valid_affine() -> None:
+    result = MlxQuantizationModeCheck().run(
+        _context_for_config({"quantization": {"bits": 4, "group_size": 64}})
+    )
+    assert result.status == "pass"
+
+
+def test_quant_mode_passes_for_valid_fixed_mode() -> None:
+    result = MlxQuantizationModeCheck().run(
+        _context_for_config({"quantization": {"mode": "mxfp4", "bits": 4, "group_size": 32}})
+    )
+    assert result.status == "pass"
+
+
+def test_quant_mode_fails_for_unknown_mode() -> None:
+    result = MlxQuantizationModeCheck().run(
+        _context_for_config({"quantization": {"mode": "int8", "bits": 8, "group_size": 64}})
+    )
+    assert result.status == "fail"
+    assert result.severity == "high"
+    assert "mode" in result.message.lower()
+
+
+def test_quant_mode_warns_for_off_table_affine_bits() -> None:
+    result = MlxQuantizationModeCheck().run(
+        _context_for_config({"quantization": {"bits": 7, "group_size": 64}})
+    )
+    assert result.status == "warn"
+
+
+def test_quant_mode_warns_for_noncanonical_fixed_mode() -> None:
+    result = MlxQuantizationModeCheck().run(
+        _context_for_config({"quantization": {"mode": "mxfp4", "bits": 8, "group_size": 32}})
+    )
+    assert result.status == "warn"
+
+
+def test_quant_mode_skips_when_not_quantized() -> None:
+    result = MlxQuantizationModeCheck().run(_context_for_config({"model_type": "llama"}))
+    assert result.status == "skip"
+
+
+def test_quant_mode_skips_for_non_mlx_quantization_config() -> None:
+    result = MlxQuantizationModeCheck().run(
+        _context_for_config({"quantization_config": {"bits": 4, "group_size": 128}})
+    )
+    assert result.status == "skip"
