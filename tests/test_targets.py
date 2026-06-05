@@ -1,8 +1,10 @@
+import struct
 from pathlib import Path
 
 import pytest
 
 from mlx_model_doctor.errors import TargetError
+from mlx_model_doctor.safetensors_header import SafetensorsHeader
 from mlx_model_doctor.targets import LocalTarget
 
 
@@ -108,3 +110,35 @@ def test_local_target_wraps_malformed_paths(tmp_path: Path) -> None:
 
     with pytest.raises(TargetError, match="Invalid local target path"):
         target.exists("bad\0path")
+
+
+def _write_safetensors(path: Path, header: dict[str, object], data: bytes = b"") -> None:
+    import json
+
+    raw = json.dumps(header).encode("utf-8")
+    path.write_bytes(struct.pack("<Q", len(raw)) + raw + data)
+
+
+def test_local_target_reads_single_file_header_without_reading_weights(tmp_path: Path) -> None:
+    model = tmp_path / "m"
+    model.mkdir()
+    _write_safetensors(
+        model / "model.safetensors",
+        {"w": {"dtype": "BF16", "shape": [2, 4], "data_offsets": [0, 16]}},
+        data=b"\x00" * 16,
+    )
+    header = LocalTarget(model).safetensors_header()
+    assert isinstance(header, SafetensorsHeader)
+    assert header.sharded is False
+    assert header.weight_map == {"w": "model.safetensors"}
+    entry = header.tensor("w")
+    assert entry is not None
+    assert entry.shape == (2, 4)
+    assert header.files[0].data_section_length == 16  # file_size threaded from stat
+
+
+def test_local_target_returns_none_without_safetensors(tmp_path: Path) -> None:
+    model = tmp_path / "m"
+    model.mkdir()
+    (model / "config.json").write_text("{}", encoding="utf-8")
+    assert LocalTarget(model).safetensors_header() is None

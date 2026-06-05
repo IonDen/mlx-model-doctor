@@ -3,7 +3,9 @@ from dataclasses import dataclass
 import pytest
 
 from mlx_model_doctor.errors import TargetError
+from mlx_model_doctor.safetensors_header import SafetensorsHeader as _STHeader
 from mlx_model_doctor.targets import HfTarget
+from mlx_model_doctor.targets import HfTarget as _HfTargetForST
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +27,7 @@ class FakeHub:
         sizes: dict[str, int | None] | None = None,
         model_info_error: Exception | None = None,
         download_error: Exception | None = None,
+        safetensors: object | None = None,
     ) -> None:
         self.files = files if files is not None else {}
         self.sizes = (
@@ -32,6 +35,7 @@ class FakeHub:
         )
         self.model_info_error = model_info_error
         self.download_error = download_error
+        self.safetensors = safetensors
         self.model_info_calls: list[tuple[str, bool]] = []
         self.download_calls: list[tuple[str, str]] = []
 
@@ -50,6 +54,9 @@ class FakeHub:
         if self.download_error is not None:
             raise self.download_error
         return self.files[filename]
+
+    def safetensors_metadata(self, repo_id: str) -> object | None:
+        return self.safetensors
 
 
 def test_hf_target_loads_model_info_once_with_file_metadata() -> None:
@@ -126,3 +133,49 @@ def test_hf_target_unknown_path_fails_cleanly_without_download() -> None:
         target.read_text("missing.json")
 
     assert hub.download_calls == []
+
+
+class _STInfo:
+    def __init__(
+        self,
+        dtype: str,
+        shape: list[int],
+        offsets: tuple[int, int],
+        count: int,
+    ) -> None:
+        self.dtype = dtype
+        self.shape = shape
+        self.data_offsets = offsets
+        self.parameter_count = count
+
+
+class _STFile:
+    def __init__(self, tensors: dict[str, _STInfo]) -> None:
+        self.tensors = tensors
+        self.metadata = {"format": "mlx"}
+
+
+class _STRepo:
+    def __init__(self) -> None:
+        self.weight_map = {"w": "model.safetensors"}
+        self.sharded = False
+        self.files_metadata = {
+            "model.safetensors": _STFile({"w": _STInfo("U32", [4, 16], (0, 256), 64)})
+        }
+
+
+def test_hf_target_maps_safetensors_header_with_sibling_file_size() -> None:
+    hub = FakeHub(
+        files={"config.json": b"{}", "model.safetensors": b"x" * 9000}, safetensors=_STRepo()
+    )
+    header = _HfTargetForST("org/repo", hub=hub).safetensors_header()
+    assert isinstance(header, _STHeader)
+    assert header.files[0].file_size == 9000  # from sibling metadata, not the hub object
+    entry = header.tensor("w")
+    assert entry is not None
+    assert entry.dtype == "U32"
+
+
+def test_hf_target_returns_none_for_non_safetensors_repo() -> None:
+    hub = FakeHub(files={"config.json": b"{}"}, safetensors=None)
+    assert _HfTargetForST("org/repo", hub=hub).safetensors_header() is None

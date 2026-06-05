@@ -311,10 +311,12 @@ class FakeHub:
         files: dict[str, bytes] | None = None,
         model_info_error: Exception | None = None,
         download_errors: dict[str, Exception] | None = None,
+        safetensors: object | None = None,
     ) -> None:
         self.files = files if files is not None else {}
         self.model_info_error = model_info_error
         self.download_errors = download_errors if download_errors is not None else {}
+        self.safetensors = safetensors
 
     def model_info(self, repo_id: str, *, files_metadata: bool) -> FakeModelInfo:
         if self.model_info_error is not None:
@@ -329,6 +331,9 @@ class FakeHub:
         if filename in self.download_errors:
             raise self.download_errors[filename]
         return self.files[filename]
+
+    def safetensors_metadata(self, repo_id: str) -> object | None:
+        return self.safetensors
 
 
 class FakePlugin:
