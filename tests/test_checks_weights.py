@@ -1,4 +1,6 @@
-from mlx_model_doctor.checks.weights import WeightParamCountCheck
+import json
+
+from mlx_model_doctor.checks.weights import TiedEmbeddingCheck, WeightParamCountCheck
 from mlx_model_doctor.context import CheckContext
 from mlx_model_doctor.safetensors_header import FileHeader, SafetensorsHeader, TensorEntry
 from tests.fakes import FakeTarget, check_options
@@ -56,3 +58,48 @@ def test_param_count_warn_on_zero_params() -> None:
 
 def test_param_count_skip_without_header() -> None:
     assert _run(None).status == "skip"
+
+
+def _ctx(header: SafetensorsHeader | None, config: object) -> CheckContext:
+    files = {"config.json": json.dumps(config).encode()} if config is not None else {}
+    target = FakeTarget(files=files, _safetensors_header=header)
+    return CheckContext(target=target, options=check_options())
+
+
+def _names_header(names: set[str]) -> SafetensorsHeader:
+    tensors = {n: _entry() for n in names}
+    fh = FileHeader(
+        filename="model.safetensors", tensors=tensors, metadata={}, header_length=10, file_size=None
+    )
+    return SafetensorsHeader(
+        files=(fh,),
+        weight_map=dict.fromkeys(names, "model.safetensors"),
+        sharded=False,
+        param_count_by_dtype={},
+    )
+
+
+def test_tied_pass_when_declared_tied_and_only_input_stored() -> None:
+    header = _names_header({"model.embed_tokens.weight"})
+    result = TiedEmbeddingCheck().run(_ctx(header, {"tie_word_embeddings": True}))
+    assert result.status == "pass"
+
+
+def test_tied_warn_when_declared_tied_but_both_stored() -> None:
+    header = _names_header({"model.embed_tokens.weight", "lm_head.weight"})
+    result = TiedEmbeddingCheck().run(_ctx(header, {"tie_word_embeddings": True}))
+    assert result.status == "warn"
+    assert result.details["stored_both_distinct"] is True
+
+
+def test_tied_warn_when_untied_but_no_output_head() -> None:
+    header = _names_header({"model.embed_tokens.weight"})
+    result = TiedEmbeddingCheck().run(_ctx(header, {"tie_word_embeddings": False}))
+    assert result.status == "warn"
+    assert result.details["missing_output_head"] is True
+
+
+def test_tied_skip_without_config_or_header() -> None:
+    assert TiedEmbeddingCheck().run(_ctx(None, {"tie_word_embeddings": True})).status == "skip"
+    header = _names_header({"model.embed_tokens.weight"})
+    assert TiedEmbeddingCheck().run(_ctx(header, None)).status == "skip"

@@ -55,3 +55,85 @@ class WeightParamCountCheck:
             message="The weight map resolves to present tensors with non-zero parameters.",
             details={"total_parameter_count": total},
         )
+
+
+_INPUT_EMBED_NAMES = (
+    "model.embed_tokens.weight",
+    "transformer.wte.weight",
+    "embed_tokens.weight",
+    "tok_embeddings.weight",
+)
+_OUTPUT_HEAD_NAMES = (
+    "lm_head.weight",
+    "output.weight",
+    "transformer.lm_head.weight",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class TiedEmbeddingCheck:
+    """Cross-check tie_word_embeddings against stored embedding/head tensors."""
+
+    check_id: str = "text/weights.tied_embedding"
+    title: str = "Tied embeddings"
+
+    def run(self, ctx: CheckContext) -> CheckResult:
+        """Return whether declared tying matches the stored embedding tensors."""
+        header = ctx.safetensors_header()
+        config = ctx.config_json()
+        if header is None or config is None:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="skip",
+                severity="info",
+                message="No safetensors header or config to check embedding tying.",
+            )
+        has_input = any(header.tensor(name) is not None for name in _INPUT_EMBED_NAMES)
+        has_output = any(header.tensor(name) is not None for name in _OUTPUT_HEAD_NAMES)
+        if not has_input and not has_output:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="skip",
+                severity="info",
+                message="No recognized embedding or output-head tensor; cannot check tying.",
+            )
+        tied = config.get("tie_word_embeddings") is True
+        if tied and has_input and has_output:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="warn",
+                severity="medium",
+                message="tie_word_embeddings is true but both embedding and lm-head weights are stored.",
+                remediation="Drop the duplicate lm_head weight or set tie_word_embeddings to false.",
+                details={"stored_both_distinct": True},
+            )
+        if tied and not has_input and not has_output:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="warn",
+                severity="medium",
+                message="tie_word_embeddings is true but no shared embedding weight is stored.",
+                remediation="Ensure the tied embedding weight is present in the safetensors.",
+                details={"missing_tied_weight": True},
+            )
+        if not tied and not has_output:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="warn",
+                severity="medium",
+                message="tie_word_embeddings is not set but no output-head weight is stored.",
+                remediation="Store an lm_head weight or set tie_word_embeddings to true.",
+                details={"missing_output_head": True},
+            )
+        return CheckResult(
+            check_id=self.check_id,
+            title=self.title,
+            status="pass",
+            severity="info",
+            message="Embedding tying is consistent with the stored tensors.",
+        )
