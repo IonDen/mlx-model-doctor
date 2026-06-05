@@ -7,7 +7,7 @@ from typing import Literal, cast
 from mlx_model_doctor.errors import TargetError, raise_for_hf_target_error
 from mlx_model_doctor.targets import ModelTarget
 
-_UNSET = object()
+_MAX_METADATA_BYTES = 16 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -27,33 +27,60 @@ class CheckContext:
 
     target: ModelTarget
     options: CheckOptions
-    _config_json: object = field(default=_UNSET, init=False, repr=False)
+    _file_cache: dict[str, object] = field(default_factory=dict, init=False, repr=False)
 
     def config_json(self) -> dict[str, object] | None:
         """Return parsed config JSON, or None when it is absent or unusable."""
-        if self._config_json is not _UNSET:
-            if self._config_json is None:
-                return None
-            return cast("dict[str, object]", self._config_json)
+        return self._read_json_file("config.json")
 
+    def tokenizer_config_json(self) -> dict[str, object] | None:
+        """Return parsed tokenizer_config.json, or None when absent/unusable."""
+        return self._read_json_file("tokenizer_config.json")
+
+    def special_tokens_map_json(self) -> dict[str, object] | None:
+        """Return parsed special_tokens_map.json, or None when absent/unusable."""
+        return self._read_json_file("special_tokens_map.json")
+
+    def generation_config_json(self) -> dict[str, object] | None:
+        """Return parsed generation_config.json, or None when absent/unusable."""
+        return self._read_json_file("generation_config.json")
+
+    def chat_template_text(self) -> str | None:
+        """Return the sibling chat_template.jinja text, or None when absent/unusable."""
+        key = "text:chat_template.jinja"
+        if key in self._file_cache:
+            return cast("str | None", self._file_cache[key])
+        text = self._read_text_guarded("chat_template.jinja")
+        self._file_cache[key] = text
+        return text
+
+    def _read_json_file(self, name: str) -> dict[str, object] | None:
+        if name in self._file_cache:
+            return cast("dict[str, object] | None", self._file_cache[name])
+        parsed = self._load_json(name)
+        self._file_cache[name] = parsed
+        return parsed
+
+    def _load_json(self, name: str) -> dict[str, object] | None:
+        text = self._read_text_guarded(name)
+        if text is None:
+            return None
         try:
-            if not self.target.exists("config.json"):
-                self._config_json = None
+            value: object = json.loads(text)
+        except (json.JSONDecodeError, UnicodeError):
+            return None
+        return cast("dict[str, object]", value) if isinstance(value, dict) else None
+
+    def _read_text_guarded(self, name: str) -> str | None:
+        try:
+            if not self.target.exists(name):
                 return None
-            raw_config = self.target.read_text("config.json")
-            parsed_config: object = json.loads(raw_config)
+            size = self.target.size(name)
+            if size is not None and size > _MAX_METADATA_BYTES:
+                return None
+            return self.target.read_text(name)
         except TargetError as exc:
             raise_for_hf_target_error(exc)
-            self._config_json = None
             return None
-        except (FileNotFoundError, json.JSONDecodeError, UnicodeError):
-            self._config_json = None
+        except (FileNotFoundError, UnicodeError):
             return None
-
-        if not isinstance(parsed_config, dict):
-            self._config_json = None
-            return None
-
-        config = cast("dict[str, object]", parsed_config)
-        self._config_json = config
-        return config

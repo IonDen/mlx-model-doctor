@@ -1,8 +1,10 @@
+import json
+
 import pytest
 
-from mlx_model_doctor.context import CheckContext, CheckOptions
+from mlx_model_doctor.context import _MAX_METADATA_BYTES, CheckContext, CheckOptions
 from mlx_model_doctor.errors import TargetError
-from tests.fakes import FakeTarget
+from tests.fakes import FakeTarget, context_for_files
 
 
 def options() -> CheckOptions:
@@ -108,3 +110,47 @@ class KeyErrorTarget(FakeTarget):
 
     def read_text(self, path: str, *, max_bytes: int | None = None) -> str:
         raise KeyError("adapter bug")
+
+
+# ---------------------------------------------------------------------------
+# New accessor tests (Task 1)
+# ---------------------------------------------------------------------------
+
+
+def test_tokenizer_config_json_parses_present_file() -> None:
+    ctx = context_for_files(
+        {"tokenizer_config.json": json.dumps({"eos_token": "<|im_end|>"}).encode()}
+    )
+    assert ctx.tokenizer_config_json() == {"eos_token": "<|im_end|>"}
+
+
+def test_metadata_accessors_return_none_when_absent() -> None:
+    ctx = context_for_files({})
+    assert ctx.tokenizer_config_json() is None
+    assert ctx.special_tokens_map_json() is None
+    assert ctx.generation_config_json() is None
+    assert ctx.chat_template_text() is None
+
+
+def test_metadata_accessors_return_none_for_malformed_json() -> None:
+    ctx = context_for_files({"generation_config.json": b"{not-json"})
+    assert ctx.generation_config_json() is None
+    assert ctx.target.exists("generation_config.json") is True
+
+
+def test_chat_template_text_reads_jinja_sibling() -> None:
+    ctx = context_for_files({"chat_template.jinja": b"{{ bos_token }}<|im_end|>"})
+    assert ctx.chat_template_text() == "{{ bos_token }}<|im_end|>"
+
+
+def test_json_accessor_refuses_oversized_file_without_parsing() -> None:
+    oversized = b"{}" + b" " * (_MAX_METADATA_BYTES + 1)
+    ctx = context_for_files({"tokenizer_config.json": oversized})
+    assert ctx.tokenizer_config_json() is None
+    assert ctx.target.exists("tokenizer_config.json") is True
+
+
+def test_config_json_still_parses_and_is_cached() -> None:
+    ctx = context_for_files({"config.json": json.dumps({"model_type": "llama"}).encode()})
+    assert ctx.config_json() == {"model_type": "llama"}
+    assert ctx.config_json() is ctx.config_json()
