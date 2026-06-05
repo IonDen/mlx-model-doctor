@@ -77,3 +77,71 @@ def test_parse_file_header_rejects_missing_dtype() -> None:
     raw = _header_bytes({"w": {"shape": [2], "data_offsets": [0, 4]}})
     with pytest.raises(SafetensorsHeaderError, match="dtype"):
         parse_file_header("m.safetensors", raw, file_size=len(raw))
+
+
+from mlx_model_doctor.safetensors_header import (  # noqa: E402
+    FileHeader,
+    build_local_header,
+    map_hf_repo_metadata,
+)
+
+
+def _fh(filename: str, tensors: dict[str, TensorEntry], file_size: int | None = None) -> FileHeader:
+    return FileHeader(
+        filename=filename, tensors=tensors, metadata={}, header_length=10, file_size=file_size
+    )
+
+
+def test_build_local_header_single_file_synthesizes_weight_map() -> None:
+    entry = TensorEntry(dtype="BF16", shape=(2, 2), data_offsets=(0, 16), parameter_count=4)
+    header = build_local_header([_fh("model.safetensors", {"w": entry})], weight_map=None)
+    assert header.sharded is False
+    assert header.weight_map == {"w": "model.safetensors"}
+    assert header.param_count_by_dtype == {"BF16": 4}
+    assert header.total_parameter_count() == 4
+
+
+def test_build_local_header_uses_index_weight_map_when_present() -> None:
+    entry = TensorEntry(dtype="F16", shape=(2,), data_offsets=(0, 4), parameter_count=2)
+    header = build_local_header(
+        [_fh("model-00001-of-00002.safetensors", {"w": entry})],
+        weight_map={"w": "model-00001-of-00002.safetensors"},
+    )
+    assert header.sharded is True
+    assert header.weight_map == {"w": "model-00001-of-00002.safetensors"}
+
+
+class _FakeTensorInfo:
+    def __init__(self, dtype: str, shape: list[int], offsets: tuple[int, int], count: int) -> None:
+        self.dtype = dtype
+        self.shape = shape
+        self.data_offsets = offsets
+        self.parameter_count = count
+
+
+class _FakeFileMeta:
+    def __init__(self, tensors: dict[str, _FakeTensorInfo]) -> None:
+        self.tensors = tensors
+        self.metadata = {"format": "mlx"}
+
+
+class _FakeRepoMeta:
+    def __init__(self) -> None:
+        self.weight_map = {"w": "model.safetensors"}
+        self.sharded = False
+        self.files_metadata = {
+            "model.safetensors": _FakeFileMeta({"w": _FakeTensorInfo("U32", [4, 16], (0, 256), 64)})
+        }
+
+
+def test_map_hf_repo_metadata_threads_file_sizes_and_maps_tensors() -> None:
+    header = map_hf_repo_metadata(_FakeRepoMeta(), file_sizes={"model.safetensors": 9000})
+    assert header.weight_map == {"w": "model.safetensors"}
+    assert header.sharded is False
+    file_header = header.files[0]
+    assert file_header.file_size == 9000
+    assert file_header.header_length is None  # the hub does not expose it -> no data_section_length
+    assert file_header.data_section_length is None
+    assert header.tensor("w") == TensorEntry(
+        dtype="U32", shape=(4, 16), data_offsets=(0, 256), parameter_count=64
+    )

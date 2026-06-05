@@ -3,9 +3,9 @@
 import json
 import math
 import struct
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import cast
+from typing import Protocol, cast
 
 # Match huggingface_hub's own SAFETENSORS_MAX_HEADER_LENGTH so the local and HF
 # paths enforce the same upper bound on a single header.
@@ -131,3 +131,95 @@ def _parse_tensor(filename: str, name: str, value: object) -> TensorEntry:
 
 def _is_int(value: object) -> bool:
     return type(value) is int
+
+
+class HfTensorInfo(Protocol):
+    """Duck-typed huggingface_hub TensorInfo."""
+
+    dtype: str
+    shape: Sequence[int]
+    data_offsets: tuple[int, int]
+    parameter_count: int
+
+
+class HfFileMetadata(Protocol):
+    """Duck-typed huggingface_hub SafetensorsFileMetadata."""
+
+    tensors: Mapping[str, HfTensorInfo]
+    metadata: Mapping[str, str]
+
+
+class HfSafetensorsRepoMetadata(Protocol):
+    """Duck-typed huggingface_hub SafetensorsRepoMetadata."""
+
+    weight_map: Mapping[str, str]
+    sharded: bool
+    files_metadata: Mapping[str, HfFileMetadata]
+
+
+def build_local_header(
+    file_headers: Sequence[FileHeader],
+    *,
+    weight_map: Mapping[str, str] | None,
+) -> SafetensorsHeader:
+    """Aggregate per-file headers; synthesize a weight map when there is no index."""
+    files = tuple(file_headers)
+    if weight_map is None:
+        synthesized: dict[str, str] = {}
+        for file_header in files:
+            for name in file_header.tensors:
+                synthesized[name] = file_header.filename
+        resolved_map: Mapping[str, str] = synthesized
+        sharded = len(files) > 1
+    else:
+        resolved_map = dict(weight_map)
+        sharded = True
+    return SafetensorsHeader(
+        files=files,
+        weight_map=resolved_map,
+        sharded=sharded,
+        param_count_by_dtype=_aggregate_param_counts(files),
+    )
+
+
+def map_hf_repo_metadata(
+    repo_meta: HfSafetensorsRepoMetadata,
+    *,
+    file_sizes: Mapping[str, int | None],
+) -> SafetensorsHeader:
+    """Map a huggingface_hub safetensors metadata object into our header types."""
+    files: list[FileHeader] = []
+    for filename, file_meta in repo_meta.files_metadata.items():
+        tensors = {
+            name: TensorEntry(
+                dtype=info.dtype,
+                shape=tuple(info.shape),
+                data_offsets=(info.data_offsets[0], info.data_offsets[1]),
+                parameter_count=info.parameter_count,
+            )
+            for name, info in file_meta.tensors.items()
+        }
+        files.append(
+            FileHeader(
+                filename=filename,
+                tensors=tensors,
+                metadata=dict(file_meta.metadata),
+                header_length=None,  # the hub does not expose the JSON header length
+                file_size=file_sizes.get(filename),
+            )
+        )
+    file_tuple = tuple(files)
+    return SafetensorsHeader(
+        files=file_tuple,
+        weight_map=dict(repo_meta.weight_map),
+        sharded=repo_meta.sharded,
+        param_count_by_dtype=_aggregate_param_counts(file_tuple),
+    )
+
+
+def _aggregate_param_counts(files: Sequence[FileHeader]) -> Mapping[str, int]:
+    counts: dict[str, int] = {}
+    for file_header in files:
+        for entry in file_header.tensors.values():
+            counts[entry.dtype] = counts.get(entry.dtype, 0) + entry.parameter_count
+    return counts
