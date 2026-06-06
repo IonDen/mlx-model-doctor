@@ -258,7 +258,6 @@ def test_check_hf_json_format_dispatches_options_and_plugin(monkeypatch, capsys)
             "1b",
             "--context-length",
             "8",
-            "--include-weights",
             "--smoke",
             "--quiet",
         ]
@@ -285,6 +284,20 @@ def test_parser_accepts_smoke_for_check_local_and_hf() -> None:
 
     assert cli._options_from_args(local_args).smoke is True
     assert cli._options_from_args(hf_args).smoke is True
+
+
+def test_check_runs_weight_checks_by_default() -> None:
+    args = cli.build_parser().parse_args(["check", "local", "./model"])
+
+    assert cli._options_from_args(args).include_weights is True
+
+
+def test_skip_weights_flag_disables_weight_checks() -> None:
+    local_args = cli.build_parser().parse_args(["check", "local", "./model", "--skip-weights"])
+    hf_args = cli.build_parser().parse_args(["check", "hf", "org/model", "--skip-weights"])
+
+    assert cli._options_from_args(local_args).include_weights is False
+    assert cli._options_from_args(hf_args).include_weights is False
 
 
 def test_sample_hf_command_parser_has_author_limit_and_format() -> None:

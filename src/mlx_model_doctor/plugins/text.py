@@ -13,10 +13,15 @@ from mlx_model_doctor.checks.config import ConfigJsonCheck, ModelTypeCheck
 from mlx_model_doctor.checks.files import RequiredConfigCheck
 from mlx_model_doctor.checks.generation_config import GenerationConfigTokensCheck
 from mlx_model_doctor.checks.memory import MemoryEstimateCheck
-from mlx_model_doctor.checks.quantization import MlxQuantizationModeCheck, QuantizationMetadataCheck
-from mlx_model_doctor.checks.safetensors import SafetensorsIndexCheck
+from mlx_model_doctor.checks.quantization import (
+    MlxQuantizationModeCheck,
+    MlxQuantShapeCheck,
+    QuantizationMetadataCheck,
+)
+from mlx_model_doctor.checks.safetensors import SafetensorsIndexCheck, SafetensorsOffsetScanCheck
 from mlx_model_doctor.checks.smoke import MlxLmSmokeCheck
 from mlx_model_doctor.checks.tokenizer import SpecialTokensCheck, TokenizerFilesCheck
+from mlx_model_doctor.checks.weights import TiedEmbeddingCheck, WeightParamCountCheck
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +47,18 @@ class TextModelPlugin:
                 MlxQuantizationModeCheck(),
                 GenerationConfigTokensCheck(),
                 MemoryEstimateCheck(),
+            ),
+        )
+
+    def weight_checks(self) -> Sequence[ModelCheck]:
+        """Return safetensors-header checks in stable execution order."""
+        return cast(
+            "Sequence[ModelCheck]",
+            (
+                SafetensorsOffsetScanCheck(),
+                WeightParamCountCheck(),
+                TiedEmbeddingCheck(),
+                MlxQuantShapeCheck(),
             ),
         )
 

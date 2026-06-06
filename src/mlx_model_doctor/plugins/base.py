@@ -16,5 +16,8 @@ class DoctorPlugin(Protocol):
     def static_checks(self) -> Sequence[ModelCheck]:
         """Return static checks for this plugin."""
 
+    def weight_checks(self) -> Sequence[ModelCheck]:
+        """Return checks that read the safetensors tensor header."""
+
     def smoke_checks(self) -> Sequence[ModelCheck]:
         """Return smoke checks for this plugin."""

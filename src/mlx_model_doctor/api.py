@@ -24,9 +24,12 @@ def check_local_model(
         options=options if options is not None else _default_options(),
     )
     static_results = run_static_checks(ctx, plugin.static_checks())
+    weight_checks = plugin.weight_checks() if ctx.options.include_weights else ()
+    weight_results = run_static_checks(ctx, weight_checks)
     smoke_checks = plugin.smoke_checks() if ctx.options.smoke else ()
     results = [
         *static_results,
+        *weight_results,
         *run_smoke_checks(ctx, smoke_checks, static_results),
     ]
     return DoctorReport(
@@ -52,9 +55,12 @@ def check_hf_model(
         options=options if options is not None else _default_options(),
     )
     static_results = run_static_checks(ctx, plugin.static_checks())
+    weight_checks = plugin.weight_checks() if ctx.options.include_weights else ()
+    weight_results = run_static_checks(ctx, weight_checks)
     smoke_checks = plugin.smoke_checks() if ctx.options.smoke else ()
     results = [
         *static_results,
+        *weight_results,
         *run_smoke_checks(ctx, smoke_checks, static_results),
     ]
     return DoctorReport(
@@ -69,7 +75,7 @@ def _default_options() -> CheckOptions:
     return CheckOptions(
         max_memory_bytes=None,
         context_length=4096,
-        include_weights=False,
+        include_weights=True,
         smoke=False,
         verbosity="normal",
     )

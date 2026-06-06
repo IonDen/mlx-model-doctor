@@ -29,11 +29,48 @@ def test_check_local_model_returns_text_report_for_valid_local_model(tmp_path: P
         "text/chat_template.presence",
         "text/chat_template.special_tokens",
         "text/safetensors.index",
+        "text/safetensors.offsets",
+        "text/weights.param_count",
+        "text/weights.tied_embedding",
         "text/quantization.metadata",
         "text/quantization.mode",
+        "text/quantization.shape",
         "text/generation_config.tokens",
         "text/memory.estimate",
     }
+
+
+def test_default_check_runs_weight_checks_that_skip_without_safetensors(tmp_path: Path) -> None:
+    model = write_local_model(tmp_path)
+    report = check_local_model(model)
+    weight_ids = {
+        "text/safetensors.offsets",
+        "text/weights.param_count",
+        "text/weights.tied_embedding",
+        "text/quantization.shape",
+    }
+    statuses = {r.check_id: r.status for r in report.results if r.check_id in weight_ids}
+    assert statuses == dict.fromkeys(weight_ids, "skip")
+    assert report.summary["fail"] == 0
+
+
+def test_sample_options_suppress_weight_checks(tmp_path: Path) -> None:
+    model = write_local_model(tmp_path)
+    options = CheckOptions(
+        max_memory_bytes=None,
+        context_length=4096,
+        include_weights=False,
+        smoke=False,
+        verbosity="normal",
+    )
+    report = check_local_model(model, options=options)
+    weight_ids = {
+        "text/safetensors.offsets",
+        "text/weights.param_count",
+        "text/weights.tied_embedding",
+        "text/quantization.shape",
+    }
+    assert not ({r.check_id for r in report.results} & weight_ids)
 
 
 def test_check_local_model_reports_missing_config_without_crashing(tmp_path: Path) -> None:
@@ -341,6 +378,9 @@ class FakePlugin:
 
     def static_checks(self) -> tuple[ModelCheck, ...]:
         return (FakeCheck("text/static.fake"),)
+
+    def weight_checks(self) -> tuple[ModelCheck, ...]:
+        return (FakeCheck("text/weights.fake"),)
 
     def smoke_checks(self) -> tuple[ModelCheck, ...]:
         return (FakeCheck("text/smoke.fake"),)
