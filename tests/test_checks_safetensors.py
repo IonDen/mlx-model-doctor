@@ -224,7 +224,10 @@ class OversizedReadAssertTarget(FakeTarget):
 
 def _entry(dtype: str, begin: int, end: int) -> TensorEntry:
     return TensorEntry(
-        dtype=dtype, shape=(end - begin,), data_offsets=(begin, end), parameter_count=end - begin
+        dtype=dtype,
+        shape=(end - begin,),
+        data_offsets=(begin, end),
+        stored_element_count=end - begin,
     )
 
 
@@ -242,7 +245,7 @@ def _offsets_header(
         files=(fh,),
         weight_map=dict.fromkeys(tensors, "model.safetensors"),
         sharded=False,
-        param_count_by_dtype={},
+        stored_count_by_dtype={},
     )
 
 

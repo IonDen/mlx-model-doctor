@@ -8,7 +8,7 @@ from tests.fakes import FakeTarget, check_options
 
 def _entry(count: int = 4) -> TensorEntry:
     return TensorEntry(
-        dtype="BF16", shape=(count,), data_offsets=(0, count * 2), parameter_count=count
+        dtype="BF16", shape=(count,), data_offsets=(0, count * 2), stored_element_count=count
     )
 
 
@@ -20,7 +20,7 @@ def _header(*, tensors: dict[str, TensorEntry], weight_map: dict[str, str]) -> S
         files=(fh,),
         weight_map=weight_map,
         sharded=False,
-        param_count_by_dtype={"BF16": sum(e.parameter_count for e in tensors.values())},
+        stored_count_by_dtype={"BF16": sum(e.stored_element_count for e in tensors.values())},
     )
 
 
@@ -50,7 +50,7 @@ def test_param_count_warn_on_zero_params() -> None:
     fh = FileHeader(
         filename="model.safetensors", tensors={}, metadata={}, header_length=10, file_size=None
     )
-    header = SafetensorsHeader(files=(fh,), weight_map={}, sharded=False, param_count_by_dtype={})
+    header = SafetensorsHeader(files=(fh,), weight_map={}, sharded=False, stored_count_by_dtype={})
     result = _run(header)
     assert result.status == "warn"
     assert result.details["empty_or_zero_param_files"] == ("model.safetensors",)
@@ -61,13 +61,13 @@ def test_param_count_skip_without_header() -> None:
 
 
 def test_param_count_warn_on_nonempty_files_but_zero_total() -> None:
-    # File HAS a tensor, but param_count_by_dtype sums to 0 -> the total==0 clause must fire.
+    # File HAS a tensor, but stored_count_by_dtype sums to 0 -> the total==0 clause must fire.
     base = _header(tensors={"w": _entry()}, weight_map={"w": "model.safetensors"})
     header = SafetensorsHeader(
         files=base.files,
         weight_map=base.weight_map,
         sharded=False,
-        param_count_by_dtype={"BF16": 0},
+        stored_count_by_dtype={"BF16": 0},
     )
     result = _run(header)
     assert result.status == "warn"
@@ -89,7 +89,7 @@ def _names_header(names: set[str]) -> SafetensorsHeader:
         files=(fh,),
         weight_map=dict.fromkeys(names, "model.safetensors"),
         sharded=False,
-        param_count_by_dtype={},
+        stored_count_by_dtype={},
     )
 
 

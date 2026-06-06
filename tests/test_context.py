@@ -163,7 +163,7 @@ def test_config_json_still_parses_and_is_cached() -> None:
 
 
 def test_context_caches_safetensors_header_one_call() -> None:
-    header = SafetensorsHeader(files=(), weight_map={}, sharded=False, param_count_by_dtype={})
+    header = SafetensorsHeader(files=(), weight_map={}, sharded=False, stored_count_by_dtype={})
 
     class CountingHeaderTarget(FakeTarget):
         calls: int = 0

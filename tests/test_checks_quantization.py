@@ -141,7 +141,7 @@ def test_quant_mode_skips_for_non_mlx_quantization_config() -> None:
 
 
 def _t(dtype: str, shape: tuple[int, ...]) -> TensorEntry:
-    return TensorEntry(dtype=dtype, shape=shape, data_offsets=(0, 0), parameter_count=1)
+    return TensorEntry(dtype=dtype, shape=shape, data_offsets=(0, 0), stored_element_count=1)
 
 
 def _quant_header(tensors: dict[str, TensorEntry]) -> SafetensorsHeader:
@@ -156,7 +156,7 @@ def _quant_header(tensors: dict[str, TensorEntry]) -> SafetensorsHeader:
         files=(fh,),
         weight_map=dict.fromkeys(tensors, "model.safetensors"),
         sharded=False,
-        param_count_by_dtype={},
+        stored_count_by_dtype={},
     )
 
 

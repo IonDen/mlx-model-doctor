@@ -3,7 +3,7 @@
 import json
 import math
 import struct
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol, cast
 
@@ -23,7 +23,7 @@ class TensorEntry:
     dtype: str
     shape: tuple[int, ...]
     data_offsets: tuple[int, int]
-    parameter_count: int
+    stored_element_count: int
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -52,7 +52,7 @@ class SafetensorsHeader:
     files: tuple[FileHeader, ...]
     weight_map: Mapping[str, str]
     sharded: bool
-    param_count_by_dtype: Mapping[str, int]
+    stored_count_by_dtype: Mapping[str, int]
 
     def tensor(self, name: str) -> TensorEntry | None:
         """Return a tensor entry by name across files, or None when absent."""
@@ -62,9 +62,19 @@ class SafetensorsHeader:
                 return entry
         return None
 
-    def total_parameter_count(self) -> int:
+    def tensor_names(self) -> Iterator[str]:
+        """Yield every tensor name across all files."""
+        for file_header in self.files:
+            yield from file_header.tensors
+
+    def iter_tensors(self) -> Iterator[tuple[str, TensorEntry]]:
+        """Yield every (name, entry) pair across all files."""
+        for file_header in self.files:
+            yield from file_header.tensors.items()
+
+    def total_stored_element_count(self) -> int:
         """Return the total stored-element count across all dtypes."""
-        return sum(self.param_count_by_dtype.values())
+        return sum(self.stored_count_by_dtype.values())
 
 
 def parse_file_header(filename: str, raw: bytes, *, file_size: int | None) -> FileHeader:
@@ -126,7 +136,7 @@ def _parse_tensor(filename: str, name: str, value: object) -> TensorEntry:
         dtype=dtype,
         shape=shape_tuple,
         data_offsets=(begin, end),
-        parameter_count=math.prod(shape_tuple),
+        stored_element_count=math.prod(shape_tuple),
     )
 
 
@@ -179,7 +189,7 @@ def build_local_header(
         files=files,
         weight_map=resolved_map,
         sharded=sharded,
-        param_count_by_dtype=_aggregate_param_counts(files),
+        stored_count_by_dtype=_aggregate_stored_counts(files),
     )
 
 
@@ -196,7 +206,7 @@ def map_hf_repo_metadata(
                 dtype=info.dtype,
                 shape=tuple(info.shape),
                 data_offsets=(info.data_offsets[0], info.data_offsets[1]),
-                parameter_count=info.parameter_count,
+                stored_element_count=info.parameter_count,
             )
             for name, info in file_meta.tensors.items()
         }
@@ -214,13 +224,13 @@ def map_hf_repo_metadata(
         files=file_tuple,
         weight_map=dict(repo_meta.weight_map),
         sharded=repo_meta.sharded,
-        param_count_by_dtype=_aggregate_param_counts(file_tuple),
+        stored_count_by_dtype=_aggregate_stored_counts(file_tuple),
     )
 
 
-def _aggregate_param_counts(files: Sequence[FileHeader]) -> Mapping[str, int]:
+def _aggregate_stored_counts(files: Sequence[FileHeader]) -> Mapping[str, int]:
     counts: dict[str, int] = {}
     for file_header in files:
         for entry in file_header.tensors.values():
-            counts[entry.dtype] = counts.get(entry.dtype, 0) + entry.parameter_count
+            counts[entry.dtype] = counts.get(entry.dtype, 0) + entry.stored_element_count
     return counts
