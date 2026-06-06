@@ -41,7 +41,8 @@ class FileHeader:
         """Bytes available for tensor data, or None when it can't be computed."""
         if self.file_size is None or self.header_length is None:
             return None
-        return self.file_size - 8 - self.header_length
+        length = self.file_size - 8 - self.header_length
+        return length if length >= 0 else None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -115,7 +116,7 @@ def _parse_tensor(filename: str, name: str, value: object) -> TensorEntry:
     offsets = entry.get("data_offsets")
     if not isinstance(dtype, str):
         raise SafetensorsHeaderError(f"{filename}: tensor {name} is missing a string dtype")
-    if not isinstance(shape, list) or not all(_is_int(dim) for dim in shape):
+    if not isinstance(shape, list) or not all(_is_int(dim) and dim >= 0 for dim in shape):
         raise SafetensorsHeaderError(f"{filename}: tensor {name} has an invalid shape")
     if not isinstance(offsets, list) or len(offsets) != 2 or not all(_is_int(o) for o in offsets):
         raise SafetensorsHeaderError(f"{filename}: tensor {name} has invalid data_offsets")

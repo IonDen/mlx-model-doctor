@@ -328,12 +328,15 @@ class SafetensorsOffsetScanCheck:
                 continue
             if data_section_length is not None and end > data_section_length:
                 out_of_bounds.append(label)
+            if entry.dtype not in _KNOWN_ST_DTYPES:
+                unknown_dtypes.append(f"{label}({entry.dtype})")
+            if begin == end:
+                # A zero-length tensor occupies no bytes; it cannot overlap or gap.
+                continue
             if prev_name is not None and begin < prev_end:
                 overlapping.append(f"{file_header.filename}:{prev_name}->{name}")
             elif prev_name is not None and begin > prev_end:
                 gaps.append(label)
-            if entry.dtype not in _KNOWN_ST_DTYPES:
-                unknown_dtypes.append(f"{label}({entry.dtype})")
             prev_end = max(prev_end, end)
             prev_name = name
         return data_section_length is None

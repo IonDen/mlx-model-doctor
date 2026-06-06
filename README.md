@@ -43,7 +43,7 @@ Requires Python ≥ 3.11. The static checks are pure Python (`huggingface-hub` +
 
 ## What it checks
 
-The built-in `text` plugin runs these against a model repository, in order:
+The built-in `text` plugin runs these against a model repository, broadly in this order:
 
 - **Required files** — `config.json` is present and readable.
 - **Config consistency** — `config.json` parses, and its `model_type` is set.
