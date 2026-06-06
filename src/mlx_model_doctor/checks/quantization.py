@@ -5,7 +5,6 @@ from dataclasses import dataclass
 
 from mlx_model_doctor.context import CheckContext
 from mlx_model_doctor.report import CheckResult
-from mlx_model_doctor.safetensors_header import SafetensorsHeader
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,7 +224,7 @@ class MlxQuantShapeCheck:
                 remediation="Confirm the MLX version supports this bit width.",
                 details={"unknown_bits": bits},
             )
-        scales = [name for name in self._all_names(header) if name.endswith(_SCALES_SUFFIX)]
+        scales = [name for name in header.tensor_names() if name.endswith(_SCALES_SUFFIX)]
         if not scales:
             return CheckResult(
                 check_id=self.check_id,
@@ -265,9 +264,6 @@ class MlxQuantShapeCheck:
             severity="info",
             message="Quantized tensor shapes are consistent with config bits/group_size.",
         )
-
-    def _all_names(self, header: SafetensorsHeader) -> list[str]:
-        return [name for file_header in header.files for name in file_header.tensors]
 
 
 def _positive_int(value: object) -> int | None:

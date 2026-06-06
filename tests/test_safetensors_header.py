@@ -22,7 +22,7 @@ def test_parse_file_header_reads_one_tensor() -> None:
     )
     header = parse_file_header("model.safetensors", raw, file_size=len(raw))
     assert header.tensors["w"] == TensorEntry(
-        dtype="BF16", shape=(4, 8), data_offsets=(0, 64), parameter_count=32
+        dtype="BF16", shape=(4, 8), data_offsets=(0, 64), stored_element_count=32
     )
     assert header.header_length == len(
         json.dumps({"w": {"dtype": "BF16", "shape": [4, 8], "data_offsets": [0, 64]}}).encode()
@@ -93,16 +93,16 @@ def _fh(filename: str, tensors: dict[str, TensorEntry], file_size: int | None = 
 
 
 def test_build_local_header_single_file_synthesizes_weight_map() -> None:
-    entry = TensorEntry(dtype="BF16", shape=(2, 2), data_offsets=(0, 16), parameter_count=4)
+    entry = TensorEntry(dtype="BF16", shape=(2, 2), data_offsets=(0, 16), stored_element_count=4)
     header = build_local_header([_fh("model.safetensors", {"w": entry})], weight_map=None)
     assert header.sharded is False
     assert header.weight_map == {"w": "model.safetensors"}
-    assert header.param_count_by_dtype == {"BF16": 4}
-    assert header.total_parameter_count() == 4
+    assert header.stored_count_by_dtype == {"BF16": 4}
+    assert header.total_stored_element_count() == 4
 
 
 def test_build_local_header_uses_index_weight_map_when_present() -> None:
-    entry = TensorEntry(dtype="F16", shape=(2,), data_offsets=(0, 4), parameter_count=2)
+    entry = TensorEntry(dtype="F16", shape=(2,), data_offsets=(0, 4), stored_element_count=2)
     header = build_local_header(
         [_fh("model-00001-of-00002.safetensors", {"w": entry})],
         weight_map={"w": "model-00001-of-00002.safetensors"},
@@ -143,21 +143,31 @@ def test_map_hf_repo_metadata_threads_file_sizes_and_maps_tensors() -> None:
     assert file_header.header_length is None  # the hub does not expose it -> no data_section_length
     assert file_header.data_section_length is None
     assert header.tensor("w") == TensorEntry(
-        dtype="U32", shape=(4, 16), data_offsets=(0, 256), parameter_count=64
+        dtype="U32", shape=(4, 16), data_offsets=(0, 256), stored_element_count=64
     )
 
 
 def test_build_local_header_multi_shard_synthesizes_and_aggregates_two_dtypes() -> None:
-    a = TensorEntry(dtype="BF16", shape=(2, 2), data_offsets=(0, 16), parameter_count=4)
-    b = TensorEntry(dtype="F16", shape=(3,), data_offsets=(0, 6), parameter_count=3)
+    a = TensorEntry(dtype="BF16", shape=(2, 2), data_offsets=(0, 16), stored_element_count=4)
+    b = TensorEntry(dtype="F16", shape=(3,), data_offsets=(0, 6), stored_element_count=3)
     header = build_local_header(
         [_fh("s1.safetensors", {"a": a}), _fh("s2.safetensors", {"b": b})],
         weight_map=None,
     )
     assert header.sharded is True
     assert header.weight_map == {"a": "s1.safetensors", "b": "s2.safetensors"}
-    assert header.param_count_by_dtype == {"BF16": 4, "F16": 3}
-    assert header.total_parameter_count() == 7
+    assert header.stored_count_by_dtype == {"BF16": 4, "F16": 3}
+    assert header.total_stored_element_count() == 7
+
+
+def test_safetensors_header_tensor_names_flattens_across_files() -> None:
+    a = TensorEntry(dtype="BF16", shape=(2,), data_offsets=(0, 4), stored_element_count=2)
+    b = TensorEntry(dtype="F16", shape=(3,), data_offsets=(0, 6), stored_element_count=3)
+    header = build_local_header(
+        [_fh("s1.safetensors", {"a": a}), _fh("s2.safetensors", {"b": b})], weight_map=None
+    )
+    assert sorted(header.tensor_names()) == ["a", "b"]
+    assert dict(header.iter_tensors()) == {"a": a, "b": b}
 
 
 def test_parse_file_header_rejects_negative_shape_dim() -> None:

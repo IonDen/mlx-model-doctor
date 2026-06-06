@@ -36,7 +36,7 @@ class WeightParamCountCheck:
                 details={"missing_tensors": missing},
             )
         empty_files = tuple(sorted(fh.filename for fh in header.files if not fh.tensors))
-        total = header.total_parameter_count()
+        total = header.total_stored_element_count()
         if empty_files or total == 0:
             return CheckResult(
                 check_id=self.check_id,
