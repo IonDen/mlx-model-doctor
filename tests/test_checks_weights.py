@@ -60,6 +60,20 @@ def test_param_count_skip_without_header() -> None:
     assert _run(None).status == "skip"
 
 
+def test_param_count_warn_on_nonempty_files_but_zero_total() -> None:
+    # File HAS a tensor, but param_count_by_dtype sums to 0 -> the total==0 clause must fire.
+    base = _header(tensors={"w": _entry()}, weight_map={"w": "model.safetensors"})
+    header = SafetensorsHeader(
+        files=base.files,
+        weight_map=base.weight_map,
+        sharded=False,
+        param_count_by_dtype={"BF16": 0},
+    )
+    result = _run(header)
+    assert result.status == "warn"
+    assert result.details["total_parameter_count"] == 0
+
+
 def _ctx(header: SafetensorsHeader | None, config: object) -> CheckContext:
     files = {"config.json": json.dumps(config).encode()} if config is not None else {}
     target = FakeTarget(files=files, _safetensors_header=header)
@@ -103,3 +117,12 @@ def test_tied_skip_without_config_or_header() -> None:
     assert TiedEmbeddingCheck().run(_ctx(None, {"tie_word_embeddings": True})).status == "skip"
     header = _names_header({"model.embed_tokens.weight"})
     assert TiedEmbeddingCheck().run(_ctx(header, None)).status == "skip"
+
+
+def test_tied_treats_nonbool_truthy_as_untied() -> None:
+    # tie_word_embeddings: 1 (not the bool True) must be read as "untied", so a
+    # missing output head warns instead of silently passing.
+    header = _names_header({"model.embed_tokens.weight"})
+    result = TiedEmbeddingCheck().run(_ctx(header, {"tie_word_embeddings": 1}))
+    assert result.status == "warn"
+    assert result.details["missing_output_head"] is True

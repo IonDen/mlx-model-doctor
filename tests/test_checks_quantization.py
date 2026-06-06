@@ -211,3 +211,12 @@ def test_quant_shape_skip_without_quant_or_header() -> None:
     assert (
         MlxQuantShapeCheck().run(_quant_ctx(None, {"bits": 4, "group_size": 64})).status == "skip"
     )
+
+
+def test_quant_shape_skips_non_u32_weight_with_scales() -> None:
+    # A BF16 weight carrying a stray .scales sibling must NOT be measured as packed-U32:
+    # the dtype != "U32" guard skips it, so the layer is not flagged as inconsistent.
+    # (Dropping that guard would measure the BF16 weight and emit a spurious fail.)
+    header = _quant_header({"l.weight": _t("BF16", (256, 64)), "l.scales": _t("BF16", (256, 4))})
+    result = MlxQuantShapeCheck().run(_quant_ctx(header, {"bits": 4, "group_size": 64}))
+    assert result.status == "pass"
