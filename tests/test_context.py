@@ -190,23 +190,32 @@ def test_context_routes_hf_header_target_error() -> None:
         ctx.safetensors_header()
 
 
-def test_context_swallows_local_header_parse_error() -> None:
+def test_context_exposes_local_header_parse_error() -> None:
     from mlx_model_doctor.safetensors_header import SafetensorsHeaderError
 
     class BadHeaderTarget(FakeTarget):
         def safetensors_header(self) -> SafetensorsHeader | None:
-            raise SafetensorsHeaderError("corrupt")
+            raise SafetensorsHeaderError("model.safetensors: corrupt")
 
     ctx = CheckContext(target=BadHeaderTarget(files={}), options=check_options())
     assert ctx.safetensors_header() is None
+    assert ctx.safetensors_header_error() == "model.safetensors: corrupt"
 
 
-def test_context_swallows_local_header_target_error() -> None:
+def test_context_exposes_local_header_target_error_message() -> None:
     from mlx_model_doctor.errors import TargetError
 
-    class LocalErrorTarget(FakeTarget):
+    class LocalIoErrorTarget(FakeTarget):
         def safetensors_header(self) -> SafetensorsHeader | None:
-            raise TargetError("disk gone", target="/m", source="local")
+            raise TargetError("disk read failed", target="/m", source="local")
 
-    ctx = CheckContext(target=LocalErrorTarget(files={}), options=check_options())
+    ctx = CheckContext(target=LocalIoErrorTarget(files={}), options=check_options())
     assert ctx.safetensors_header() is None
+    assert ctx.safetensors_header_error() == "disk read failed"
+
+
+def test_context_no_header_error_when_absent() -> None:
+    # No safetensors present at all -> header None, but NO error (it's a skip, not a fail).
+    ctx = CheckContext(target=FakeTarget(files={}), options=check_options())
+    assert ctx.safetensors_header() is None
+    assert ctx.safetensors_header_error() is None
