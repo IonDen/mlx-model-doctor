@@ -40,7 +40,73 @@ Exit codes:
   2: tool error, bad target, missing dependency, or zero checks
 ```
 
-## 3. `check local` — catching a corrupt safetensors before you load it
+## 3. `check local` — validate a real model on disk
+
+The everyday case: you've downloaded a model and want to confirm it before loading. This is `mlx-community/Qwen2.5-0.5B-Instruct-4bit` on disk — the same model checked over the Hub in section 5. Locally the tool can also verify the tensor offsets are in bounds (it knows the file size and the header length), so `safetensors.offsets` passes outright rather than with the Hub's "upper bound not checked" note.
+
+```console
+$ mlx-model-doctor check local ./Qwen2.5-0.5B-Instruct-4bit
+MLX Model Doctor: /path/to/Qwen2.5-0.5B-Instruct-4bit
+
+Summary:
+  pass: 14
+  warn: 1
+  fail: 0
+  skip: 1
+
+PASS info text/files.required
+  Required config file: config.json is present.
+
+PASS info text/config.json
+  Config JSON: config.json contains a valid JSON object.
+
+PASS info text/config.model_type
+  Model type: config.json declares model_type=qwen2.
+
+PASS info text/tokenizer.files
+  Tokenizer files: Tokenizer artifacts are present.
+
+SKIP info text/tokenizer.special_tokens
+  Special token IDs: pad_token_id or eos_token_id is unavailable in config.json.
+
+PASS info text/chat_template.presence
+  Chat template: A chat template is present.
+
+PASS info text/chat_template.special_tokens
+  Chat template tokens: Chat-template token literals are registered special tokens.
+
+PASS info text/safetensors.index
+  Safetensors index: Safetensors indexes reference shard files that are present.
+
+PASS info text/quantization.metadata
+  Quantization metadata: config.json contains MLX quantization metadata.
+
+PASS info text/quantization.mode
+  Quantization mode: MLX quantization mode 'affine' has valid group_size/bits.
+
+PASS info text/generation_config.tokens
+  Generation-config tokens: Generation token IDs are present and consistent.
+
+WARN low text/memory.estimate
+  Memory estimate: Estimated lower bound memory is advisory and may be below runtime use.
+  Fix: Treat this as a floor; account for runtime overhead before loading the model.
+
+PASS info text/safetensors.offsets
+  Safetensors offsets: Safetensors header tensor offsets are well-formed and in bounds.
+
+PASS info text/weights.param_count
+  Weight parameter count: The weight map resolves to present tensors with non-zero parameters.
+
+PASS info text/weights.tied_embedding
+  Tied embeddings: Embedding tying is consistent with the stored tensors.
+
+PASS info text/quantization.shape
+  Quantization shape: Quantized tensor shapes are consistent with config bits/group_size.
+```
+
+Exit code `0`. The `--skip-weights` flag drops the four tensor-header checks for a faster config-only pass.
+
+## 4. `check local` — catching a corrupt safetensors before you load it
 
 This directory's `model.safetensors` has two tensors whose byte ranges overlap — a corrupt header that would fail at load. `mlx-model-doctor` reads only the tensor header (not the weights) and flags it. Exit code `1`.
 
@@ -106,11 +172,11 @@ SKIP info text/quantization.shape
   Quantization shape: No MLX quantization metadata or safetensors header to check.
 ```
 
-The four tensor-header checks (`safetensors.offsets`, `weights.param_count`, `weights.tied_embedding`, `quantization.shape`) run by default. Pass `--skip-weights` to skip them for a faster config-only pass.
+Only the tensor header is read to find this — never the weight body — so the corruption is caught without loading the model.
 
-## 4. `check hf` — a healthy model on the Hugging Face Hub
+## 5. `check hf` — a healthy model on the Hugging Face Hub
 
-Reads repository metadata and the safetensors header over the network — it does not download the weights. The tensor-header checks confirm the quantized layer shapes, the tied embedding, and the parameter map. (`safetensors.offsets` passes with a note: the Hub doesn't expose the header length, so the data-section upper bound isn't checkable there — the overlap and ordering checks still run.)
+The same model as section 3, validated over the network instead of on disk. It reads repository metadata and the safetensors header — it does not download the weights. The tensor-header checks confirm the quantized layer shapes, the tied embedding, and the parameter map. (`safetensors.offsets` passes with a note: the Hub doesn't expose the header length, so the data-section upper bound isn't checkable there — the overlap and ordering checks still run.)
 
 ```console
 $ mlx-model-doctor check hf mlx-community/Qwen2.5-0.5B-Instruct-4bit
@@ -174,7 +240,7 @@ PASS info text/quantization.shape
 
 Exit code `0`.
 
-## 5. `sample hf` — survey an author's likely-MLX repos
+## 6. `sample hf` — survey an author's likely-MLX repos
 
 Lists an author's repositories, keeps the ones that look like MLX models, and validates a deterministic sample. `--limit 5` over-fetches the listing so it checks five MLX candidates even when the first listed repos aren't all MLX. Each model is its own batch item; a per-model error is recorded and the run continues. The survey stays config-only (it doesn't fetch tensor headers per repo).
 
