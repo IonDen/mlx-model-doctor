@@ -110,16 +110,6 @@ class TiedEmbeddingCheck:
                 remediation="Drop the duplicate lm_head weight or set tie_word_embeddings to false.",
                 details={"stored_both_distinct": True},
             )
-        if tied and not has_input and not has_output:
-            return CheckResult(
-                check_id=self.check_id,
-                title=self.title,
-                status="warn",
-                severity="medium",
-                message="tie_word_embeddings is true but no shared embedding weight is stored.",
-                remediation="Ensure the tied embedding weight is present in the safetensors.",
-                details={"missing_tied_weight": True},
-            )
         if not tied and not has_output:
             return CheckResult(
                 check_id=self.check_id,

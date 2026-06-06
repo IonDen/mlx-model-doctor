@@ -301,3 +301,20 @@ def test_offsets_allow_zero_length_tensor() -> None:
     # begin == end is a legitimate empty tensor, must not be flagged out-of-bounds.
     header = _offsets_header({"a": _entry("F32", 0, 0)}, file_size=18)
     assert _run_offsets(header).status == "pass"
+
+
+def test_offsets_fail_on_inverted_offset() -> None:
+    # end < begin is a corrupt offset, independent of the data-section bound.
+    header = _offsets_header({"a": _entry("F32", 8, 4)}, file_size=40)
+    result = _run_offsets(header)
+    assert result.status == "fail"
+    assert result.severity == "high"
+    assert result.details["out_of_bounds"]
+
+
+def test_offsets_warn_on_non_contiguous_gap() -> None:
+    # a ends at 4, b begins at 8 -> a benign gap; clean dtypes/bounds -> warn, not fail.
+    header = _offsets_header({"a": _entry("F32", 0, 4), "b": _entry("F32", 8, 12)}, file_size=30)
+    result = _run_offsets(header)
+    assert result.status == "warn"
+    assert result.details["gaps"]
