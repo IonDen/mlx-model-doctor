@@ -158,3 +158,17 @@ def test_build_local_header_multi_shard_synthesizes_and_aggregates_two_dtypes() 
     assert header.weight_map == {"a": "s1.safetensors", "b": "s2.safetensors"}
     assert header.param_count_by_dtype == {"BF16": 4, "F16": 3}
     assert header.total_parameter_count() == 7
+
+
+def test_parse_file_header_rejects_negative_shape_dim() -> None:
+    raw = _header_bytes({"w": {"dtype": "F16", "shape": [-2, 4], "data_offsets": [0, 4]}})
+    with pytest.raises(SafetensorsHeaderError, match="shape"):
+        parse_file_header("m.safetensors", raw, file_size=len(raw))
+
+
+def test_file_header_data_section_length_is_none_when_file_too_small() -> None:
+    # file_size smaller than 8 + header_length implies no valid data section.
+    fh = FileHeader(
+        filename="m.safetensors", tensors={}, metadata={}, header_length=20, file_size=10
+    )
+    assert fh.data_section_length is None

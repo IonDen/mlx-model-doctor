@@ -318,3 +318,15 @@ def test_offsets_warn_on_non_contiguous_gap() -> None:
     result = _run_offsets(header)
     assert result.status == "warn"
     assert result.details["gaps"]
+
+
+def test_offsets_pass_with_empty_tensor_after_real_weight() -> None:
+    # An empty tensor serializes as data_offsets=(0,0). Sorted by begin it sits beside
+    # the real weight; it must NOT be read as an overlap. Weight-first insertion order
+    # is the common real case (big weight before small/empty buffers).
+    header = _offsets_header(
+        {"model.weight": _entry("F32", 0, 400), "model.empty_buffer": _entry("F32", 0, 0)},
+        file_size=8 + 10 + 400,  # header_length=10 default -> data_section_length=400
+    )
+    result = _run_offsets(header)
+    assert result.status == "pass"
