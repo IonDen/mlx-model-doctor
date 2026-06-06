@@ -213,6 +213,13 @@ def test_quant_shape_skip_without_quant_or_header() -> None:
     )
 
 
+def test_quant_shape_skip_when_bits_missing() -> None:
+    # quantization mapping present but no usable bits -> skip (not a false pass/fail).
+    header = _quant_header({"l.weight": _t("U32", (256, 64)), "l.scales": _t("BF16", (256, 8))})
+    result = MlxQuantShapeCheck().run(_quant_ctx(header, {"group_size": 64}))
+    assert result.status == "skip"
+
+
 def test_quant_shape_skips_non_u32_weight_with_scales() -> None:
     # A BF16 weight carrying a stray .scales sibling must NOT be measured as packed-U32:
     # the dtype != "U32" guard skips it, so the layer is not flagged as inconsistent.

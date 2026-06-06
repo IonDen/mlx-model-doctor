@@ -119,6 +119,13 @@ def test_tied_skip_without_config_or_header() -> None:
     assert TiedEmbeddingCheck().run(_ctx(header, None)).status == "skip"
 
 
+def test_tied_skip_when_no_recognized_embedding_tensor() -> None:
+    # A header with tensors but none matching the embedding/head alias lists -> skip.
+    header = _names_header({"some.random.weight"})
+    result = TiedEmbeddingCheck().run(_ctx(header, {"tie_word_embeddings": True}))
+    assert result.status == "skip"
+
+
 def test_tied_treats_nonbool_truthy_as_untied() -> None:
     # tie_word_embeddings: 1 (not the bool True) must be read as "untied", so a
     # missing output head warns instead of silently passing.

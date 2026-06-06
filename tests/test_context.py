@@ -199,3 +199,14 @@ def test_context_swallows_local_header_parse_error() -> None:
 
     ctx = CheckContext(target=BadHeaderTarget(files={}), options=check_options())
     assert ctx.safetensors_header() is None
+
+
+def test_context_swallows_local_header_target_error() -> None:
+    from mlx_model_doctor.errors import TargetError
+
+    class LocalErrorTarget(FakeTarget):
+        def safetensors_header(self) -> SafetensorsHeader | None:
+            raise TargetError("disk gone", target="/m", source="local")
+
+    ctx = CheckContext(target=LocalErrorTarget(files={}), options=check_options())
+    assert ctx.safetensors_header() is None
