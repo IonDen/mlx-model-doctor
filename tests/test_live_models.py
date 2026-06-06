@@ -371,6 +371,26 @@ def unused_check(
     raise AssertionError(f"unexpected check call for {repo_id}")
 
 
+@pytest.mark.network
+def test_hf_safetensors_header_is_readable_without_download() -> None:
+    from mlx_model_doctor.targets import HfTarget
+
+    header = HfTarget("mlx-community/Qwen2.5-0.5B-Instruct-4bit").safetensors_header()
+    assert header is not None
+    entry = next(iter(header.files[0].tensors.values()))
+    assert entry.dtype
+    assert entry.shape
+    assert entry.data_offsets[1] >= entry.data_offsets[0]
+
+
+@pytest.mark.network
+def test_hf_known_good_repo_has_no_failures_with_weight_checks() -> None:
+    from mlx_model_doctor.api import check_hf_model
+
+    report = check_hf_model("mlx-community/Qwen2.5-0.5B-Instruct-4bit")
+    assert report.summary["fail"] == 0
+
+
 def test_run_hf_sample_overfetches_so_limit_counts_mlx_candidates() -> None:
     # Non-MLX repos ("aaa/plain-1", "aab/plain-2") sort before the two MLX ones.
     # With the old code (list limit=2), both listed repos are non-MLX, so 0 MLX
