@@ -5,6 +5,12 @@ as priorities change.
 
 ## Released
 
+- **v0.3.0** (2026-06-06) — deep weight inspection. Reads the safetensors header
+  (no weight download; on the Hub over a range request) to add four tensor-level
+  checks: safetensors offset corruption, weight-map parameter sanity,
+  tied-embedding consistency, and MLX quantized-layer shape consistency. They run
+  by default; the reserved `--include-weights` flag became an opt-out
+  `--skip-weights`.
 - **v0.2.0** (2026-06-05) — static correctness expansion. Config-level checks for
   chat-template presence, end-of-turn token consistency, generation token IDs, and
   MLX quantization modes; size-bounded reads of untrusted metadata; a `sample hf
@@ -24,21 +30,6 @@ Direction informed by a survey of how MLX / Hugging Face repos actually break
 (2026-06-04). The theme: catch more of the "loads fine, then fails or generates
 garbage" class of problems statically, before a load attempt.
 
-- **Deeper pre-load consistency checks.** A model can load cleanly and still
-  misbehave at generation time. Planned: chat-template presence across both
-  `tokenizer_config.json` and a sibling `chat_template.jinja`; EOS / end-of-turn
-  token literals matching what the chat template uses (a one-character typo makes
-  generation never stop); `generation_config.json` token-id sanity; and
-  tied-embedding consistency (a declared-but-missing tied weight loads silently
-  wrong).
-- **Reading the safetensors header without downloading weights.** Fetching just
-  the tensor map (over an HTTP range request) unlocks real dtype/shape and
-  parameter-count checks, plus per-layer quantization-divisibility — all on the
-  cheap, no-download path.
-- **MLX-aware quantization validation.** Validate `group_size` / `bits` against
-  what each MLX quantization mode actually allows (affine vs mxfp4 / mxfp8 /
-  nvfp4), and flag a quantized layer whose last dimension isn't divisible by its
-  group size — MLX hard-errors on that at load.
 - **More check plugins beyond `text`** — vision-language, embedding, and other
   model families, each with its own ordered check list (the plugin protocol is
   already in place). A vision-language repo missing its image-processor metadata
