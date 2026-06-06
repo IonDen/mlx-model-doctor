@@ -112,7 +112,7 @@ def _options_from_args(args: argparse.Namespace) -> CheckOptions:
     return CheckOptions(
         max_memory_bytes=max_memory_bytes,
         context_length=context_length,
-        include_weights=args.include_weights,
+        include_weights=not args.skip_weights,
         smoke=args.smoke,
         verbosity=_verbosity(args),
     )
@@ -252,9 +252,9 @@ def _add_check_options(parser: argparse.ArgumentParser) -> None:
         help="exit-code strictness",
     )
     parser.add_argument(
-        "--include-weights",
+        "--skip-weights",
         action="store_true",
-        help="include weight content checks when available",
+        help="skip safetensors tensor-header checks (faster, config-only)",
     )
     parser.add_argument(
         "--smoke",
