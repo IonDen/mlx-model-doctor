@@ -320,6 +320,21 @@ def test_offsets_warn_on_non_contiguous_gap() -> None:
     assert result.details["gaps"]
 
 
+def test_offsets_fail_when_header_present_but_unparseable() -> None:
+    from mlx_model_doctor.safetensors_header import SafetensorsHeaderError
+
+    class RaisingHeaderTarget(FakeTarget):
+        def safetensors_header(self):
+            raise SafetensorsHeaderError("model.safetensors: header is truncated")
+
+    ctx = CheckContext(target=RaisingHeaderTarget(files={}), options=check_options())
+    result = SafetensorsOffsetScanCheck().run(ctx)
+    assert result.status == "fail"
+    assert result.severity == "high"
+    assert "could not be read" in result.message
+    assert result.details["error"] == "model.safetensors: header is truncated"
+
+
 def test_offsets_pass_with_empty_tensor_after_real_weight() -> None:
     # An empty tensor serializes as data_offsets=(0,0). Sorted by begin it sits beside
     # the real weight; it must NOT be read as an overlap. Weight-first insertion order

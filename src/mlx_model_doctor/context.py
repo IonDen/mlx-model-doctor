@@ -57,21 +57,28 @@ class CheckContext:
 
     def safetensors_header(self) -> SafetensorsHeader | None:
         """Return the cached safetensors header (one fetch shared across checks)."""
-        key = "safetensors:header"
-        if key in self._file_cache:
-            return cast("SafetensorsHeader | None", self._file_cache[key])
-        header = self._load_safetensors_header()
-        self._file_cache[key] = header
-        return header
+        self._ensure_safetensors_header_loaded()
+        return cast("SafetensorsHeader | None", self._file_cache["safetensors:header"])
 
-    def _load_safetensors_header(self) -> SafetensorsHeader | None:
+    def safetensors_header_error(self) -> str | None:
+        """Return why a present safetensors header could not be read, or None when absent/ok."""
+        self._ensure_safetensors_header_loaded()
+        return cast("str | None", self._file_cache["safetensors:header_error"])
+
+    def _ensure_safetensors_header_loaded(self) -> None:
+        if "safetensors:header" in self._file_cache:
+            return
+        header: SafetensorsHeader | None = None
+        error: str | None = None
         try:
-            return self.target.safetensors_header()
-        except SafetensorsHeaderError:
-            return None
+            header = self.target.safetensors_header()
+        except SafetensorsHeaderError as exc:
+            error = str(exc)
         except TargetError as exc:
             raise_for_hf_target_error(exc)
-            return None
+            error = str(exc)
+        self._file_cache["safetensors:header"] = header
+        self._file_cache["safetensors:header_error"] = error
 
     def _read_json_file(self, name: str) -> dict[str, object] | None:
         if name in self._file_cache:

@@ -251,6 +251,17 @@ class SafetensorsOffsetScanCheck:
         """Return whether tensor data offsets are well-formed and in bounds."""
         header = ctx.safetensors_header()
         if header is None:
+            error = ctx.safetensors_header_error()
+            if error is not None:
+                return CheckResult(
+                    check_id=self.check_id,
+                    title=self.title,
+                    status="fail",
+                    severity="high",
+                    message=f"The safetensors header could not be read: {error}",
+                    remediation="The model will not load; re-save or re-download the safetensors file.",
+                    details={"error": error},
+                )
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,
