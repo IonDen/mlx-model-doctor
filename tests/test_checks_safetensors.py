@@ -293,3 +293,9 @@ def test_offsets_warn_on_unknown_dtype() -> None:
 
 def test_offsets_skip_without_header() -> None:
     assert _run_offsets(None).status == "skip"
+
+
+def test_offsets_allow_zero_length_tensor() -> None:
+    # begin == end is a legitimate empty tensor, must not be flagged out-of-bounds.
+    header = _offsets_header({"a": _entry("F32", 0, 0)}, file_size=18)
+    assert _run_offsets(header).status == "pass"

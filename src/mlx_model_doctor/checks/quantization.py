@@ -205,9 +205,9 @@ class MlxQuantShapeCheck:
                 severity="info",
                 message="No MLX quantization metadata or safetensors header to check.",
             )
-        bits_raw = quant.get("bits")
-        group_size_raw = quant.get("group_size")
-        if not _positive_int(bits_raw) or not _positive_int(group_size_raw):
+        bits = _positive_int(quant.get("bits"))
+        group_size = _positive_int(quant.get("group_size"))
+        if bits is None or group_size is None:
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,
@@ -215,8 +215,6 @@ class MlxQuantShapeCheck:
                 severity="info",
                 message="Quantization bits/group_size are incomplete; shape check skipped.",
             )
-        bits: int = bits_raw  # type: ignore[assignment]
-        group_size: int = group_size_raw  # type: ignore[assignment]
         if bits not in _AFFINE_BITS:
             return CheckResult(
                 check_id=self.check_id,
@@ -272,5 +270,5 @@ class MlxQuantShapeCheck:
         return [name for file_header in header.files for name in file_header.tensors]
 
 
-def _positive_int(value: object) -> bool:
-    return type(value) is int and value > 0
+def _positive_int(value: object) -> int | None:
+    return value if type(value) is int and value > 0 else None
