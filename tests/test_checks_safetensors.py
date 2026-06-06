@@ -277,11 +277,13 @@ def test_offsets_fail_on_out_of_bounds_when_size_known() -> None:
     assert result.details["out_of_bounds"]
 
 
-def test_offsets_warn_when_size_unavailable() -> None:
+def test_offsets_pass_when_only_size_unavailable() -> None:
+    # On the HF path header_length is unknown -> data_section_length is None.
+    # The upper bound can't be checked, but overlap/ordering are clean -> pass, not warn.
     header = _offsets_header({"a": _entry("F32", 0, 12)}, file_size=None, header_length=None)
     result = _run_offsets(header)
-    assert result.status == "warn"
-    assert result.details["size_unknown"] is True
+    assert result.status == "pass"
+    assert result.details["upper_bound_checked"] is False
 
 
 def test_offsets_warn_on_unknown_dtype() -> None:
