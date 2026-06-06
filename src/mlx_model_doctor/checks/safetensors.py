@@ -281,18 +281,17 @@ class SafetensorsOffsetScanCheck:
                     "overlapping": tuple(overlapping),
                 },
             )
-        if unknown_dtypes or gaps or size_unknown:
+        if unknown_dtypes or gaps:
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,
                 status="warn",
                 severity="medium",
                 message="Safetensors header offsets are usable but could not be fully validated.",
-                remediation="Review unknown dtypes or non-contiguous offsets; file size may be unavailable.",
+                remediation="Review unknown dtypes or non-contiguous offsets.",
                 details={
                     "unknown_dtypes": tuple(unknown_dtypes),
                     "gaps": tuple(gaps),
-                    "size_unknown": size_unknown,
                 },
             )
         return CheckResult(
@@ -300,7 +299,13 @@ class SafetensorsOffsetScanCheck:
             title=self.title,
             status="pass",
             severity="info",
-            message="Safetensors header tensor offsets are well-formed and in bounds.",
+            message=(
+                "Safetensors header tensor offsets are well-formed and in bounds."
+                if not size_unknown
+                else "Safetensors tensor offsets are well-formed; the data-section upper "
+                "bound was not checked (header length unavailable on this target)."
+            ),
+            details={"upper_bound_checked": not size_unknown},
         )
 
     def _scan_file(
