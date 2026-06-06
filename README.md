@@ -6,9 +6,9 @@
 
 Validate an MLX / Hugging Face model repository before you load it.
 
-A model repo can be broken in ways you only discover halfway through `load()`: a `config.json` that's missing or internally inconsistent, a missing tokenizer file, a `model.safetensors.index.json` that points at shards that aren't there, quantization metadata that uses a mode or group size MLX rejects, a chat template that's absent or whose stop token has a typo, or a model that simply won't fit in the memory you have. `mlx-model-doctor` checks those up front and prints a report, so a bad repo fails fast with a clear reason instead of a confusing crash.
+A model repo can be broken in ways you only discover halfway through `load()`: a `config.json` that's missing or internally inconsistent, a missing tokenizer file, a `model.safetensors.index.json` that points at shards that aren't there, quantization metadata that uses a mode or group size MLX rejects, a chat template that's absent or whose stop token has a typo, a corrupt safetensors header, a quantized layer whose packed weight and scales shapes disagree, or a model that simply won't fit in the memory you have. `mlx-model-doctor` checks those up front and prints a report, so a bad repo fails fast with a clear reason instead of a confusing crash.
 
-The static checks read repository metadata only — `config.json`, the tokenizer files, the safetensors index, quantization fields. They need no GPU or MLX and don't download the weights, so they're cheap to run anywhere. An optional `--smoke` check loads the model through `mlx-lm` (Apple Silicon) under a memory cap, to confirm it loads and generates.
+The checks read repository metadata and the safetensors *header* — `config.json`, the tokenizer files, the safetensors index, quantization fields, and the tensor map (dtypes, shapes, byte-offsets) parsed from the header alone. They need no GPU or MLX and never download the weights; on the Hub the header arrives over a small HTTP range request, so the checks stay cheap to run anywhere. An optional `--smoke` check loads the model through `mlx-lm` (Apple Silicon) under a memory cap, to confirm it loads and generates.
 
 ```bash
 mlx-model-doctor check local ./my-model
@@ -50,6 +50,7 @@ The built-in `text` plugin runs these against a model repository, in order:
 - **Tokenizer** — the tokenizer files a text model needs are present, and the special-token configuration is coherent.
 - **Chat template** — a chat/instruct model declares a chat template (in `tokenizer_config.json` or a `chat_template.jinja`), and the end-of-turn token its template emits is a registered special token. A typo'd stop token loads fine and then never stops generating.
 - **Safetensors index** — when the weights are sharded, `model.safetensors.index.json` is valid and every shard it references exists.
+- **Tensor header** — read the safetensors header itself (the tensor map: dtypes, shapes, byte-offsets; no weight download) to catch a corrupt header (overlapping or out-of-bounds tensor offsets), a weight map that points at tensors no shard contains, a declared tied embedding that contradicts the stored weights, and an MLX-quantized layer whose packed-weight and scales shapes don't agree. These run by default; pass `--skip-weights` to skip them for a faster config-only pass.
 - **Quantization metadata** — quantization fields are present and use a valid MLX mode with a valid group size and bit width (`affine`, `mxfp4`, `mxfp8`, `nvfp4`). This reads the metadata, not the tensors.
 - **Generation tokens** — the `eos` / `pad` / `bos` token IDs are present and agree across `config.json`, `generation_config.json`, and `tokenizer_config.json`.
 - **Memory budget** — an estimate of the memory the model needs at your context length, compared against a budget you pass with `--max-memory`.
@@ -83,17 +84,17 @@ report = check_hf_model("mlx-community/Llama-3.2-3B-Instruct-4bit")
 | `check hf <repo_id>` | Validate a model repository on the Hugging Face Hub (network). |
 | `sample hf` | Survey likely-MLX repos for an author and validate a deterministic sample. |
 
-`check` accepts `--format {text,json,markdown}`, `--output <file>`, `--max-memory <e.g. 32gb>`, `--context-length <n>`, `--fail-on {error,warn,never}`, `--include-weights`, and `--smoke`.
+`check` accepts `--format {text,json,markdown}`, `--output <file>`, `--max-memory <e.g. 32gb>`, `--context-length <n>`, `--fail-on {error,warn,never}`, `--skip-weights` (skip the tensor-header checks for a faster config-only pass), and `--smoke`.
 
 Exit codes: `0` checks passed (under the fail policy), `1` checks found failures, `2` tool error — a bad target, a missing dependency, or zero checks run.
 
 ## The Hugging Face path
 
-`check hf` and `sample hf` talk to the Hub through `huggingface-hub`. They read repository metadata (the file list, sizes, and the small text files) rather than downloading the weights, but they do need network access, and an auth or rate-limit problem surfaces as a clear tool error rather than a stack trace. `sample hf` is a survey: it lists an author's repos, keeps the ones that look like MLX models, validates a deterministic sample of them, and reports each as its own batch item — a per-model failure is recorded and the run continues.
+`check hf` and `sample hf` talk to the Hub through `huggingface-hub`. They read repository metadata (the file list, sizes, the small text files, and the safetensors header over a range request) rather than downloading the weights, but they do need network access, and an auth or rate-limit problem surfaces as a clear tool error rather than a stack trace. `sample hf` is a survey: it lists an author's repos, keeps the ones that look like MLX models, validates a deterministic sample of them, and reports each as its own batch item — a per-model failure is recorded and the run continues.
 
 ## Status
 
-**Alpha (0.2.0).** The static `check local` path and the report/CLI surface are solid and well tested. 0.2.0 adds config-level checks for chat-template presence, end-of-turn token consistency, generation token IDs, and MLX quantization modes. The Hugging Face path (`check hf`, `sample hf`) is implemented and tested offline against fakes; its live behavior is exercised by opt-in network tests. The API may still shift before 1.0 — pin a version if you depend on it.
+**Alpha (0.3.0).** The static `check local` path and the report/CLI surface are solid and well tested. 0.3.0 reads the safetensors header (no weight download) to add four tensor-level checks — offset corruption, weight-map parameter sanity, tied-embedding consistency, and MLX quantized-layer shape consistency — which run by default (`--skip-weights` opts out). The Hugging Face path (`check hf`, `sample hf`) is implemented and tested offline against fakes; its live behavior is exercised by opt-in network tests. The API may still shift before 1.0 — pin a version if you depend on it.
 
 ## License
 

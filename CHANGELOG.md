@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-06-06
+
+Deep weight inspection: read the safetensors *header* — on the Hub over an HTTP
+range request, still no weight download — to add four tensor-level checks that
+JSON-only metadata can't see. They run by default on a single `check`; `sample
+hf` stays a config-only survey.
+
+### Added
+- Safetensors offset scan (`text/safetensors.offsets`): the tensor byte-offsets
+  in the header don't overlap and aren't out of bounds. A corrupt header fails
+  at load; this catches it first. On a local file the data-section upper bound
+  is checked too; on the Hub the header length isn't exposed, so the upper-bound
+  check is skipped (and said so) while overlap and ordering still run.
+- Weight-map parameter sanity (`text/weights.param_count`): every tensor the
+  weight map references exists in a shard header, and the parameter count isn't
+  zero — an internal consistency check, not a config-derived parameter recount.
+- Tied-embedding consistency (`text/weights.tied_embedding`): a declared
+  `tie_word_embeddings` matches which embedding and output-head tensors are
+  actually stored. A declared-but-contradicted tie loads silently wrong.
+- MLX quantized shape consistency (`text/quantization.shape`): each quantized
+  layer's packed-weight and scales shapes agree with the config's bits and group
+  size (`packed_last * 32 / bits == scales_last * group_size`). A mismatch won't
+  load.
+- A safetensors header reader: local targets parse the header off disk, Hugging
+  Face targets fetch it through `huggingface_hub.get_safetensors_metadata` (a
+  range request), with the tensor map exposed to checks as a shared, cached read.
+
+### Changed
+- The four tensor-header checks run by default on `check local` / `check hf`.
+  The reserved `--include-weights` flag is replaced by an opt-out `--skip-weights`
+  for a faster config-only pass. `sample hf` is unchanged (config-only).
+
 ## [0.2.0] — 2026-06-05
 
 Static correctness expansion: four config-level checks that catch the "loads
