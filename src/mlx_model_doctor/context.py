@@ -46,6 +46,10 @@ class CheckContext:
         """Return parsed generation_config.json, or None when absent/unusable."""
         return self._read_json_file("generation_config.json")
 
+    def preprocessor_config_json(self) -> dict[str, object] | None:
+        """Return parsed preprocessor_config.json, or None when absent/unusable."""
+        return self._read_json_file("preprocessor_config.json")
+
     def chat_template_text(self) -> str | None:
         """Return the sibling chat_template.jinja text, or None when absent/unusable."""
         key = "text:chat_template.jinja"

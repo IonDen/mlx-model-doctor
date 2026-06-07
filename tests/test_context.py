@@ -219,3 +219,48 @@ def test_context_no_header_error_when_absent() -> None:
     ctx = CheckContext(target=FakeTarget(files={}), options=check_options())
     assert ctx.safetensors_header() is None
     assert ctx.safetensors_header_error() is None
+
+
+# ---------------------------------------------------------------------------
+# preprocessor_config_json accessor tests (Task 4)
+# ---------------------------------------------------------------------------
+
+
+def test_preprocessor_config_json_parses() -> None:
+    ctx = context_for_files({"preprocessor_config.json": b'{"image_processor_type": "X"}'})
+    assert ctx.preprocessor_config_json() == {"image_processor_type": "X"}
+
+
+def test_preprocessor_config_json_absent_returns_none() -> None:
+    assert context_for_files({}).preprocessor_config_json() is None
+
+
+def test_preprocessor_config_json_malformed_returns_none() -> None:
+    ctx = context_for_files({"preprocessor_config.json": b"{not json"})
+    assert ctx.preprocessor_config_json() is None
+
+
+def test_preprocessor_config_json_oversized_returns_none() -> None:
+    blob = b'{"image_processor_type": "X"}' + b" " * (_MAX_METADATA_BYTES + 1)
+    ctx = context_for_files({"preprocessor_config.json": blob})
+    assert ctx.preprocessor_config_json() is None
+
+
+def test_preprocessor_config_json_propagates_hf_target_error() -> None:
+    ctx = CheckContext(
+        target=TargetErrorTarget(files={}, _source="hf"),
+        options=check_options(),
+    )
+
+    with pytest.raises(TargetError, match="read failed") as exc_info:
+        ctx.preprocessor_config_json()
+
+    assert exc_info.value.source == "hf"
+
+
+def test_preprocessor_config_json_swallows_local_target_error() -> None:
+    ctx = CheckContext(
+        target=TargetErrorTarget(files={}, _source="local"),
+        options=check_options(),
+    )
+    assert ctx.preprocessor_config_json() is None
