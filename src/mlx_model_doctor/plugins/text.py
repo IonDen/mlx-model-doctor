@@ -9,6 +9,7 @@ from mlx_model_doctor.checks.chat_template import (
     ChatTemplatePresenceCheck,
     ChatTemplateSpecialTokensCheck,
 )
+from mlx_model_doctor.checks.compat import MlxCompatSignalCheck
 from mlx_model_doctor.checks.config import ConfigJsonCheck, ModelTypeCheck
 from mlx_model_doctor.checks.files import RequiredConfigCheck
 from mlx_model_doctor.checks.generation_config import GenerationConfigTokensCheck
@@ -21,6 +22,7 @@ from mlx_model_doctor.checks.quantization import (
 from mlx_model_doctor.checks.safetensors import SafetensorsIndexCheck, SafetensorsOffsetScanCheck
 from mlx_model_doctor.checks.smoke import MlxLmSmokeCheck
 from mlx_model_doctor.checks.tokenizer import SpecialTokensCheck, TokenizerFilesCheck
+from mlx_model_doctor.checks.vlm import VlmImageProcessorCheck
 from mlx_model_doctor.checks.weights import TiedEmbeddingCheck, WeightParamCountCheck
 
 
@@ -38,6 +40,7 @@ class TextModelPlugin:
                 RequiredConfigCheck(),
                 ConfigJsonCheck(),
                 ModelTypeCheck(),
+                MlxCompatSignalCheck(),
                 TokenizerFilesCheck(),
                 SpecialTokensCheck(),
                 ChatTemplatePresenceCheck(),
@@ -46,6 +49,7 @@ class TextModelPlugin:
                 QuantizationMetadataCheck(),
                 MlxQuantizationModeCheck(),
                 GenerationConfigTokensCheck(),
+                VlmImageProcessorCheck(),
                 MemoryEstimateCheck(),
             ),
         )
