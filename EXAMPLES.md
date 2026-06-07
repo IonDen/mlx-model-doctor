@@ -2,13 +2,13 @@
 
 Real output from `mlx-model-doctor`, captured by running the tool — so you can see exactly what you get before installing it. Each block shows a command and its actual response.
 
-> Captured with **mlx-model-doctor 0.3.0** on **2026-06-06**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub — they change over time, which is why they're dated.
+> Captured with **mlx-model-doctor 0.4.0** on **2026-06-07**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub — they change over time, which is why they're dated.
 
 ## 1. `version` — environment and dependency status
 
 ```console
 $ mlx-model-doctor version
-mlx-model-doctor 0.3.0
+mlx-model-doctor 0.4.0
 Python: 3.13.12
 Executable: /path/to/.venv/bin/python3
 Virtualenv: /path/to/.venv
@@ -44,15 +44,17 @@ Exit codes:
 
 The everyday case: you've downloaded a model and want to confirm it before loading. This is `mlx-community/Qwen2.5-0.5B-Instruct-4bit` on disk — the same model checked over the Hub in section 5. Locally the tool can also verify the tensor offsets are in bounds (it knows the file size and the header length), so `safetensors.offsets` passes outright rather than with the Hub's "upper bound not checked" note.
 
+The `text/compat.mlx_signal` line reports why the repo looks like an MLX model. On disk it sees the `quantization` block, the quantized weights in the header, and the `4bit` name; the `mlx-community` author and the MLX tags are Hub metadata, so those extra signals show up in the `check hf` run (section 5), not here.
+
 ```console
 $ mlx-model-doctor check local ./Qwen2.5-0.5B-Instruct-4bit
 MLX Model Doctor: /path/to/Qwen2.5-0.5B-Instruct-4bit
 
 Summary:
-  pass: 14
+  pass: 15
   warn: 1
   fail: 0
-  skip: 1
+  skip: 2
 
 PASS info text/files.required
   Required config file: config.json is present.
@@ -62,6 +64,9 @@ PASS info text/config.json
 
 PASS info text/config.model_type
   Model type: config.json declares model_type=qwen2.
+
+PASS info text/compat.mlx_signal
+  MLX compatibility signal: MLX-compatibility signals: config:quantization, weights:mlx-quant, repo-name.
 
 PASS info text/tokenizer.files
   Tokenizer files: Tokenizer artifacts are present.
@@ -87,6 +92,9 @@ PASS info text/quantization.mode
 PASS info text/generation_config.tokens
   Generation-config tokens: Generation token IDs are present and consistent.
 
+SKIP info text/vlm.image_processor
+  VLM image processor: Not a vision-language repo; skipped.
+
 WARN low text/memory.estimate
   Memory estimate: Estimated lower bound memory is advisory and may be below runtime use.
   Fix: Treat this as a floor; account for runtime overhead before loading the model.
@@ -108,17 +116,17 @@ Exit code `0`. The `--skip-weights` flag drops the four tensor-header checks for
 
 ## 4. `check local` — catching a corrupt safetensors before you load it
 
-This directory's `model.safetensors` has two tensors whose byte ranges overlap — a corrupt header that would fail at load. `mlx-model-doctor` reads only the tensor header (not the weights) and flags it. Exit code `1`.
+This directory's `model.safetensors` has two tensors whose byte ranges overlap — a corrupt header that would fail at load. `mlx-model-doctor` reads only the tensor header (not the weights) and flags it. The `compat.mlx_signal` line is informational and stays a `pass` even when nothing marks the repo as MLX; the failure comes from `safetensors.offsets`. Exit code `1`.
 
 ```console
 $ mlx-model-doctor check local ./model
 MLX Model Doctor: /path/to/model
 
 Summary:
-  pass: 5
+  pass: 6
   warn: 2
   fail: 1
-  skip: 8
+  skip: 9
 
 PASS info text/files.required
   Required config file: config.json is present.
@@ -128,6 +136,9 @@ PASS info text/config.json
 
 PASS info text/config.model_type
   Model type: config.json declares model_type=llama.
+
+PASS info text/compat.mlx_signal
+  MLX compatibility signal: No MLX-compatibility signals found; this may not be an MLX/mlx-lm model.
 
 PASS info text/tokenizer.files
   Tokenizer files: Tokenizer artifacts are present.
@@ -154,6 +165,9 @@ SKIP info text/quantization.mode
 SKIP info text/generation_config.tokens
   Generation-config tokens: No generation token IDs declared, so consistency cannot be checked.
 
+SKIP info text/vlm.image_processor
+  VLM image processor: Not a vision-language repo; skipped.
+
 WARN low text/memory.estimate
   Memory estimate: Estimated lower bound memory is advisory and may be below runtime use.
   Fix: Treat this as a floor; account for runtime overhead before loading the model.
@@ -178,15 +192,17 @@ Only the tensor header is read to find this — never the weight body — so the
 
 The same model as section 3, validated over the network instead of on disk. It reads repository metadata and the safetensors header — it does not download the weights. The tensor-header checks confirm the quantized layer shapes, the tied embedding, and the parameter map. (`safetensors.offsets` passes with a note: the Hub doesn't expose the header length, so the data-section upper bound isn't checkable there — the overlap and ordering checks still run.)
 
+Over the Hub the `compat.mlx_signal` line picks up more than the on-disk run: the `mlx` tag, the `mlx` library metadata, and the `mlx-community` author all come from the repository listing.
+
 ```console
 $ mlx-model-doctor check hf mlx-community/Qwen2.5-0.5B-Instruct-4bit
 MLX Model Doctor: mlx-community/Qwen2.5-0.5B-Instruct-4bit
 
 Summary:
-  pass: 14
+  pass: 15
   warn: 1
   fail: 0
-  skip: 1
+  skip: 2
 
 PASS info text/files.required
   Required config file: config.json is present.
@@ -196,6 +212,9 @@ PASS info text/config.json
 
 PASS info text/config.model_type
   Model type: config.json declares model_type=qwen2.
+
+PASS info text/compat.mlx_signal
+  MLX compatibility signal: MLX-compatibility signals: tag:mlx, library:mlx, author:mlx-community, config:quantization, weights:mlx-quant, repo-name.
 
 PASS info text/tokenizer.files
   Tokenizer files: Tokenizer artifacts are present.
@@ -220,6 +239,9 @@ PASS info text/quantization.mode
 
 PASS info text/generation_config.tokens
   Generation-config tokens: Generation token IDs are present and consistent.
+
+SKIP info text/vlm.image_processor
+  VLM image processor: Not a vision-language repo; skipped.
 
 WARN low text/memory.estimate
   Memory estimate: Estimated lower bound memory is advisory and may be below runtime use.
@@ -256,25 +278,25 @@ Summary:
   checked: 5
   tool-error: 0
 
+CHECKED mlx-community/Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated-mlx-8bit
+  Signal: tag:mlx
+  Results: pass=11 warn=2 fail=0 skip=1
+
 CHECKED mlx-community/LFM2.5-8B-A1B-MLX-8bit
   Signal: tag:mlx
-  Results: pass=10 warn=2 fail=0 skip=0
+  Results: pass=11 warn=2 fail=0 skip=1
 
 CHECKED mlx-community/LocateAnything-3B-4bit
   Signal: tag:mlx
-  Results: pass=9 warn=2 fail=0 skip=1
+  Results: pass=11 warn=2 fail=0 skip=1
 
 CHECKED mlx-community/MiniCPM5-1B-OptiQ-4bit
   Signal: tag:mlx
-  Results: pass=9 warn=3 fail=0 skip=0
+  Results: pass=10 warn=3 fail=0 skip=1
 
 CHECKED mlx-community/Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-4bit
   Signal: tag:mlx
-  Results: pass=10 warn=2 fail=0 skip=0
-
-CHECKED mlx-community/Qwen3.5-9B-OptiQ-4bit
-  Signal: tag:mlx
-  Results: pass=8 warn=2 fail=0 skip=2
+  Results: pass=11 warn=2 fail=0 skip=1
 ```
 
 Exit code `0`. (Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output.)
