@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-06-07
+
+Two static checks, both metadata-only, added to the built-in `text` plugin.
+
+### Added
+- MLX-compatibility signal (`text/compat.mlx_signal`): a single `check local` or
+  `check hf` now reports whether a repository looks like an MLX / mlx-lm model and
+  which signals say so — an MLX `quantization` block, an `mlx-community` author,
+  MLX tags or library metadata, quantized weights in the safetensors header, or an
+  `mlx`/`4bit`/`8bit` name hint. It is informational and never fails the run. The
+  same signal logic now backs the `sample hf` survey, so the single-repo and survey
+  paths agree on what counts as MLX.
+- Vision-language image-processor check (`text/vlm.image_processor`): a
+  vision-language repository whose missing `image_processor_type` would raise at
+  load through the standard image-processor path is caught before you load it.
+  Text-only repositories are skipped, and a repository that resolves its image
+  processor through a custom or feature-extractor path is not flagged. Validated
+  against live Qwen2.5-VL, InternVL3, and Qwen2-Audio repositories.
+
 ## [0.3.0] — 2026-06-06
 
 Deep weight inspection: read the safetensors *header* — on the Hub over an HTTP
