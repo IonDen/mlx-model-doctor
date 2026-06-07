@@ -337,8 +337,16 @@ class FakeSibling:
 
 
 class FakeModelInfo:
-    def __init__(self, *, siblings: tuple[FakeSibling, ...]) -> None:
+    def __init__(
+        self,
+        *,
+        siblings: tuple[FakeSibling, ...],
+        tags: tuple[str, ...] | None = None,
+        library_name: str | None = None,
+    ) -> None:
         self.siblings = siblings
+        self.tags = tags
+        self.library_name = library_name
 
 
 class FakeHub:

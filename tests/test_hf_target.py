@@ -4,7 +4,7 @@ import pytest
 
 from mlx_model_doctor.errors import TargetError
 from mlx_model_doctor.safetensors_header import SafetensorsHeader as _STHeader
-from mlx_model_doctor.targets import HfTarget
+from mlx_model_doctor.targets import HfTarget, MlxListingMetadata
 from mlx_model_doctor.targets import HfTarget as _HfTargetForST
 
 
@@ -17,6 +17,8 @@ class FakeSibling:
 @dataclass(frozen=True, slots=True)
 class FakeModelInfo:
     siblings: tuple[FakeSibling, ...]
+    tags: tuple[str, ...] | None = None
+    library_name: str | None = None
 
 
 class FakeHub:
@@ -28,6 +30,8 @@ class FakeHub:
         model_info_error: Exception | None = None,
         download_error: Exception | None = None,
         safetensors: object | None = None,
+        tags: tuple[str, ...] | None = None,
+        library_name: str | None = None,
     ) -> None:
         self.files = files if files is not None else {}
         self.sizes = (
@@ -36,6 +40,8 @@ class FakeHub:
         self.model_info_error = model_info_error
         self.download_error = download_error
         self.safetensors = safetensors
+        self.tags = tags
+        self.library_name = library_name
         self.model_info_calls: list[tuple[str, bool]] = []
         self.download_calls: list[tuple[str, str]] = []
 
@@ -46,7 +52,9 @@ class FakeHub:
         return FakeModelInfo(
             siblings=tuple(
                 FakeSibling(rfilename=path, size=size) for path, size in self.sizes.items()
-            )
+            ),
+            tags=self.tags,
+            library_name=self.library_name,
         )
 
     def download_bytes(self, repo_id: str, filename: str) -> bytes:
@@ -179,3 +187,22 @@ def test_hf_target_maps_safetensors_header_with_sibling_file_size() -> None:
 def test_hf_target_returns_none_for_non_safetensors_repo() -> None:
     hub = FakeHub(files={"config.json": b"{}"}, safetensors=None)
     assert _HfTargetForST("org/repo", hub=hub).safetensors_header() is None
+
+
+def test_hf_target_retains_tags_and_library_name() -> None:
+    hub = FakeHub(
+        files={"config.json": b"{}"},
+        tags=("mlx", "text-generation"),
+        library_name="mlx-lm",
+    )
+    target = HfTarget("mlx-community/Foo", hub=hub)
+    assert isinstance(target, MlxListingMetadata)
+    assert target.tags == frozenset({"mlx", "text-generation"})
+    assert target.library_name == "mlx-lm"
+
+
+def test_hf_target_handles_missing_tags_library() -> None:
+    hub = FakeHub(files={"config.json": b"{}"}, tags=None, library_name=None)
+    target = HfTarget("org/Bar", hub=hub)
+    assert target.tags == frozenset()
+    assert target.library_name is None

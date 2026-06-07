@@ -5,7 +5,7 @@ import struct
 from collections.abc import Sequence
 from pathlib import Path
 from stat import S_ISREG
-from typing import Literal, Protocol, cast
+from typing import Literal, Protocol, cast, runtime_checkable
 
 from mlx_model_doctor.errors import TargetError
 from mlx_model_doctor.safetensors_header import (
@@ -50,6 +50,19 @@ class ModelTarget(Protocol):
         """Return the aggregated safetensors header, or None when unavailable."""
 
 
+@runtime_checkable
+class MlxListingMetadata(Protocol):
+    """Optional Hub listing metadata used for MLX-compatibility signals."""
+
+    @property
+    def tags(self) -> frozenset[str]:
+        """Return repository tags."""
+
+    @property
+    def library_name(self) -> str | None:
+        """Return the declared library name, if any."""
+
+
 class HfSiblingProtocol(Protocol):
     """Hugging Face repository sibling metadata."""
 
@@ -61,6 +74,8 @@ class HfModelInfoProtocol(Protocol):
     """Hugging Face model info metadata used by the target."""
 
     siblings: Sequence[HfSiblingProtocol]
+    tags: Sequence[str] | None
+    library_name: str | None
 
 
 class HfHubProtocol(Protocol):
@@ -249,7 +264,7 @@ class LocalTarget:
 class HfTarget:
     """Readable target backed by Hugging Face Hub model metadata."""
 
-    __slots__ = ("_hub", "_metadata", "_repo_id")
+    __slots__ = ("_hub", "_library_name", "_metadata", "_repo_id", "_tags")
 
     def __init__(self, repo_id: str, *, hub: HfHubProtocol | None = None) -> None:
         """Initialize a Hugging Face target from model repository metadata."""
@@ -266,6 +281,8 @@ class HfTarget:
                 source="hf",
             ) from exc
         self._metadata = {sibling.rfilename: sibling.size for sibling in info.siblings}
+        self._tags = frozenset(info.tags or ())
+        self._library_name = info.library_name
 
     @property
     def name(self) -> str:
@@ -276,6 +293,16 @@ class HfTarget:
     def source(self) -> Literal["hf"]:
         """Return the Hugging Face source kind."""
         return "hf"
+
+    @property
+    def tags(self) -> frozenset[str]:
+        """Return repository tags from listing metadata."""
+        return self._tags
+
+    @property
+    def library_name(self) -> str | None:
+        """Return the declared library name, if any."""
+        return self._library_name
 
     def exists(self, path: str) -> bool:
         """Return whether a file exists in repository metadata."""
