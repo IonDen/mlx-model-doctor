@@ -527,8 +527,16 @@ class FakeHfSibling:
 
 
 class FakeHfModelInfo:
-    def __init__(self, *, siblings: tuple[HfSiblingProtocol, ...]) -> None:
+    def __init__(
+        self,
+        *,
+        siblings: tuple[HfSiblingProtocol, ...],
+        tags: tuple[str, ...] | None = None,
+        library_name: str | None = None,
+    ) -> None:
         self.siblings = siblings
+        self.tags = tags
+        self.library_name = library_name
 
 
 class DownloadErrorHub:
