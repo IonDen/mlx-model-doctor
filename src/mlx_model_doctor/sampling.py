@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol, cast
 
 from mlx_model_doctor.api import check_hf_model
+from mlx_model_doctor.compat import mlx_signals
 from mlx_model_doctor.context import CheckOptions
 from mlx_model_doctor.errors import ModelDoctorError
 from mlx_model_doctor.report import DoctorReport, render_json
@@ -139,21 +140,15 @@ class SampleBatchReport:
 
 def candidate_signal(model: ModelCandidate) -> str | None:
     """Return the highest-priority MLX compatibility signal for a model."""
-    tags = {tag.lower() for tag in model.tags}
-    if "mlx" in tags:
-        return "tag:mlx"
-
-    library_name = model.library_name.lower() if model.library_name is not None else None
-    if library_name in {"mlx", "mlx-lm"}:
-        return f"library:{library_name}"
-
-    if model.id.startswith("mlx-community/"):
-        return "author:mlx-community"
-
-    repo_id = model.id.lower()
-    if any(token in repo_id for token in ("4bit", "8bit", "mlx")):
-        return "repo-name"
-    return None
+    signals = mlx_signals(
+        name=model.id,
+        source="hf",
+        tags=frozenset(model.tags),
+        library_name=model.library_name,
+        config=None,
+        has_quantized_tensors=False,
+    )
+    return signals[0] if signals else None
 
 
 def deterministic_sample(
