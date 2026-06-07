@@ -24,6 +24,7 @@ def test_check_local_model_returns_text_report_for_valid_local_model(tmp_path: P
         "text/files.required",
         "text/config.json",
         "text/config.model_type",
+        "text/compat.mlx_signal",
         "text/tokenizer.files",
         "text/tokenizer.special_tokens",
         "text/chat_template.presence",
@@ -36,6 +37,7 @@ def test_check_local_model_returns_text_report_for_valid_local_model(tmp_path: P
         "text/quantization.mode",
         "text/quantization.shape",
         "text/generation_config.tokens",
+        "text/vlm.image_processor",
         "text/memory.estimate",
     }
 
