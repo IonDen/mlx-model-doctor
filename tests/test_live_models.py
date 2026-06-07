@@ -416,3 +416,31 @@ def test_run_hf_sample_overfetches_so_limit_counts_mlx_candidates() -> None:
 
     assert batch.summary["checked"] == 2
     assert lister.calls[0]["limit"] > 2  # over-fetched beyond the user limit
+
+
+def _vlm_result(report):
+    return next(r for r in report.results if r.check_id == "text/vlm.image_processor")
+
+
+@pytest.mark.network
+def test_internvl3_is_not_false_failed():
+    from mlx_model_doctor.api import check_hf_model
+
+    report = check_hf_model("mlx-community/InternVL3-2B-4bit")
+    assert _vlm_result(report).status in {"pass", "skip"}
+
+
+@pytest.mark.network
+def test_qwen2_audio_skips_as_non_vlm():
+    from mlx_model_doctor.api import check_hf_model
+
+    report = check_hf_model("mlx-community/Qwen2-Audio-7B-Instruct-4bit")
+    assert _vlm_result(report).status == "skip"
+
+
+@pytest.mark.network
+def test_qwen2_5_vl_passes():
+    from mlx_model_doctor.api import check_hf_model
+
+    report = check_hf_model("mlx-community/Qwen2.5-VL-3B-Instruct-bf16")
+    assert _vlm_result(report).status == "pass"
