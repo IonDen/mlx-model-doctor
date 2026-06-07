@@ -20,8 +20,17 @@ def context_for_files(
     files: dict[str, bytes],
     *,
     source: Literal["local", "hf"] = "local",
+    name: str = "fake",
+    tags: frozenset[str] = frozenset(),
+    library_name: str | None = None,
+    options: CheckOptions | None = None,
 ) -> CheckContext:
-    return CheckContext(target=FakeTarget(files=files, _source=source), options=check_options())
+    return CheckContext(
+        target=FakeTarget(
+            files=files, name=name, _source=source, tags=tags, library_name=library_name
+        ),
+        options=options if options is not None else check_options(),
+    )
 
 
 @dataclass(slots=True)
@@ -30,6 +39,8 @@ class FakeTarget:
     name: str = "fake"
     _source: Literal["local", "hf"] = "local"
     _safetensors_header: SafetensorsHeader | None = None
+    tags: frozenset[str] = frozenset()
+    library_name: str | None = None
 
     @property
     def source(self) -> Literal["local", "hf"]:
