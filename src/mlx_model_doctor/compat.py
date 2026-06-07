@@ -52,8 +52,9 @@ def _name_for_match(name: str | None, source: Literal["local", "hf"] | None) -> 
         source: Whether the model source is ``"local"`` or ``"hf"``.
 
     Returns:
-        The lowercased basename for local paths, the full lowercased name for HF
-        repos, or ``None`` when ``name`` is ``None``.
+        The lowercased basename for both local paths and HF repo ids (the org is
+        excluded, so an org token does not fire the weak name signal), or ``None``
+        when ``name`` is ``None``.
     """
     if name is None:
         return None

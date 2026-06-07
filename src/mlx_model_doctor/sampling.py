@@ -139,7 +139,11 @@ class SampleBatchReport:
 
 
 def candidate_signal(model: ModelCandidate) -> str | None:
-    """Return the highest-priority MLX compatibility signal for a model."""
+    """Return the highest-priority MLX compatibility signal for a model.
+
+    Name tokens are matched against the repo-name segment only (the org is
+    excluded), so an org like ``mlxorg/`` does not by itself mark a repo as MLX.
+    """
     signals = mlx_signals(
         name=model.id,
         source="hf",

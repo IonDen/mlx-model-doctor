@@ -423,11 +423,14 @@ def _vlm_result(report):
 
 
 @pytest.mark.network
-def test_internvl3_is_not_false_failed():
+def test_internvl3_passes_via_resolution_signal():
+    # InternVL3 omits image_processor_type but declares a feature-extractor / custom
+    # processor path, so it must PASS (not merely "not fail" — a broken gate that
+    # skipped it would also avoid failing).
     from mlx_model_doctor.api import check_hf_model
 
     report = check_hf_model("mlx-community/InternVL3-2B-4bit")
-    assert _vlm_result(report).status in {"pass", "skip"}
+    assert _vlm_result(report).status == "pass"
 
 
 @pytest.mark.network

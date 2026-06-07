@@ -22,6 +22,9 @@ class _Cand:
         (_Cand("someorg/Llama-4bit"), "repo-name"),
         (_Cand("someorg/plain"), None),
         (_Cand("mlx-community/Foo-4bit", tags=["mlx"]), "tag:mlx"),
+        # org contains an MLX token but the repo name does not, and it isn't
+        # mlx-community -> no signal (matching is on the repo-name segment only).
+        (_Cand("mlxorg/clean-model"), None),
     ],
 )
 def test_candidate_signal_preserves_outputs(cand, expected):
