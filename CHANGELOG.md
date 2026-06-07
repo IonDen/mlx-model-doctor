@@ -18,11 +18,12 @@ Two static checks, both metadata-only, added to the built-in `text` plugin.
   same signal logic now backs the `sample hf` survey, so the single-repo and survey
   paths agree on what counts as MLX.
 - Vision-language image-processor check (`text/vlm.image_processor`): a
-  vision-language repository whose missing `image_processor_type` would raise at
-  load through the standard image-processor path is caught before you load it.
-  Text-only repositories are skipped, and a repository that resolves its image
-  processor through a custom or feature-extractor path is not flagged. Validated
-  against live Qwen2.5-VL, InternVL3, and Qwen2-Audio repositories.
+  vision-language repository that declares no way to resolve an image processor —
+  no `image_processor_type`, custom `auto_map`, feature extractor, or
+  `processor_class` — is flagged before you load it, since the standard
+  image-processor path may be unable to resolve it. Repositories that do declare a
+  resolution path pass, and text-only repositories are skipped. Validated against
+  live Qwen2.5-VL, InternVL3, and Qwen2-Audio repositories.
 
 ## [0.3.0] — 2026-06-06
 

@@ -8,8 +8,8 @@ as priorities change.
 - **v0.4.0** (2026-06-07) — single-repo MLX-compatibility signal and a
   vision-language image-processor check. `check local` / `check hf` now report
   whether a repository looks like an MLX model and why; a vision-language repo
-  missing its `image_processor_type` is caught before load, while text-only repos
-  are skipped.
+  that declares no image-processor resolution path is flagged before load, while
+  text-only repos are skipped.
 - **v0.3.0** (2026-06-06) — deep weight inspection. Reads the safetensors header
   (no weight download; on the Hub over a range request) to add four tensor-level
   checks: safetensors offset corruption, weight-map parameter sanity,

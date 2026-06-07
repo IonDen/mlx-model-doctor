@@ -12,11 +12,12 @@ _IMAGE_PREPROCESSOR_KEYS: tuple[str, ...] = (
     "image_std",
     "crop_size",
 )
+_IMAGE_AUTO_MAP_KEYS: tuple[str, ...] = ("AutoImageProcessor", "AutoFeatureExtractor")
 
 
 @dataclass(frozen=True, slots=True)
 class VlmImageProcessorCheck:
-    """Flag a VLM whose missing image_processor_type would break standard load."""
+    """Report whether a vision-language repo can resolve an image processor at load."""
 
     check_id: str = "text/vlm.image_processor"
     title: str = "VLM image processor"
@@ -45,21 +46,24 @@ class VlmImageProcessorCheck:
                 remediation="Set image_processor_type to a valid image-processor class name.",
             )
 
-        if _has_image_processor_automap(preproc, config) or _has_feature_extractor_type(preproc):
+        signal = _resolution_signal(preproc, config)
+        if signal is not None:
             return self._result(
                 "pass",
                 "info",
-                "No image_processor_type, but a feature-extractor / custom-processor path is "
-                "declared; standard AutoImageProcessor is not required.",
+                f"No image_processor_type, but the repo resolves an image processor via {signal}.",
+                details={"resolution": signal},
             )
 
         return self._result(
-            "fail",
-            "high",
-            "Vision-language repo has no image_processor_type; standard AutoImageProcessor load "
-            "raises ValueError.",
+            "warn",
+            "medium",
+            "No image_processor_type or other image-processor resolution signal (custom auto_map, "
+            "feature_extractor_type, or processor_class). As of transformers 5.x the standard "
+            "AutoImageProcessor path may be unable to resolve it, depending on the installed "
+            "version's model_type mapping; verify the model loads before relying on it.",
             remediation="Add image_processor_type to preprocessor_config.json "
-            '(for example "Qwen2VLImageProcessor").',
+            '(for example "Qwen2VLImageProcessor"), or confirm the model loads via its processor.',
         )
 
     def _result(
@@ -100,22 +104,27 @@ def _resolve_image_processor_type(
     return False, None, None
 
 
-def _has_image_processor_automap(
+def _resolution_signal(
     preproc: Mapping[str, object] | None,
     config: Mapping[str, object] | None,
-) -> bool:
+) -> str | None:
+    """Return how the repo resolves an image processor without image_processor_type, or None.
+
+    transformers' AutoImageProcessor loads the preprocessor config first, so a custom
+    `auto_map` is only a reliable signal when it lives in preprocessor_config.json — a
+    config-only `auto_map` is not enough on its own. A `processor_class` (the AutoProcessor
+    path mlx-vlm uses) in either file also resolves the processor.
+    """
+    if isinstance(preproc, Mapping):
+        auto_map = preproc.get("auto_map")
+        if isinstance(auto_map, Mapping) and any(key in auto_map for key in _IMAGE_AUTO_MAP_KEYS):
+            return "preprocessor_config.json auto_map"
+        feature_extractor = preproc.get("feature_extractor_type")
+        if isinstance(feature_extractor, str) and feature_extractor.strip():
+            return "feature_extractor_type"
     for cfg in (preproc, config):
         if isinstance(cfg, Mapping):
-            auto_map = cfg.get("auto_map")
-            if isinstance(auto_map, Mapping) and (
-                "AutoImageProcessor" in auto_map or "AutoFeatureExtractor" in auto_map
-            ):
-                return True
-    return False
-
-
-def _has_feature_extractor_type(preproc: Mapping[str, object] | None) -> bool:
-    if not isinstance(preproc, Mapping):
-        return False
-    value = preproc.get("feature_extractor_type")
-    return isinstance(value, str) and bool(value.strip())
+            processor_class = cfg.get("processor_class")
+            if isinstance(processor_class, str) and processor_class.strip():
+                return "processor_class"
+    return None

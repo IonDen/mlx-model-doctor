@@ -61,19 +61,21 @@ def test_precedence_preprocessor_wins():
     assert r.details["source"] == "preprocessor_config.json"
 
 
-def test_missing_type_fails():
+def test_missing_type_no_signal_warns():
+    # VLM with no image_processor_type and no resolution signal: we can't confirm the
+    # standard AutoImageProcessor path resolves it offline, so warn rather than fail.
     r = _run(config={"vision_config": {}})
-    assert r.status == "fail"
-    assert r.severity == "high"
+    assert r.status == "warn"
+    assert r.severity == "medium"
     assert "image_processor_type" in (r.remediation or "")
 
 
-def test_missing_type_preproc_only_gate_fails():
-    # VLM gated solely via preprocessor image keys (CLIP-style image_mean/std,
-    # no config), with no image_processor_type and no exemption -> fail.
+def test_missing_type_preproc_only_gate_warns():
+    # VLM gated solely via preprocessor image keys (CLIP-style image_mean/std),
+    # no image_processor_type and no resolution signal -> warn.
     r = _run(preproc={"image_mean": [0.5], "image_std": [0.5]})
-    assert r.status == "fail"
-    assert r.severity == "high"
+    assert r.status == "warn"
+    assert r.severity == "medium"
 
 
 def test_feature_extractor_type_exempts():
@@ -81,12 +83,24 @@ def test_feature_extractor_type_exempts():
         config={"vision_config": {}}, preproc={"feature_extractor_type": "CLIPFeatureExtractor"}
     )
     assert r.status == "pass"
+    assert r.details["resolution"] == "feature_extractor_type"
 
 
-def test_auto_map_image_processor_exempts():
+def test_config_only_auto_map_does_not_exempt_warns():
+    # A config-only auto_map (no preprocessor_config.json) is NOT a reliable signal:
+    # transformers loads the preprocessor config first and raises before reaching it.
     r = _run(config={"vision_config": {}, "auto_map": {"AutoImageProcessor": "x--y"}})
+    assert r.status == "warn"
+
+
+def test_preprocessor_auto_map_image_processor_exempts():
+    r = _run(
+        config={"vision_config": {}},
+        preproc={"image_mean": [0.5], "auto_map": {"AutoImageProcessor": "x--y"}},
+    )
     assert r.status == "pass"
-    assert r.remediation is None  # the pass comes from the exemption path, not a fallback
+    assert r.details["resolution"] == "preprocessor_config.json auto_map"
+    assert r.remediation is None
 
 
 def test_auto_map_feature_extractor_exempts():
@@ -95,9 +109,23 @@ def test_auto_map_feature_extractor_exempts():
     assert r.remediation is None
 
 
+def test_processor_class_exempts():
+    # mlx-vlm loads via AutoProcessor; a processor_class resolves the image processor.
+    r = _run(config={"vision_config": {}, "processor_class": "InternVLChatProcessor"})
+    assert r.status == "pass"
+    assert r.details["resolution"] == "processor_class"
+
+
+def test_empty_feature_extractor_type_warns():
+    # A blank feature_extractor_type is not a resolution signal.
+    r = _run(config={"vision_config": {}}, preproc={"feature_extractor_type": ""})
+    assert r.status == "warn"
+
+
 def test_generic_auto_map_does_not_exempt():
+    # A generic auto_map (no AutoImageProcessor/AutoFeatureExtractor) is not a resolution signal.
     r = _run(config={"vision_config": {}, "auto_map": {"AutoModelForCausalLM": "x--y"}})
-    assert r.status == "fail"
+    assert r.status == "warn"
 
 
 def test_audio_repo_with_feature_extractor_preprocessor_skips():

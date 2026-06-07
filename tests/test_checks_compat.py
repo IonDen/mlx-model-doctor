@@ -7,9 +7,36 @@ from mlx_model_doctor.checks.compat import (
     _header_has_quantized_tensors,
 )
 from mlx_model_doctor.context import CheckOptions
+from mlx_model_doctor.safetensors_header import FileHeader, SafetensorsHeader, TensorEntry
 from tests.fakes import context_for_files
 
 CHECK = MlxCompatSignalCheck()
+
+
+def _options(*, include_weights):
+    return CheckOptions(
+        max_memory_bytes=None,
+        context_length=4096,
+        include_weights=include_weights,
+        smoke=False,
+        verbosity="normal",
+    )
+
+
+def _quantized_header():
+    def _entry(dtype):
+        return TensorEntry(dtype=dtype, shape=(2, 2), data_offsets=(0, 0), stored_element_count=1)
+
+    file_header = FileHeader(
+        filename="model.safetensors",
+        tensors={"model.layer.scales": _entry("U8"), "model.layer.weight": _entry("U32")},
+        metadata={},
+        header_length=None,
+        file_size=None,
+    )
+    return SafetensorsHeader(
+        files=(file_header,), weight_map={}, sharded=False, stored_count_by_dtype={}
+    )
 
 
 def _run(files, **kw):
@@ -102,23 +129,19 @@ def test_header_has_quantized_tensors_false_no_scales():
     assert _header_has_quantized_tensors(_StubHeader({"layer.weight": _Entry("F16")})) is False
 
 
-def test_weights_signal_gated_on_include_weights(monkeypatch):
-    # The weights:mlx-quant signal is gathered from the header ONLY when include_weights=True.
-    from mlx_model_doctor.checks import compat as compat_mod
-
-    monkeypatch.setattr(compat_mod, "_header_has_quantized_tensors", lambda header: True)
-
-    class _Hdr:
-        pass
-
-    # include_weights=False -> no header consulted -> no weights signal
-    skip_opts = CheckOptions(
-        max_memory_bytes=None,
-        context_length=4096,
-        include_weights=False,
-        smoke=False,
-        verbosity="normal",
+def test_weights_signal_present_when_include_weights():
+    # A real quantized header (.scales + U32 .weight) yields weights:mlx-quant end-to-end.
+    ctx = context_for_files(
+        {}, source="hf", name="org/plain", options=_options(include_weights=True)
     )
-    ctx = context_for_files({}, source="hf", name="org/plain", options=skip_opts)
-    ctx.target._safetensors_header = _Hdr()
+    ctx.target._safetensors_header = _quantized_header()
+    assert "weights:mlx-quant" in CHECK.run(ctx).details["signals"]
+
+
+def test_weights_signal_absent_when_skip_weights():
+    # Same quantized header present, but --skip-weights means the header is never consulted.
+    ctx = context_for_files(
+        {}, source="hf", name="org/plain", options=_options(include_weights=False)
+    )
+    ctx.target._safetensors_header = _quantized_header()
     assert "weights:mlx-quant" not in CHECK.run(ctx).details["signals"]

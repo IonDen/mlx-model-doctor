@@ -80,3 +80,8 @@ def test_priority_order_tag_first_then_repo_name():
 
 def test_no_signals():
     assert _signals(source="hf", name="someorg/plain-model") == ()
+
+
+def test_name_none_yields_no_signals():
+    assert _signals() == ()
+    assert _signals(source="hf", name=None) == ()
