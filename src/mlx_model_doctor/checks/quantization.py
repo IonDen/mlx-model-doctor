@@ -184,6 +184,39 @@ class MlxQuantizationModeCheck:
 _SCALES_SUFFIX = ".scales"
 
 
+def _resolve_quant_field(
+    override: Mapping[str, object], key: str, default: int | None
+) -> int | None:
+    """Resolve one per-layer quantization field.
+
+    An *absent* field inherits the scalar default. A *present* field must be a
+    positive int; an explicit invalid value (zero, negative, non-int) returns None
+    so the layer is reported unverified rather than silently validated with the
+    model default.
+    """
+    if key not in override:
+        return default
+    return _positive_int(override[key])
+
+
+def _effective_quant(
+    quant: Mapping[str, object], prefix: str, default_bits: int | None, default_gs: int | None
+) -> tuple[int | None, int | None]:
+    """Resolve a layer's effective (bits, group_size).
+
+    Uses the per-layer override at ``quant[prefix]`` when it is a mapping, falling
+    back to the scalar defaults for absent fields only. Mode does not affect the
+    shape arithmetic, so it is not consulted here.
+    """
+    override = quant.get(prefix)
+    if isinstance(override, Mapping):
+        return (
+            _resolve_quant_field(override, "bits", default_bits),
+            _resolve_quant_field(override, "group_size", default_gs),
+        )
+    return default_bits, default_gs
+
+
 @dataclass(frozen=True, slots=True)
 class MlxQuantShapeCheck:
     """Validate MLX quantized tensor shapes against config bits/group_size."""
