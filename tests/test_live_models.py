@@ -468,6 +468,11 @@ def test_mxfp4_mixed_precision_repo_quant_shape_passes() -> None:
 
 @pytest.mark.network
 def test_nvfp4_mixed_precision_repo_quant_shape_passes() -> None:
+    # Like the mxfp4 case, this is a genuine old-fail->new-pass guard, not a vacuous pass:
+    # the flat-formula code returned fail/high inconsistent_layers=(...mlp.gate,
+    # ...shared_expert_gate) for this repo (those gate layers are 8-bit overrides stored as
+    # U32 weights), so the check does measure these layers; per-layer resolution makes them
+    # consistent.
     from mlx_model_doctor.api import check_hf_model
 
     report = check_hf_model("mlx-community/Qwen3.6-35B-A3B-nvfp4")
