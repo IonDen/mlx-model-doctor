@@ -237,26 +237,9 @@ class MlxQuantShapeCheck:
                 severity="info",
                 message="No MLX quantization metadata or safetensors header to check.",
             )
-        bits = _positive_int(quant.get("bits"))
-        group_size = _positive_int(quant.get("group_size"))
-        if bits is None or group_size is None:
-            return CheckResult(
-                check_id=self.check_id,
-                title=self.title,
-                status="skip",
-                severity="info",
-                message="Quantization bits/group_size are incomplete; shape check skipped.",
-            )
-        if bits not in _AFFINE_BITS:
-            return CheckResult(
-                check_id=self.check_id,
-                title=self.title,
-                status="warn",
-                severity="medium",
-                message=f"Quantization bits={bits} is outside the known set (valid as of MLX 0.31.x).",
-                remediation="Confirm the MLX version supports this bit width.",
-                details={"unknown_bits": bits},
-            )
+        default_bits = _positive_int(quant.get("bits"))
+        default_gs = _positive_int(quant.get("group_size"))
+
         scales = [name for name in header.tensor_names() if name.endswith(_SCALES_SUFFIX)]
         if not scales:
             return CheckResult(
@@ -268,18 +251,33 @@ class MlxQuantShapeCheck:
                 remediation="Re-convert the model so the declared quantization is applied to its weights.",
                 details={"no_quantized_tensors": True},
             )
+        # "Is this a mixed-precision config?" — scoped to the layers we actually scan, so a stray
+        # non-override mapping elsewhere in the block cannot suppress the incomplete-metadata skip.
+        has_per_layer = any(
+            isinstance(quant.get(name[: -len(_SCALES_SUFFIX)]), Mapping) for name in scales
+        )
+
         inconsistent: list[str] = []
+        unverified: list[str] = []
+        consistent_count = 0
         for scales_name in scales:
             prefix = scales_name[: -len(_SCALES_SUFFIX)]
             weight = header.tensor(prefix + ".weight")
             scales_entry = header.tensor(scales_name)
             if weight is None or scales_entry is None or weight.dtype != "U32":
                 continue
+            bits, group_size = _effective_quant(quant, prefix, default_bits, default_gs)
+            if bits is None or group_size is None or bits not in _AFFINE_BITS:
+                unverified.append(prefix)
+                continue
             packed_last = weight.shape[-1]
             scales_last = scales_entry.shape[-1]
             in_s = scales_last * group_size
             if (packed_last * 32) % bits != 0 or packed_last * 32 // bits != in_s:
                 inconsistent.append(prefix)
+            else:
+                consistent_count += 1
+
         if inconsistent:
             return CheckResult(
                 check_id=self.check_id,
@@ -289,6 +287,31 @@ class MlxQuantShapeCheck:
                 message="Quantized tensor shapes are inconsistent with their scales (won't load).",
                 remediation="Re-quantize/re-convert the model; the packed weight and scales disagree.",
                 details={"inconsistent_layers": tuple(sorted(inconsistent))},
+            )
+        if (
+            consistent_count == 0
+            and not has_per_layer
+            and (default_bits is None or default_gs is None)
+        ):
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="skip",
+                severity="info",
+                message="Quantization bits/group_size are incomplete; shape check skipped.",
+            )
+        if unverified:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="warn",
+                severity="medium",
+                message=(
+                    "Shape unverified for layer(s) with an unrecognized or undeterminable "
+                    "bit width (valid as of MLX 0.31.x)."
+                ),
+                remediation="Confirm the MLX version supports the quantization bit width(s) for these layers.",
+                details={"unverified_layers": tuple(sorted(unverified))},
             )
         return CheckResult(
             check_id=self.check_id,

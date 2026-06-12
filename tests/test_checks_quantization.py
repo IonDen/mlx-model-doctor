@@ -204,7 +204,7 @@ def test_quant_shape_warn_on_unknown_bits() -> None:
     header = _quant_header({"l.weight": _t("U32", (256, 64)), "l.scales": _t("BF16", (256, 8))})
     result = MlxQuantShapeCheck().run(_quant_ctx(header, {"bits": 7, "group_size": 64}))
     assert result.status == "warn"
-    assert result.details["unknown_bits"] == 7
+    assert result.details["unverified_layers"] == ("l",)
 
 
 def test_quant_shape_skip_without_quant_or_header() -> None:
@@ -270,3 +270,85 @@ def test_effective_quant_present_invalid_field_is_none() -> None:
 def test_effective_quant_non_mapping_override_uses_defaults() -> None:
     quant = {"bits": 4, "group_size": 32, "x": "weird"}
     assert _effective_quant(quant, "x", 4, 32) == (4, 32)
+
+
+def test_quant_shape_pass_for_mixed_precision_per_layer() -> None:
+    # Real gpt-oss-20b-MXFP4-Q8 shape vectors: lm_head is 8-bit affine (BF16 scales),
+    # experts are mxfp4 (U8 scales). The flat b4/gs32 formula mis-fails lm_head
+    # (5760 != 1440); per-layer resolution validates lm_head at b8/gs64 (2880 == 2880).
+    header = _quant_header(
+        {
+            "lm_head.weight": _t("U32", (201088, 720)),
+            "lm_head.scales": _t("BF16", (201088, 45)),
+            "model.layers.0.mlp.experts.down_proj.weight": _t("U32", (32, 2880, 360)),
+            "model.layers.0.mlp.experts.down_proj.scales": _t("U8", (32, 2880, 90)),
+        }
+    )
+    quant = {
+        "bits": 4,
+        "group_size": 32,
+        "mode": "mxfp4",
+        "lm_head": {"bits": 8, "group_size": 64, "mode": "affine"},
+    }
+    assert MlxQuantShapeCheck().run(_quant_ctx(header, quant)).status == "pass"
+
+
+def test_quant_shape_fail_under_resolved_per_layer_params() -> None:
+    # Differential RED->GREEN: the shapes are CONSISTENT under the scalar default
+    # (b4/gs64: 64*32//4=512 == 8*64=512), so the old global-formula code returns pass.
+    # The per-layer override (b8/gs64) makes it inconsistent (64*32//8=256 != 8*64=512)
+    # -> fail. This isolates per-layer resolution and also catches a "silently skip
+    # overridden layers" regression (which would wrongly return pass).
+    header = _quant_header({"l.weight": _t("U32", (256, 64)), "l.scales": _t("BF16", (256, 8))})
+    quant = {"bits": 4, "group_size": 64, "l": {"bits": 8, "group_size": 64}}
+    result = MlxQuantShapeCheck().run(_quant_ctx(header, quant))
+    assert result.status == "fail"
+    assert result.details["inconsistent_layers"] == ("l",)
+
+
+def test_quant_shape_pass_for_uniform_mxfp4_no_overrides() -> None:
+    # Spec #2 regression: a uniform mxfp4 model (U8 scales, no per-layer overrides)
+    # passes under the scalar defaults. 360*32//4=2880 == 90*32=2880.
+    header = _quant_header(
+        {
+            "model.layers.0.mlp.experts.down_proj.weight": _t("U32", (32, 2880, 360)),
+            "model.layers.0.mlp.experts.down_proj.scales": _t("U8", (32, 2880, 90)),
+        }
+    )
+    quant = {"bits": 4, "group_size": 32, "mode": "mxfp4"}
+    assert MlxQuantShapeCheck().run(_quant_ctx(header, quant)).status == "pass"
+
+
+def test_quant_shape_pass_for_override_only_completes_missing_default() -> None:
+    # has_per_layer=True with an incomplete scalar default: the override supplies both
+    # fields, so the layer is checked (not skipped). 64*32//4=512 == 8*64=512 -> pass.
+    header = _quant_header({"l.weight": _t("U32", (256, 64)), "l.scales": _t("BF16", (256, 8))})
+    quant = {"l": {"bits": 4, "group_size": 64}}  # no scalar bits/group_size
+    assert MlxQuantShapeCheck().run(_quant_ctx(header, quant)).status == "pass"
+
+
+def test_quant_shape_skip_survives_stray_non_override_mapping() -> None:
+    # A non-override nested mapping in the quantization block must NOT flip has_per_layer
+    # and suppress the incomplete-metadata skip. {"group_size":64} (no bits) + a U32 layer
+    # with no override for it -> still skip, despite the stray "foo" mapping.
+    header = _quant_header({"l.weight": _t("U32", (256, 64)), "l.scales": _t("BF16", (256, 8))})
+    quant = {"group_size": 64, "foo": {"bar": 1}}
+    assert MlxQuantShapeCheck().run(_quant_ctx(header, quant)).status == "skip"
+
+
+def test_quant_shape_warn_on_invalid_present_override() -> None:
+    # Shapes ARE consistent with the default (b4/gs64 -> 512 == 512), but the override
+    # declares an explicit invalid field. The layer must be reported unverified (warn),
+    # NOT silently validated against the default (which would pass), NOT failed. Covers
+    # Finding 2 for zero, non-int, and invalid group_size override values.
+    header = _quant_header({"l.weight": _t("U32", (256, 64)), "l.scales": _t("BF16", (256, 8))})
+    bad_overrides = (
+        {"bits": 0, "group_size": 64},
+        {"bits": "8", "group_size": 64},
+        {"bits": 8, "group_size": 0},
+    )
+    for bad_override in bad_overrides:
+        quant = {"bits": 4, "group_size": 64, "l": bad_override}
+        result = MlxQuantShapeCheck().run(_quant_ctx(header, quant))
+        assert result.status == "warn", bad_override
+        assert result.details["unverified_layers"] == ("l",), bad_override
