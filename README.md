@@ -94,7 +94,7 @@ Exit codes: `0` checks passed (under the fail policy), `1` checks found failures
 
 ## Status
 
-**Alpha (0.3.0).** The static `check local` path and the report/CLI surface are solid and well tested. 0.3.0 reads the safetensors header (no weight download) to add four tensor-level checks — offset corruption, weight-map parameter sanity, tied-embedding consistency, and MLX quantized-layer shape consistency — which run by default (`--skip-weights` opts out). The Hugging Face path (`check hf`, `sample hf`) is implemented and tested offline against fakes; its live behavior is exercised by opt-in network tests. The API may still shift before 1.0 — pin a version if you depend on it.
+**Alpha (0.4.1).** The static `check local` path and the report/CLI surface are solid and well tested. The safetensors header (read without downloading weights) backs four tensor-level checks — offset corruption, weight-map parameter sanity, tied-embedding consistency, and MLX quantized-layer shape consistency — which run by default (`--skip-weights` opts out). A single `check` also reports whether a repository looks like an MLX model and why, and flags a vision-language repository that declares no way to resolve its image processor. The quantized-shape check reads each layer's own `bits`/`group_size`, so a mixed-precision model (4-bit experts with 8-bit dense and router layers) is validated rather than reported as broken. The Hugging Face path (`check hf`, `sample hf`) is implemented and tested offline against fakes; its live behavior is exercised by opt-in network tests. The API may still shift before 1.0 — pin a version if you depend on it.
 
 ## License
 

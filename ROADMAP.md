@@ -5,6 +5,11 @@ as priorities change.
 
 ## Released
 
+- **v0.4.1** (2026-06-12) — fix the quantized-shape check reporting a false
+  failure on valid mixed-precision models. MLX records per-layer `bits` and
+  `group_size` overrides (4-bit experts with 8-bit dense and router layers); the
+  check now resolves each layer's own values instead of the model-level ones, so
+  models like `gpt-oss-20b-MXFP4-Q8` and nvfp4 mixture-of-experts repositories pass.
 - **v0.4.0** (2026-06-07) — single-repo MLX-compatibility signal and a
   vision-language image-processor check. `check local` / `check hf` now report
   whether a repository looks like an MLX model and why; a vision-language repo

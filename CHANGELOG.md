@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] — 2026-06-12
+
+### Fixed
+- The quantized-shape check (`text/quantization.shape`) no longer reports a
+  load-blocking failure for valid mixed-precision models. An MLX `quantization`
+  block can give individual layers their own `bits` and `group_size`; a common
+  pattern is 4-bit experts alongside 8-bit dense, router, and gate layers. The
+  check had applied the model-level values to every layer, so a model like
+  `mlx-community/gpt-oss-20b-MXFP4-Q8` or an nvfp4 mixture-of-experts repository
+  failed even though it loads fine. It now reads each layer's own values, and flags
+  a layer whose bit width it cannot recognize as unverified instead of failing it.
+
 ## [0.4.0] — 2026-06-07
 
 Two static checks, both metadata-only, added to the built-in `text` plugin.
