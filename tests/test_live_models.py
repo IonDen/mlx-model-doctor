@@ -447,3 +447,28 @@ def test_qwen2_5_vl_passes():
 
     report = check_hf_model("mlx-community/Qwen2.5-VL-3B-Instruct-bf16")
     assert _vlm_result(report).status == "pass"
+
+
+def _quant_shape_result(report):
+    return next(r for r in report.results if r.check_id == "text/quantization.shape")
+
+
+@pytest.mark.network
+def test_mxfp4_mixed_precision_repo_quant_shape_passes() -> None:
+    # gpt-oss-20b-MXFP4-Q8 mixes mxfp4 experts with 8-bit affine dense layers; the
+    # per-layer shape check must PASS it (not merely "not fail" — a regression that turned
+    # every overridden layer "unverified"/warn, or tripped the skip branch, would also avoid
+    # failing). Reproduced the false-fail on the flat-formula code: fail/high
+    # inconsistent_layers=('lm_head', ...). All resolved layers are consistent (verified).
+    from mlx_model_doctor.api import check_hf_model
+
+    report = check_hf_model("mlx-community/gpt-oss-20b-MXFP4-Q8")
+    assert _quant_shape_result(report).status == "pass"
+
+
+@pytest.mark.network
+def test_nvfp4_mixed_precision_repo_quant_shape_passes() -> None:
+    from mlx_model_doctor.api import check_hf_model
+
+    report = check_hf_model("mlx-community/Qwen3.6-35B-A3B-nvfp4")
+    assert _quant_shape_result(report).status == "pass"
