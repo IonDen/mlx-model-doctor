@@ -4,6 +4,8 @@ from mlx_model_doctor.checks.quantization import (
     MlxQuantizationModeCheck,
     MlxQuantShapeCheck,
     QuantizationMetadataCheck,
+    _effective_quant,
+    _resolve_quant_field,
 )
 from mlx_model_doctor.context import CheckContext
 from mlx_model_doctor.safetensors_header import FileHeader, SafetensorsHeader, TensorEntry
@@ -227,3 +229,44 @@ def test_quant_shape_skips_non_u32_weight_with_scales() -> None:
     header = _quant_header({"l.weight": _t("BF16", (256, 64)), "l.scales": _t("BF16", (256, 4))})
     result = MlxQuantShapeCheck().run(_quant_ctx(header, {"bits": 4, "group_size": 64}))
     assert result.status == "pass"
+
+
+def test_resolve_quant_field_absent_uses_default() -> None:
+    assert _resolve_quant_field({}, "bits", 4) == 4
+
+
+def test_resolve_quant_field_present_valid_wins() -> None:
+    assert _resolve_quant_field({"bits": 8}, "bits", 4) == 8
+
+
+def test_resolve_quant_field_present_invalid_returns_none() -> None:
+    # Present-but-invalid must NOT fall back to the default; it returns None so the
+    # layer is reported unverified rather than silently validated with the default.
+    assert _resolve_quant_field({"bits": 0}, "bits", 4) is None
+    assert _resolve_quant_field({"bits": "8"}, "bits", 4) is None
+    assert _resolve_quant_field({"bits": -1}, "bits", 4) is None
+
+
+def test_effective_quant_override_hit() -> None:
+    quant = {"bits": 4, "group_size": 32, "lm_head": {"bits": 8, "group_size": 64}}
+    assert _effective_quant(quant, "lm_head", 4, 32) == (8, 64)
+
+
+def test_effective_quant_no_override_uses_defaults() -> None:
+    quant = {"bits": 4, "group_size": 32}
+    assert _effective_quant(quant, "model.layers.0.mlp.experts.down_proj", 4, 32) == (4, 32)
+
+
+def test_effective_quant_partial_override_falls_back_per_field() -> None:
+    quant = {"bits": 4, "group_size": 32, "x": {"bits": 8}}  # group_size absent -> default
+    assert _effective_quant(quant, "x", 4, 32) == (8, 32)
+
+
+def test_effective_quant_present_invalid_field_is_none() -> None:
+    quant = {"bits": 4, "group_size": 32, "x": {"bits": 0, "group_size": 64}}
+    assert _effective_quant(quant, "x", 4, 32) == (None, 64)
+
+
+def test_effective_quant_non_mapping_override_uses_defaults() -> None:
+    quant = {"bits": 4, "group_size": 32, "x": "weird"}
+    assert _effective_quant(quant, "x", 4, 32) == (4, 32)
