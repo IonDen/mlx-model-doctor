@@ -274,8 +274,9 @@ def test_effective_quant_non_mapping_override_uses_defaults() -> None:
 
 def test_quant_shape_pass_for_mixed_precision_per_layer() -> None:
     # Real gpt-oss-20b-MXFP4-Q8 shape vectors: lm_head is 8-bit affine (BF16 scales),
-    # experts are mxfp4 (U8 scales). The flat b4/gs32 formula mis-fails lm_head
-    # (5760 != 1440); per-layer resolution validates lm_head at b8/gs64 (2880 == 2880).
+    # experts are mxfp4 (U8 scales). Both are measured via their U32 weight (only weight
+    # dtype is gated; U8 is the scales dtype, not gated). The flat b4/gs32 formula mis-fails
+    # lm_head (5760 != 1440); per-layer resolution validates lm_head at b8/gs64 (2880 == 2880).
     header = _quant_header(
         {
             "lm_head.weight": _t("U32", (201088, 720)),
