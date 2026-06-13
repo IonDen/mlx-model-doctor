@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] — 2026-06-13
+
+### Fixed
+- The quantization-mode check (`text/quantization.mode`) now validates every
+  layer, not just the model-level default. An MLX `quantization` block can give
+  individual layers their own `mode`, `bits`, and `group_size` — a mixed-precision
+  model often pairs 4-bit experts with 8-bit dense, router, and gate layers. The
+  check had read only the top-level values, so a broken per-layer entry slipped
+  through unnoticed. It now resolves each layer's own values and checks them
+  against the MLX table: an unknown per-layer mode fails, and an off-table or
+  otherwise invalid value warns. Valid mixed-precision models still pass. This is
+  the companion to the v0.4.1 shape-check fix.
+
 ## [0.4.1] — 2026-06-12
 
 ### Fixed
