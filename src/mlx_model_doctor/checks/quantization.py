@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import cast
 
 from mlx_model_doctor.context import CheckContext
 from mlx_model_doctor.report import CheckResult
@@ -179,8 +180,14 @@ class MlxQuantizationModeCheck:
                 severity="info",
                 message="No MLX quantization object to validate.",
             )
-        mode = quant.get("mode", "affine")
-        if not isinstance(mode, str):
+        scalar = _classify_quant(
+            quant.get("mode", "affine"), quant.get("group_size"), quant.get("bits")
+        )
+        return self._render_scalar(scalar)
+
+    def _render_scalar(self, verdict: _ModeVerdict) -> CheckResult:
+        """Render today's exact scalar messages/details from a classified verdict."""
+        if verdict.kind == "non_string_mode":
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,
@@ -188,61 +195,60 @@ class MlxQuantizationModeCheck:
                 severity="medium",
                 message="Quantization mode must be a string.",
                 remediation="Set mode to one of: affine, mxfp4, mxfp8, nvfp4.",
-                details={"mode": mode},
+                details={"mode": verdict.mode},
             )
-        if mode not in _VALID_MODES:
+        if verdict.kind == "unknown_mode":
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,
                 status="fail",
                 severity="high",
-                message=f"Unknown MLX quantization mode {mode!r}; MLX rejects it at convert/load.",
+                message=f"Unknown MLX quantization mode {verdict.mode!r}; MLX rejects it at convert/load.",
                 remediation="Use one of: affine, mxfp4, mxfp8, nvfp4.",
-                details={"mode": mode},
+                details={"mode": verdict.mode},
             )
-        if mode == "affine":
-            bad: list[tuple[str, object]] = []
-            if "group_size" in quant and quant["group_size"] not in _AFFINE_GROUP_SIZES:
-                bad.append(("group_size", quant["group_size"]))
-            if "bits" in quant and quant["bits"] not in _AFFINE_BITS:
-                bad.append(("bits", quant["bits"]))
-            if bad:
-                return CheckResult(
-                    check_id=self.check_id,
-                    title=self.title,
-                    status="warn",
-                    severity="medium",
-                    message=f"affine quantization has off-table values {dict(bad)} (valid as of MLX 0.31.x).",
-                    remediation="Use affine group_size in {32,64,128} and bits in {2,3,4,5,6,8}.",
-                    details={"mode": mode, **dict(bad)},
-                )
-        else:
+        if verdict.kind == "off_table_affine":
+            bad = dict(verdict.bad)
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="warn",
+                severity="medium",
+                message=f"affine quantization has off-table values {bad} (valid as of MLX 0.31.x).",
+                remediation="Use affine group_size in {32,64,128} and bits in {2,3,4,5,6,8}.",
+                details={"mode": verdict.mode, **bad},
+            )
+        if verdict.kind == "fixed_mismatch":
+            mode = cast("str", verdict.mode)
             expected_group_size, expected_bits = _FIXED_MODES[mode]
-            group_size = quant.get("group_size", expected_group_size)
-            bits = quant.get("bits", expected_bits)
-            if group_size != expected_group_size or bits != expected_bits:
-                return CheckResult(
-                    check_id=self.check_id,
-                    title=self.title,
-                    status="warn",
-                    severity="medium",
-                    message=(
-                        f"{mode} is a fixed format expecting group_size={expected_group_size}, "
-                        f"bits={expected_bits}; got group_size={group_size}, bits={bits}."
-                    ),
-                    remediation=f"Use group_size={expected_group_size}, bits={expected_bits} for {mode}.",
-                    details={"mode": mode, "group_size": group_size, "bits": bits},
-                )
+            group_size = (
+                verdict.group_size if verdict.group_size is not None else expected_group_size
+            )
+            bits = verdict.bits if verdict.bits is not None else expected_bits
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="warn",
+                severity="medium",
+                message=(
+                    f"{mode} is a fixed format expecting group_size={expected_group_size}, "
+                    f"bits={expected_bits}; got group_size={group_size}, bits={bits}."
+                ),
+                remediation=f"Use group_size={expected_group_size}, bits={expected_bits} for {mode}.",
+                details={"mode": mode, "group_size": group_size, "bits": bits},
+            )
+        if verdict.kind != "ok":  # pragma: no cover - exhaustiveness guard
+            raise AssertionError(f"unhandled verdict kind: {verdict.kind!r}")
         return CheckResult(
             check_id=self.check_id,
             title=self.title,
             status="pass",
             severity="info",
-            message=f"MLX quantization mode {mode!r} has valid group_size/bits.",
+            message=f"MLX quantization mode {verdict.mode!r} has valid group_size/bits.",
             details={
-                "mode": mode,
-                "group_size": quant.get("group_size"),
-                "bits": quant.get("bits"),
+                "mode": verdict.mode,
+                "group_size": verdict.group_size,
+                "bits": verdict.bits,
             },
         )
 
