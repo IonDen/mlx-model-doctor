@@ -1,6 +1,9 @@
 .codegraph/
 .hypothesis/
 
+# Local Claude Code agent guidance — not shipped in the repo (mac/ convention).
+CLAUDE.md
+
 # Workspace working-state must never live inside the repo (mac/ convention) —
 # specs/plans/reviews and the granular backlog live at the workspace root.
 docs/superpowers/
