@@ -463,3 +463,121 @@ def test_quant_mode_scalar_explicit_null_fields_classify_as_absent() -> None:
     )
     assert fixed.status == "pass"
     assert "mxfp4" in fixed.message
+
+
+# ---------------------------------------------------------------------------
+# MlxQuantizationModeCheck — per-layer overrides (0030)
+# ---------------------------------------------------------------------------
+
+
+def test_quant_mode_per_layer_unknown_mode_fails() -> None:
+    # RED->GREEN: today the override is ignored -> pass. After the fix -> fail naming the layer.
+    quant = {"mode": "mxfp4", "bits": 4, "group_size": 32, "model.layers.0": {"mode": "int3"}}
+    result = MlxQuantizationModeCheck().run(_context_for_config({"quantization": quant}))
+    assert result.status == "fail"
+    assert result.severity == "high"
+    assert result.details == {"invalid_mode_layers": ("model.layers.0",)}
+
+
+def test_quant_mode_per_layer_off_table_bits_warns() -> None:
+    quant = {"mode": "mxfp4", "bits": 4, "group_size": 32, "l": {"mode": "affine", "bits": 7}}
+    result = MlxQuantizationModeCheck().run(_context_for_config({"quantization": quant}))
+    assert result.status == "warn"
+    assert result.details == {"off_table_layers": ("l",)}
+
+
+def test_quant_mode_per_layer_fixed_mismatch_warns() -> None:
+    quant = {"mode": "mxfp4", "bits": 4, "group_size": 32, "l": {"mode": "mxfp4", "bits": 8}}
+    result = MlxQuantizationModeCheck().run(_context_for_config({"quantization": quant}))
+    assert result.status == "warn"
+    assert result.details == {"off_table_layers": ("l",)}
+
+
+def test_quant_mode_per_layer_non_string_mode_warns() -> None:
+    quant = {"mode": "mxfp4", "bits": 4, "group_size": 32, "l": {"mode": 4}}
+    result = MlxQuantizationModeCheck().run(_context_for_config({"quantization": quant}))
+    assert result.status == "warn"
+    assert result.details == {"off_table_layers": ("l",)}
+
+
+def test_quant_mode_per_layer_unhashable_value_warns_not_crashes() -> None:
+    quant = {"mode": "mxfp4", "bits": 4, "group_size": 32, "l": {"bits": []}}
+    result = MlxQuantizationModeCheck().run(_context_for_config({"quantization": quant}))
+    assert result.status == "warn"
+    assert result.details == {"off_table_layers": ("l",)}
+
+
+def test_quant_mode_fail_beats_warn_across_scalar_and_layers() -> None:
+    # Scalar off-table (warn) + a per-layer unknown mode (fail) -> overall fail, both reflected.
+    quant = {"bits": 7, "group_size": 64, "model.layers.0": {"mode": "int3"}}
+    result = MlxQuantizationModeCheck().run(_context_for_config({"quantization": quant}))
+    assert result.status == "fail"
+    assert result.details == {
+        "invalid_mode_layers": ("model.layers.0",),
+        "scalar_default_invalid": True,
+    }
+
+
+def test_quant_mode_scalar_offender_in_mixed_config_uses_distinct_key() -> None:
+    # Scalar off-table, overrides valid -> warn, flagged via the distinct boolean key
+    # (no "<default>" sentinel mixed into a layer tuple).
+    quant = {"bits": 7, "group_size": 64, "l": {"mode": "affine", "bits": 8, "group_size": 64}}
+    result = MlxQuantizationModeCheck().run(_context_for_config({"quantization": quant}))
+    assert result.status == "warn"
+    assert result.details == {"scalar_default_invalid": True}
+
+
+def test_quant_mode_multiple_offending_layers_are_sorted() -> None:
+    quant = {
+        "mode": "mxfp4",
+        "bits": 4,
+        "group_size": 32,
+        "model.layers.1": {"mode": "int3"},
+        "model.layers.0": {"mode": "int3"},
+    }
+    result = MlxQuantizationModeCheck().run(_context_for_config({"quantization": quant}))
+    assert result.status == "fail"
+    assert result.details == {"invalid_mode_layers": ("model.layers.0", "model.layers.1")}
+
+
+def test_quant_mode_passes_for_valid_mixed_precision() -> None:
+    # Guard (green on old AND new code — not RED->GREEN): scalar mxfp4 canonical + valid affine
+    # 8/64 overrides (one explicit, one mode-less). Asserts the exact pass-details contract.
+    quant = {
+        "mode": "mxfp4",
+        "bits": 4,
+        "group_size": 32,
+        "lm_head": {"mode": "affine", "bits": 8, "group_size": 64},
+        "model.layers.0.mlp.gate": {"bits": 8, "group_size": 64},
+    }
+    result = MlxQuantizationModeCheck().run(_context_for_config({"quantization": quant}))
+    assert result.status == "pass"
+    assert result.details == {"per_layer_overrides": 2}
+
+
+def test_quant_mode_empty_and_stray_mappings_add_no_finding() -> None:
+    # Empty override {} resolves to (affine, None, None) -> ok. A foreign-key mapping is not an
+    # override (subset filter) -> ignored. Scalar mxfp4 canonical -> overall pass.
+    quant = {"mode": "mxfp4", "bits": 4, "group_size": 32, "l": {}, "foo": {"bar": 1}}
+    result = MlxQuantizationModeCheck().run(_context_for_config({"quantization": quant}))
+    assert result.status == "pass"
+    assert result.details == {"per_layer_overrides": 1}  # only {} counts; "foo" is filtered out
+
+
+def test_quant_mode_stray_foreign_mapping_preserves_scalar_fast_path() -> None:
+    # A scalar-only config carrying ONLY a foreign-key mapping takes the legacy scalar path,
+    # byte-identical to a plain valid config (the subset filter skips "foo").
+    quant = {"bits": 4, "group_size": 64, "foo": {"bar": 1}}
+    result = MlxQuantizationModeCheck().run(_context_for_config({"quantization": quant}))
+    assert result.status == "pass"
+    assert result.details == {"mode": "affine", "group_size": 64, "bits": 4}
+
+
+def test_quant_mode_scalar_fail_with_valid_overrides() -> None:
+    # Scalar unknown mode (fail) + all per-layer overrides valid -> overall fail; details carry
+    # only the scalar flag (fail_layers empty, so no invalid_mode_layers tuple).
+    quant = {"mode": "int3", "bits": 4, "group_size": 32, "l": {"bits": 8, "group_size": 64}}
+    result = MlxQuantizationModeCheck().run(_context_for_config({"quantization": quant}))
+    assert result.status == "fail"
+    assert result.severity == "high"
+    assert result.details == {"scalar_default_invalid": True}

@@ -139,6 +139,9 @@ def _classify_quant(mode: object, group_size: object, bits: object) -> _ModeVerd
 
 _PER_LAYER_FIELDS = frozenset({"mode", "bits", "group_size"})
 
+_FAIL_KINDS = frozenset({"unknown_mode"})
+_WARN_KINDS = frozenset({"non_string_mode", "off_table_affine", "fixed_mismatch"})
+
 
 def _is_per_layer_override(value: object) -> bool:
     """A per-layer override is a mapping whose keys are a subset of the to_quantized fields.
@@ -183,7 +186,13 @@ class MlxQuantizationModeCheck:
         scalar = _classify_quant(
             quant.get("mode", "affine"), quant.get("group_size"), quant.get("bits")
         )
-        return self._render_scalar(scalar)
+        overrides: list[tuple[str, Mapping[str, object]]] = []
+        for name, value in quant.items():
+            if isinstance(value, Mapping) and _is_per_layer_override(value):
+                overrides.append((name, value))
+        if not overrides:
+            return self._render_scalar(scalar)
+        return self._render_aggregate(scalar, overrides)
 
     def _render_scalar(self, verdict: _ModeVerdict) -> CheckResult:
         """Render today's exact scalar messages/details from a classified verdict."""
@@ -250,6 +259,58 @@ class MlxQuantizationModeCheck:
                 "group_size": verdict.group_size,
                 "bits": verdict.bits,
             },
+        )
+
+    def _render_aggregate(
+        self, scalar: _ModeVerdict, overrides: list[tuple[str, "Mapping[str, object]"]]
+    ) -> CheckResult:
+        """Validate scalar default + each per-layer override; report worst severity."""
+        fail_layers: list[str] = []
+        warn_layers: list[str] = []
+        for name, override in overrides:
+            verdict = _classify_quant(*_effective_mode_params(override))
+            if verdict.kind in _FAIL_KINDS:
+                fail_layers.append(name)
+            elif verdict.kind in _WARN_KINDS:
+                warn_layers.append(name)
+            elif verdict.kind != "ok":  # pragma: no cover - exhaustiveness guard
+                raise AssertionError(f"unhandled verdict kind: {verdict.kind!r}")
+
+        details: dict[str, object] = {}
+        if fail_layers:
+            details["invalid_mode_layers"] = tuple(sorted(fail_layers))
+        if warn_layers:
+            details["off_table_layers"] = tuple(sorted(warn_layers))
+        if scalar.kind in _FAIL_KINDS or scalar.kind in _WARN_KINDS:
+            details["scalar_default_invalid"] = True
+
+        if fail_layers or scalar.kind in _FAIL_KINDS:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="fail",
+                severity="high",
+                message="Quantization mode is invalid for one or more layers; MLX rejects unknown modes at load.",
+                remediation="Use one of: affine, mxfp4, mxfp8, nvfp4 for every layer and the model default.",
+                details=details,
+            )
+        if warn_layers or scalar.kind in _WARN_KINDS:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="warn",
+                severity="medium",
+                message="Quantization mode has off-table or non-canonical values for one or more layers (valid as of MLX 0.31.x).",
+                remediation="Use affine group_size in {32,64,128} and bits in {2,3,4,5,6,8}, or a fixed mode's canonical pair.",
+                details=details,
+            )
+        return CheckResult(
+            check_id=self.check_id,
+            title=self.title,
+            status="pass",
+            severity="info",
+            message=f"MLX quantization mode is valid across the default and {len(overrides)} per-layer override(s).",
+            details={"per_layer_overrides": len(overrides)},
         )
 
 
