@@ -136,6 +136,30 @@ def _classify_quant(mode: object, group_size: object, bits: object) -> _ModeVerd
     return _ModeVerdict("ok", mode, group_size=group_size, bits=bits)
 
 
+_PER_LAYER_FIELDS = frozenset({"mode", "bits", "group_size"})
+
+
+def _is_per_layer_override(value: object) -> bool:
+    """A per-layer override is a mapping whose keys are a subset of the to_quantized fields.
+
+    The subset filter skips a stray nested non-override mapping (e.g. a metadata block) that
+    would otherwise be misread as a layer override — the config-only analogue of the shape
+    check's tensor-prefix scoping.
+    """
+    return isinstance(value, Mapping) and set(value) <= _PER_LAYER_FIELDS
+
+
+def _effective_mode_params(override: Mapping[str, object]) -> tuple[object, object, object]:
+    """Resolve a per-layer override's effective (mode, group_size, bits).
+
+    MLX passes the override verbatim to ``to_quantized``, so an absent ``mode`` defaults to
+    ``affine`` (never the scalar mode) and absent ``bits``/``group_size`` are left as ``None``
+    (``_classify_quant`` treats ``None`` as 'not present, do not flag'). Values are raw — no
+    coercion — so a wrong-typed value is classified, not silently dropped.
+    """
+    return (override.get("mode", "affine"), override.get("group_size"), override.get("bits"))
+
+
 @dataclass(frozen=True, slots=True)
 class MlxQuantizationModeCheck:
     """Validate MLX quantization mode / group_size / bits against the MLX table."""

@@ -5,7 +5,9 @@ from mlx_model_doctor.checks.quantization import (
     MlxQuantShapeCheck,
     QuantizationMetadataCheck,
     _classify_quant,
+    _effective_mode_params,
     _effective_quant,
+    _is_per_layer_override,
     _resolve_quant_field,
 )
 from mlx_model_doctor.context import CheckContext
@@ -402,3 +404,36 @@ def test_classify_quant_crash_safe_on_unhashable_affine_values() -> None:
 def test_classify_quant_hashable_wrong_type_still_off_table() -> None:
     # The existing string-bits behavior is preserved: "8" is hashable and off-table.
     assert _classify_quant("affine", 64, "8").kind == "off_table_affine"
+
+
+# ---------------------------------------------------------------------------
+# _is_per_layer_override + _effective_mode_params (pure)
+# ---------------------------------------------------------------------------
+
+
+def test_is_per_layer_override_accepts_subset_keyed_mappings() -> None:
+    assert _is_per_layer_override({"mode": "affine", "bits": 8, "group_size": 64}) is True
+    assert _is_per_layer_override({"bits": 8, "group_size": 64}) is True  # mode-less
+    assert _is_per_layer_override({}) is True  # empty -> resolves to defaults
+
+
+def test_is_per_layer_override_rejects_foreign_keys_and_scalars() -> None:
+    assert _is_per_layer_override({"foo": 1}) is False
+    assert _is_per_layer_override({"mode": "x", "extra": 1}) is False  # foreign key present
+    assert _is_per_layer_override(4) is False
+    assert _is_per_layer_override("affine") is False
+
+
+def test_effective_mode_params_mode_less_defaults_to_affine() -> None:
+    # The flagship-repo case: a mode-less override is interpreted affine by MLX, NOT the scalar mode.
+    assert _effective_mode_params({"bits": 8, "group_size": 64}) == ("affine", 64, 8)
+
+
+def test_effective_mode_params_reads_override_only() -> None:
+    assert _effective_mode_params({"mode": "affine", "bits": 8, "group_size": 64}) == (
+        "affine",
+        64,
+        8,
+    )
+    assert _effective_mode_params({"bits": 8}) == ("affine", None, 8)  # partial
+    assert _effective_mode_params({}) == ("affine", None, None)  # empty
