@@ -477,3 +477,29 @@ def test_nvfp4_mixed_precision_repo_quant_shape_passes() -> None:
 
     report = check_hf_model("mlx-community/Qwen3.6-35B-A3B-nvfp4")
     assert _quant_shape_result(report).status == "pass"
+
+
+def _quant_mode_result(report):
+    return next(r for r in report.results if r.check_id == "text/quantization.mode")
+
+
+@pytest.mark.network
+def test_mxfp4_mixed_precision_repo_quant_mode_passes() -> None:
+    # GUARD (not RED->GREEN): the mode check already passed this repo on the old code because it
+    # only read the canonical scalar default (mxfp4/32/4). After per-layer validation it still
+    # passes — the per-layer overrides resolve to affine 8/64, which is in-table. Asserting on the
+    # specific check id (not the overall report) so a different check skipping can't mask a regression.
+    from mlx_model_doctor.api import check_hf_model
+
+    report = check_hf_model("mlx-community/gpt-oss-20b-MXFP4-Q8")
+    assert _quant_mode_result(report).status == "pass"
+
+
+@pytest.mark.network
+def test_nvfp4_mixed_precision_repo_quant_mode_passes() -> None:
+    # GUARD (see above): scalar nvfp4 (16/4) canonical; the 80 mode-less {group_size:64, bits:8}
+    # overrides resolve to affine 8/64 (their .biases tensors confirm affine) -> in-table -> pass.
+    from mlx_model_doctor.api import check_hf_model
+
+    report = check_hf_model("mlx-community/Qwen3.6-35B-A3B-nvfp4")
+    assert _quant_mode_result(report).status == "pass"
