@@ -437,3 +437,29 @@ def test_effective_mode_params_reads_override_only() -> None:
     )
     assert _effective_mode_params({"bits": 8}) == ("affine", None, 8)  # partial
     assert _effective_mode_params({}) == ("affine", None, None)  # empty
+
+
+def test_quant_mode_scalar_unhashable_bits_warns_not_crashes() -> None:
+    # Pre-refactor, `quant["bits"] not in _AFFINE_BITS` raises TypeError on []. After the
+    # refactor the scalar path goes through crash-safe _classify_quant -> structured warn.
+    result = MlxQuantizationModeCheck().run(
+        _context_for_config({"quantization": {"bits": [], "group_size": 64}})
+    )
+    assert result.status == "warn"
+    assert result.severity == "medium"
+    assert "off-table" in result.message
+
+
+def test_quant_mode_scalar_explicit_null_fields_classify_as_absent() -> None:
+    # A present-but-null bits/group_size is treated as absent (no value) by the mode check, so
+    # the (mode, bits, group_size) table relation passes. QuantizationMetadataCheck separately
+    # warns that bits is not a positive number, so a null-bits config is still surfaced overall.
+    affine = MlxQuantizationModeCheck().run(
+        _context_for_config({"quantization": {"bits": None, "group_size": None}})
+    )
+    assert affine.status == "pass"
+    fixed = MlxQuantizationModeCheck().run(
+        _context_for_config({"quantization": {"mode": "mxfp4", "group_size": None, "bits": None}})
+    )
+    assert fixed.status == "pass"
+    assert "mxfp4" in fixed.message
