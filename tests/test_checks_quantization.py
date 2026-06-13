@@ -4,6 +4,7 @@ from mlx_model_doctor.checks.quantization import (
     MlxQuantizationModeCheck,
     MlxQuantShapeCheck,
     QuantizationMetadataCheck,
+    _classify_quant,
     _effective_quant,
     _resolve_quant_field,
 )
@@ -353,3 +354,51 @@ def test_quant_shape_warn_on_invalid_present_override() -> None:
         result = MlxQuantShapeCheck().run(_quant_ctx(header, quant))
         assert result.status == "warn", bad_override
         assert result.details["unverified_layers"] == ("l",), bad_override
+
+
+# ---------------------------------------------------------------------------
+# _classify_quant (pure)
+# ---------------------------------------------------------------------------
+
+
+def test_classify_quant_ok_for_valid_affine_and_fixed_modes() -> None:
+    assert _classify_quant("affine", 64, 4).kind == "ok"
+    assert _classify_quant("mxfp4", 32, 4).kind == "ok"
+    assert _classify_quant("mxfp8", 32, 8).kind == "ok"
+    assert _classify_quant("nvfp4", 16, 4).kind == "ok"
+
+
+def test_classify_quant_absent_fields_do_not_flag() -> None:
+    # None means "field not present" -> never a finding (matches the scalar "key in quant" guards).
+    assert _classify_quant("affine", None, None).kind == "ok"
+    assert _classify_quant("mxfp4", None, None).kind == "ok"
+
+
+def test_classify_quant_non_string_mode_warns() -> None:
+    assert _classify_quant(4, None, None).kind == "non_string_mode"
+
+
+def test_classify_quant_unknown_mode_fails() -> None:
+    assert _classify_quant("int8", 8, 64).kind == "unknown_mode"
+
+
+def test_classify_quant_off_table_affine() -> None:
+    assert _classify_quant("affine", 64, 7).kind == "off_table_affine"
+    assert _classify_quant("affine", 48, 4).kind == "off_table_affine"
+
+
+def test_classify_quant_fixed_mode_mismatch() -> None:
+    assert _classify_quant("mxfp4", 64, 8).kind == "fixed_mismatch"
+
+
+def test_classify_quant_crash_safe_on_unhashable_affine_values() -> None:
+    # Set membership against a frozenset raises TypeError on unhashable values; the classifier
+    # must treat them as off-table (warn), never raise.
+    assert _classify_quant("affine", 64, []).kind == "off_table_affine"
+    assert _classify_quant("affine", 64, {"x": 1}).kind == "off_table_affine"
+    assert _classify_quant("affine", [], 4).kind == "off_table_affine"
+
+
+def test_classify_quant_hashable_wrong_type_still_off_table() -> None:
+    # The existing string-bits behavior is preserved: "8" is hashable and off-table.
+    assert _classify_quant("affine", 64, "8").kind == "off_table_affine"

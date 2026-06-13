@@ -95,6 +95,48 @@ _VALID_MODES = frozenset({"affine", *_FIXED_MODES})
 
 
 @dataclass(frozen=True, slots=True)
+class _ModeVerdict:
+    """Result of classifying one (mode, group_size, bits) triple against the MLX table."""
+
+    kind: str  # ok | non_string_mode | unknown_mode | off_table_affine | fixed_mismatch
+    mode: object = None
+    group_size: object = None
+    bits: object = None
+    bad: tuple[tuple[str, object], ...] = ()
+
+
+def _off_table(value: object, allowed: "frozenset[int]") -> bool:
+    """Membership that treats unhashable/wrong-type values as off-table instead of raising."""
+    try:
+        return value not in allowed
+    except TypeError:
+        return True
+
+
+def _classify_quant(mode: object, group_size: object, bits: object) -> _ModeVerdict:
+    """Classify a quantization triple. ``None`` group_size/bits mean 'field absent -> do not flag'."""
+    if not isinstance(mode, str):
+        return _ModeVerdict("non_string_mode", mode)
+    if mode not in _VALID_MODES:
+        return _ModeVerdict("unknown_mode", mode)
+    if mode == "affine":
+        bad: list[tuple[str, object]] = []
+        if group_size is not None and _off_table(group_size, _AFFINE_GROUP_SIZES):
+            bad.append(("group_size", group_size))
+        if bits is not None and _off_table(bits, _AFFINE_BITS):
+            bad.append(("bits", bits))
+        if bad:
+            return _ModeVerdict("off_table_affine", mode, bad=tuple(bad))
+    else:
+        expected_group_size, expected_bits = _FIXED_MODES[mode]
+        if (group_size is not None and group_size != expected_group_size) or (
+            bits is not None and bits != expected_bits
+        ):
+            return _ModeVerdict("fixed_mismatch", mode, group_size=group_size, bits=bits)
+    return _ModeVerdict("ok", mode, group_size=group_size, bits=bits)
+
+
+@dataclass(frozen=True, slots=True)
 class MlxQuantizationModeCheck:
     """Validate MLX quantization mode / group_size / bits against the MLX table."""
 
