@@ -2,13 +2,13 @@
 
 Real output from `mlx-model-doctor`, captured by running the tool — so you can see exactly what you get before installing it. Each block shows a command and its actual response.
 
-> Captured with **mlx-model-doctor 0.4.1** on **2026-06-12**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub — they change over time, which is why they're dated.
+> Captured with **mlx-model-doctor 0.4.2** on **2026-06-13**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub — they change over time, which is why they're dated.
 
 ## 1. `version` — environment and dependency status
 
 ```console
 $ mlx-model-doctor version
-mlx-model-doctor 0.4.1
+mlx-model-doctor 0.4.2
 Python: 3.13.12
 Executable: /path/to/.venv/bin/python3
 Virtualenv: /path/to/.venv
@@ -290,13 +290,13 @@ CHECKED mlx-community/Nex-N2-mini-nvfp4
   Signal: tag:mlx
   Results: pass=10 warn=2 fail=0 skip=2
 
-CHECKED mlx-community/Qwen3.5-27B-Claude-4.6-Opus-Distilled-MLX-4bit
+CHECKED mlx-community/Qwen3-Coder-Next-4bit
   Signal: tag:mlx
-  Results: pass=11 warn=2 fail=0 skip=1
+  Results: pass=10 warn=2 fail=0 skip=2
 
-CHECKED mlx-community/Qwen3.5-9B-OptiQ-4bit
+CHECKED mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit
   Signal: tag:mlx
-  Results: pass=9 warn=3 fail=0 skip=2
+  Results: pass=8 warn=2 fail=0 skip=4
 ```
 
 Exit code `0`. (Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output.)
