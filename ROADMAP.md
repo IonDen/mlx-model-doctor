@@ -5,6 +5,12 @@ as priorities change.
 
 ## Released
 
+- **v0.4.2** (2026-06-13) — the quantization-mode check now validates per-layer
+  overrides, not just the model-level default. A mixed-precision model that gives
+  some layers their own `mode`/`bits`/`group_size` (4-bit experts with 8-bit dense,
+  router, and gate layers) has each override checked against the MLX table, so a
+  broken per-layer entry is surfaced instead of slipping past. Companion to the
+  v0.4.1 shape-check fix.
 - **v0.4.1** (2026-06-12) — fix the quantized-shape check reporting a false
   failure on valid mixed-precision models. MLX records per-layer `bits` and
   `group_size` overrides (4-bit experts with 8-bit dense and router layers); the
