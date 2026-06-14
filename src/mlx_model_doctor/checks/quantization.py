@@ -164,6 +164,29 @@ def _effective_mode_params(override: Mapping[str, object]) -> tuple[object, obje
     return (override.get("mode", "affine"), override.get("group_size"), override.get("bits"))
 
 
+def config_has_mixed_precision_quant(config: Mapping[str, object]) -> bool:
+    """True when a per-layer override changes the effective bit width from the scalar default.
+
+    That is exactly when the scalar-bits weight estimate diverges from the real stored bytes.
+    An override-shaped mapping that does not change ``bits`` (empty, mode-only, group_size-only,
+    or same-bits) leaves the byte count unchanged and is *not* mixed precision. The inner
+    ``isinstance`` narrows ``value`` for the type checker and is not redundant with
+    ``_is_per_layer_override``.
+    """
+    quant = config.get("quantization")
+    if not isinstance(quant, Mapping):
+        return False
+    scalar_bits = quant.get("bits")
+    for value in quant.values():
+        if (
+            isinstance(value, Mapping)
+            and _is_per_layer_override(value)
+            and value.get("bits", scalar_bits) != scalar_bits
+        ):
+            return True
+    return False
+
+
 @dataclass(frozen=True, slots=True)
 class MlxQuantizationModeCheck:
     """Validate MLX quantization mode / group_size / bits against the MLX table."""

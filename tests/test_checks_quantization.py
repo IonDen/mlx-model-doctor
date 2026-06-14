@@ -9,6 +9,7 @@ from mlx_model_doctor.checks.quantization import (
     _effective_quant,
     _is_per_layer_override,
     _resolve_quant_field,
+    config_has_mixed_precision_quant,
 )
 from mlx_model_doctor.context import CheckContext
 from mlx_model_doctor.safetensors_header import FileHeader, SafetensorsHeader, TensorEntry
@@ -581,3 +582,53 @@ def test_quant_mode_scalar_fail_with_valid_overrides() -> None:
     assert result.status == "fail"
     assert result.severity == "high"
     assert result.details == {"scalar_default_invalid": True}
+
+
+# ---------------------------------------------------------------------------
+# config_has_mixed_precision_quant (pure predicate)
+# ---------------------------------------------------------------------------
+
+
+def test_mixed_precision_predicate_false_for_scalar_only() -> None:
+    assert (
+        config_has_mixed_precision_quant({"quantization": {"bits": 4, "group_size": 64}}) is False
+    )
+
+
+def test_mixed_precision_predicate_true_for_differing_bits_override() -> None:
+    config = {"quantization": {"bits": 4, "group_size": 64, "model.layers.0.mlp": {"bits": 8}}}
+    assert config_has_mixed_precision_quant(config) is True
+
+
+def test_mixed_precision_predicate_false_for_same_bits_override() -> None:
+    config = {
+        "quantization": {
+            "bits": 4,
+            "group_size": 64,
+            "model.layers.0.mlp": {"bits": 4, "group_size": 64},
+        }
+    }
+    assert config_has_mixed_precision_quant(config) is False
+
+
+def test_mixed_precision_predicate_false_for_mode_only_override() -> None:
+    config = {"quantization": {"bits": 4, "model.layers.0.mlp": {"mode": "affine"}}}
+    assert config_has_mixed_precision_quant(config) is False
+
+
+def test_mixed_precision_predicate_false_for_empty_override() -> None:
+    config = {"quantization": {"bits": 4, "model.layers.0.mlp": {}}}
+    assert config_has_mixed_precision_quant(config) is False
+
+
+def test_mixed_precision_predicate_false_when_no_quantization_block() -> None:
+    assert config_has_mixed_precision_quant({"model_type": "llama"}) is False
+
+
+def test_mixed_precision_predicate_false_for_non_mapping_quantization() -> None:
+    assert config_has_mixed_precision_quant({"quantization": "nope"}) is False
+
+
+def test_mixed_precision_predicate_true_when_scalar_bits_absent_but_override_has_bits() -> None:
+    config = {"quantization": {"group_size": 64, "model.layers.0.mlp": {"bits": 8}}}
+    assert config_has_mixed_precision_quant(config) is True
