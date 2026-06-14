@@ -17,6 +17,11 @@ BASE_CONFIG = {
     "quantization": {"bits": 4},
 }
 
+MIXED_CONFIG = {
+    **BASE_CONFIG,
+    "quantization": {"bits": 4, "group_size": 64, "model.layers.0.mlp": {"bits": 8}},
+}
+
 
 def test_memory_estimate_check_uses_config_and_includes_kv_cache_term() -> None:
     result = MemoryEstimateCheck().run(_context_for_config(BASE_CONFIG, context_length=16))
@@ -228,3 +233,80 @@ class UnavailableNoneSizeTarget(FakeTarget):
         if path in self.unavailable_paths:
             return None
         return super().size(path)
+
+
+def test_memory_estimate_uses_file_sizes_for_mixed_precision_when_all_weights_sized() -> None:
+    ctx = context_for_files(
+        {
+            "config.json": json.dumps(MIXED_CONFIG).encode(),
+            "model-00001-of-00002.safetensors": b"a" * 100,
+            "model-00002-of-00002.safetensors": b"b" * 200,
+        },
+        options=replace(check_options(), context_length=16),
+    )
+
+    result = MemoryEstimateCheck().run(ctx)
+
+    assert result.status == "warn"
+    assert result.details["estimate_source"] == "file_sizes"
+    assert result.details["memory_lower_bound_kind"] == "model_runtime"
+    assert result.details["weight_lower_bound_bytes"] == 300
+    assert result.details["measured_bytes"] == 300
+    expected_kv = 2 * 2 * 16 * (8 * 128) * 2  # 2 * layers * ctx_len * kv_hidden * fp16_bytes
+    assert result.details["kv_cache_lower_bound_bytes"] == expected_kv
+    assert result.details["lower_bound_bytes"] == 300 + expected_kv
+
+
+def test_memory_estimate_mixed_precision_unverified_when_a_shard_size_is_missing() -> None:
+    target = UnavailableNoneSizeTarget(
+        files={
+            "config.json": json.dumps(MIXED_CONFIG).encode(),
+            "model-00001-of-00002.safetensors": b"a" * 100,
+            "model-00002-of-00002.safetensors": b"b" * 200,
+        },
+        unavailable_paths=("model-00002-of-00002.safetensors",),
+    )
+
+    result = MemoryEstimateCheck().run(CheckContext(target=target, options=check_options()))
+
+    assert result.status == "skip"
+    assert result.severity == "info"
+    assert result.details["estimate_source"] == "unknown"
+    assert "memory_lower_bound_kind" not in result.details
+    assert result.details["unavailable_weight_paths"] == ("model-00002-of-00002.safetensors",)
+
+
+def test_memory_estimate_mixed_precision_unverified_when_no_weight_files() -> None:
+    ctx = context_for_files({"config.json": json.dumps(MIXED_CONFIG).encode()})
+
+    result = MemoryEstimateCheck().run(ctx)
+
+    assert result.status == "skip"
+    assert result.details["estimate_source"] == "unknown"
+    assert "memory_lower_bound_kind" not in result.details
+    assert "unavailable_weight_paths" not in result.details
+    assert result.details["context_length"] == 4096
+
+
+def test_memory_estimate_stays_config_for_harmless_per_layer_overrides() -> None:
+    base = MemoryEstimateCheck().run(_context_for_config(BASE_CONFIG, context_length=16))
+
+    harmless_quant_blocks = [
+        {"bits": 4, "model.layers.0.mlp": {}},  # empty override
+        {"bits": 4, "model.layers.0.mlp": {"mode": "affine"}},  # mode-only
+        {"bits": 4, "model.layers.0.mlp": {"bits": 4}},  # same-bits
+    ]
+    for quant in harmless_quant_blocks:
+        config = {**BASE_CONFIG, "quantization": quant}
+        result = MemoryEstimateCheck().run(_context_for_config(config, context_length=16))
+        assert result.details["estimate_source"] == "config", quant
+        assert result.details["lower_bound_bytes"] == base.details["lower_bound_bytes"], quant
+        assert result.details["memory_lower_bound_kind"] == "model_runtime", quant
+
+
+def test_memory_estimate_stays_config_for_unquantized_config() -> None:
+    config = {key: value for key, value in BASE_CONFIG.items() if key != "quantization"}
+
+    result = MemoryEstimateCheck().run(_context_for_config(config, context_length=16))
+
+    assert result.details["estimate_source"] == "config"
