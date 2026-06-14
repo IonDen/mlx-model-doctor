@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] — 2026-06-14
+
+### Fixed
+- The memory estimate now accounts for mixed-precision quantization. A model can
+  give individual layers their own bit width, such as 4-bit experts alongside
+  8-bit dense, router, and head layers. The estimate had applied the model-level
+  bit width to every weight, so it underreported the memory the model needs.
+  It now takes the weight figure from the measured weight-file sizes, which
+  already reflect each layer's precision, and adds the context-length KV-cache
+  term. If the file sizes can't all be read, it reports the estimate as
+  unverified rather than a number that is too low, so the optional `--smoke`
+  preflight no longer lets through a load that won't fit. Single-precision models
+  are unaffected.
+- The source distribution no longer bundles local working-tree files. The sdist
+  is built from an explicit list of what belongs in it (the package, the tests,
+  and the README, license, and changelog files), so a local build can't pull in
+  editor or tool state. The published wheel was already limited to the package.
+
 ## [0.4.2] — 2026-06-13
 
 ### Fixed
