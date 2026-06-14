@@ -5,6 +5,14 @@ as priorities change.
 
 ## Released
 
+- **v0.4.3** (2026-06-14) — the memory estimate now reflects mixed-precision
+  quantization. When a model gives some layers a different bit width (4-bit
+  experts with 8-bit dense, router, and head layers), the weight figure comes
+  from the stored file sizes, which already account for each layer's precision,
+  rather than from the model-level bit width alone; when the sizes can't all be
+  read the estimate is marked unverified instead of too low. The source
+  distribution is also built from an explicit file list, so a local build no
+  longer pulls in working-tree state.
 - **v0.4.2** (2026-06-13) — the quantization-mode check now validates per-layer
   overrides, not just the model-level default. A mixed-precision model that gives
   some layers their own `mode`/`bits`/`group_size` (4-bit experts with 8-bit dense,
