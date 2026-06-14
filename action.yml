@@ -1,0 +1,97 @@
+name: "MLX Model Doctor"
+description: "Validate an MLX / Hugging Face model repository before you load it."
+author: "Denis Ineshin"
+branding:
+  icon: "check-circle"
+  color: "purple"
+inputs:
+  source:
+    description: "Target source: 'local' or 'hf'."
+    required: false
+    default: "local"
+  target:
+    description: "Local path (source=local) or Hugging Face repo id (source=hf)."
+    required: false
+    default: "."
+  fail-on:
+    description: "Exit-code strictness: error | warn | never."
+    required: false
+    default: "error"
+  max-memory:
+    description: "Memory budget such as 32gb (empty = no budget)."
+    required: false
+    default: ""
+  context-length:
+    description: "Context length used by the memory estimate."
+    required: false
+    default: "4096"
+  skip-weights:
+    description: "Skip the safetensors tensor-header checks (true/false)."
+    required: false
+    default: "false"
+  version:
+    description: "Version spec appended to the pip install, e.g. '==0.5.0' (empty = latest)."
+    required: false
+    default: ""
+  python-version:
+    description: "Python version to set up."
+    required: false
+    default: "3.12"
+  install:
+    description: "Install mlx-model-doctor from PyPI (set 'false' if already installed)."
+    required: false
+    default: "true"
+outputs:
+  pass:
+    description: "Number of passing checks."
+    value: ${{ steps.run.outputs.pass }}
+  warn:
+    description: "Number of warnings."
+    value: ${{ steps.run.outputs.warn }}
+  fail:
+    description: "Number of failures."
+    value: ${{ steps.run.outputs.fail }}
+  skip:
+    description: "Number of skipped checks."
+    value: ${{ steps.run.outputs.skip }}
+  exit-code:
+    description: "Process exit code under the fail policy."
+    value: ${{ steps.run.outputs.exit-code }}
+  schema-version:
+    description: "JSON/contract schema version emitted by the report."
+    value: ${{ steps.run.outputs.schema-version }}
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      if: ${{ inputs.install == 'true' }}
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Install mlx-model-doctor
+      if: ${{ inputs.install == 'true' }}
+      shell: bash
+      env:
+        VERSION_SPEC: ${{ inputs.version }}
+      run: pip install "mlx-model-doctor${VERSION_SPEC}"
+    - name: Run checks
+      id: run
+      shell: bash
+      env:
+        INPUT_SOURCE: ${{ inputs.source }}
+        INPUT_TARGET: ${{ inputs.target }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_MAX_MEMORY: ${{ inputs.max-memory }}
+        INPUT_CONTEXT_LENGTH: ${{ inputs.context-length }}
+        INPUT_SKIP_WEIGHTS: ${{ inputs.skip-weights }}
+      run: |
+        args=(check "$INPUT_SOURCE" "$INPUT_TARGET")
+        args+=(--format github --fail-on "$INPUT_FAIL_ON")
+        args+=(--context-length "$INPUT_CONTEXT_LENGTH")
+        if [ -n "$INPUT_MAX_MEMORY" ]; then
+          args+=(--max-memory "$INPUT_MAX_MEMORY")
+        fi
+        if [ "$INPUT_SKIP_WEIGHTS" = "true" ]; then
+          args+=(--skip-weights)
+        fi
+        mlx-model-doctor "${args[@]}"
