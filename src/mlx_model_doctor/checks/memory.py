@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+from mlx_model_doctor.checks.quantization import config_has_mixed_precision_quant
 from mlx_model_doctor.context import CheckContext
 from mlx_model_doctor.errors import TargetError, raise_for_hf_target_error
 from mlx_model_doctor.report import CheckResult
@@ -37,8 +38,14 @@ class MemoryEstimateCheck:
         """Return a lower-bound memory estimate for the configured context length."""
         context_length = ctx.options.context_length
         config = ctx.config_json()
-        estimate = _config_estimate(config, context_length) if config is not None else None
-        if estimate is None:
+        estimate: MemoryEstimate | None
+        if config is not None and config_has_mixed_precision_quant(config):
+            estimate = _mixed_precision_estimate(ctx, config, context_length)
+        elif config is not None:
+            estimate = _config_estimate(config, context_length)
+            if estimate is None:
+                estimate = _file_size_estimate(ctx)
+        else:
             estimate = _file_size_estimate(ctx)
         if estimate is None:
             return CheckResult(
@@ -100,7 +107,7 @@ def _estimate_details(
     if estimate.lower_bound_bytes > 0:
         details[MEMORY_LOWER_BOUND_KIND_DETAIL] = MODEL_RUNTIME_MEMORY_LOWER_BOUND_KIND
     if estimate.estimate_source == "file_sizes":
-        details["measured_bytes"] = estimate.lower_bound_bytes
+        details["measured_bytes"] = estimate.weight_lower_bound_bytes
     if estimate.unavailable_weight_paths:
         details["unavailable_weight_paths"] = estimate.unavailable_weight_paths
     if max_memory_bytes is not None:
@@ -165,13 +172,20 @@ def _kv_hidden_size(config: dict[str, object], hidden_size: int) -> int:
     return hidden_size
 
 
-def _file_size_estimate(ctx: CheckContext) -> MemoryEstimate | None:
+def _measure_weights(ctx: CheckContext) -> tuple[int, tuple[str, ...]] | None:
     try:
         files = ctx.target.list_files()
     except TargetError as exc:
         raise_for_hf_target_error(exc)
         return None
-    measured_bytes, unavailable_weight_paths = _measured_weight_bytes(ctx, files)
+    return _measured_weight_bytes(ctx, files)
+
+
+def _file_size_estimate(ctx: CheckContext) -> MemoryEstimate | None:
+    measured = _measure_weights(ctx)
+    if measured is None:
+        return None
+    measured_bytes, unavailable_weight_paths = measured
     if measured_bytes <= 0:
         if unavailable_weight_paths:
             return MemoryEstimate(
@@ -185,6 +199,36 @@ def _file_size_estimate(ctx: CheckContext) -> MemoryEstimate | None:
         estimate_source="file_sizes",
         weight_lower_bound_bytes=measured_bytes,
         unavailable_weight_paths=unavailable_weight_paths,
+    )
+
+
+def _kv_cache_for_config(config: dict[str, object], context_length: int) -> int:
+    hidden_size = _positive_int(config, "hidden_size")
+    num_layers = _positive_int(config, "num_hidden_layers")
+    if hidden_size is None or num_layers is None:
+        return 0
+    return _kv_cache_bytes(config, context_length, hidden_size, num_layers)
+
+
+def _mixed_precision_estimate(
+    ctx: CheckContext, config: dict[str, object], context_length: int
+) -> MemoryEstimate:
+    measured = _measure_weights(ctx)
+    if measured is None:
+        return MemoryEstimate(lower_bound_bytes=0, estimate_source="unknown")
+    measured_bytes, unavailable_weight_paths = measured
+    if measured_bytes <= 0 or unavailable_weight_paths:
+        return MemoryEstimate(
+            lower_bound_bytes=0,
+            estimate_source="unknown",
+            unavailable_weight_paths=unavailable_weight_paths,
+        )
+    kv_cache = _kv_cache_for_config(config, context_length)
+    return MemoryEstimate(
+        lower_bound_bytes=measured_bytes + kv_cache,
+        estimate_source="file_sizes",
+        weight_lower_bound_bytes=measured_bytes,
+        kv_cache_lower_bound_bytes=kv_cache,
     )
 
 
