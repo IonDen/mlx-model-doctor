@@ -1,0 +1,8 @@
+- id: mlx-model-doctor
+  name: mlx-model-doctor
+  description: Validate an MLX / Hugging Face model repository before loading it.
+  entry: mlx-model-doctor check local
+  language: python
+  pass_filenames: false
+  always_run: true
+  args: ["."]

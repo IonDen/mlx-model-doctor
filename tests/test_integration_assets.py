@@ -22,3 +22,12 @@ def test_action_yml_is_a_composite_action_running_github_format() -> None:
     # the old directly-interpolated forms (as they appeared in the run: script) must be gone
     assert '"${{ inputs.target }}"' not in text
     assert '"${{ inputs.source }}"' not in text
+
+
+def test_pre_commit_hook_declares_check_local_entry() -> None:
+    text = (REPO_ROOT / ".pre-commit-hooks.yaml").read_text(encoding="utf-8")
+
+    assert "id: mlx-model-doctor" in text
+    assert "entry: mlx-model-doctor check local" in text
+    assert "language: python" in text
+    assert "pass_filenames: false" in text
