@@ -495,6 +495,91 @@ def test_check_hf_download_error_returns_exit_two_without_traceback(monkeypatch,
     assert "Traceback" not in captured.err
 
 
+def test_check_local_github_format_emits_annotations(tmp_path: Path, monkeypatch, capsys) -> None:
+    model = tmp_path / "missing-config"
+    model.mkdir()  # no config.json -> a real failure
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+
+    code = cli.main(["check", "local", str(model), "--format", "github"])
+    out = capsys.readouterr().out
+
+    assert code == 1
+    assert "::error title=text/files.required::" in out
+    assert "::notice title=mlx-model-doctor::" in out
+    # The notice body must carry the fail count so callers can parse it.
+    assert "fail=2" in out
+
+
+def test_check_local_github_format_writes_step_summary_and_outputs(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    model = write_local_model(tmp_path)
+    summary = tmp_path / "summary.md"
+    outputs = tmp_path / "outputs.txt"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
+
+    code = cli.main(["check", "local", str(model), "--format", "github"])
+    capsys.readouterr()
+
+    assert code == 0
+    assert summary.read_text(encoding="utf-8").startswith("# MLX Model Doctor")
+    output_text = outputs.read_text(encoding="utf-8")
+    assert "exit-code=0" in output_text
+    assert "schema-version=1.0" in output_text
+    assert "fail=0" in output_text
+
+
+def test_check_github_format_rejects_output_flag(tmp_path: Path, capsys) -> None:
+    model = tmp_path / "missing-config"
+    model.mkdir()
+
+    code = cli.main(
+        [
+            "check",
+            "local",
+            str(model),
+            "--format",
+            "github",
+            "--output",
+            str(tmp_path / "x.txt"),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert code == 2
+    assert "--output is not supported with --format github" in captured.err
+
+
+def test_check_local_github_format_writes_failure_exit_code(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    model = tmp_path / "missing-config"
+    model.mkdir()  # no config.json -> fail=2, exit code 1
+    outputs = tmp_path / "outputs.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(outputs))
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    code = cli.main(["check", "local", str(model), "--format", "github"])
+    capsys.readouterr()
+
+    assert code == 1
+    output_text = outputs.read_text(encoding="utf-8")
+    assert "exit-code=1" in output_text
+    assert "fail=2" in output_text
+
+
+def test_check_format_choices_include_github() -> None:
+    args = cli.build_parser().parse_args(["check", "local", "./model", "--format", "github"])
+
+    assert args.format == "github"
+
+
 def write_local_model(root: Path) -> Path:
     model = root / "model"
     model.mkdir()
