@@ -15,7 +15,14 @@ from mlx_model_doctor.environment import detect_venv, package_status
 from mlx_model_doctor.errors import ModelDoctorError
 from mlx_model_doctor.exit_codes import exit_code_for, exit_code_for_error
 from mlx_model_doctor.memory import parse_memory
-from mlx_model_doctor.report import DoctorReport, render_json, render_markdown, render_text
+from mlx_model_doctor.report import (
+    DoctorReport,
+    github_output_lines,
+    render_github,
+    render_json,
+    render_markdown,
+    render_text,
+)
 from mlx_model_doctor.sampling import (
     SampleBatchReport,
     render_sample_batch_json,
@@ -82,17 +89,40 @@ def _cmd_plugins(_args: argparse.Namespace) -> int:
 def _cmd_check_local(args: argparse.Namespace) -> int:
     options = _options_from_args(args)
     report = check_local_model(args.path, options=options, plugin_name=args.plugin)
-    rendered = _render_report(report, args.format)
-    _emit_report(rendered, args.output)
-    return exit_code_for(report, fail_on=cast("Literal['error', 'warn', 'never']", args.fail_on))
+    return _finish_check(report, args)
 
 
 def _cmd_check_hf(args: argparse.Namespace) -> int:
     options = _options_from_args(args)
     report = check_hf_model(args.repo_id, options=options, plugin_name=args.plugin)
+    return _finish_check(report, args)
+
+
+def _finish_check(report: DoctorReport, args: argparse.Namespace) -> int:
+    code = exit_code_for(report, fail_on=cast("Literal['error', 'warn', 'never']", args.fail_on))
+    if args.format == "github":
+        if args.output is not None:
+            raise ModelDoctorError(
+                "--output is not supported with --format github"
+                " (the report is written to GitHub's annotations, step summary, and step outputs)."
+            )
+        _emit_github(report, code)
+        return code
     rendered = _render_report(report, args.format)
     _emit_report(rendered, args.output)
-    return exit_code_for(report, fail_on=cast("Literal['error', 'warn', 'never']", args.fail_on))
+    return code
+
+
+def _emit_github(report: DoctorReport, exit_code: int) -> None:
+    print(render_github(report))
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        with Path(summary_path).open("a", encoding="utf-8") as handle:
+            handle.write(render_markdown(report) + "\n")
+    output_path = os.environ.get("GITHUB_OUTPUT")
+    if output_path:
+        with Path(output_path).open("a", encoding="utf-8") as handle:
+            handle.write(github_output_lines(report, exit_code=exit_code) + "\n")
 
 
 def _cmd_sample_hf(args: argparse.Namespace) -> int:
@@ -233,9 +263,9 @@ def _add_check_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--plugin", default="text", help="plugin name to run")
     parser.add_argument(
         "--format",
-        choices=("text", "json", "markdown"),
+        choices=("text", "json", "markdown", "github"),
         default="text",
-        help="report output format",
+        help="report output format (github emits GitHub Actions annotations)",
     )
     parser.add_argument("--output", help="write rendered report to a file")
     parser.add_argument("--max-memory", help="memory budget such as 32gb or 512mb")
