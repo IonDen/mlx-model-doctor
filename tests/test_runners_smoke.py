@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass, replace
 
 import pytest
@@ -7,7 +8,7 @@ from mlx_model_doctor.context import CheckContext
 from mlx_model_doctor.errors import TargetError
 from mlx_model_doctor.report import CheckResult
 from mlx_model_doctor.runners.smoke import run_smoke_checks
-from tests.fakes import FakeTarget, check_options
+from tests.fakes import FakeTarget, check_options, context_for_files
 
 GIB = 1024**3
 
@@ -197,3 +198,32 @@ class FakeMx:
 
     def device_info(self) -> dict[str, object]:
         return self._device_info
+
+
+def test_smoke_runner_refuses_mixed_precision_corrected_bound_end_to_end() -> None:
+    from mlx_model_doctor.checks.memory import MemoryEstimateCheck
+
+    mixed_config = {
+        "hidden_size": 4096,
+        "num_hidden_layers": 2,
+        "num_key_value_heads": 8,
+        "head_dim": 128,
+        "quantization": {"bits": 4, "group_size": 64, "model.layers.0.mlp": {"bits": 8}},
+    }
+    files = {
+        "config.json": json.dumps(mixed_config).encode(),
+        "model.safetensors": b"a" * 1024,
+    }
+    options = replace(check_options(), smoke=True, max_memory_bytes=1024)
+    ctx = context_for_files(files, options=options)
+
+    memory_result = MemoryEstimateCheck().run(ctx)
+    assert memory_result.details["estimate_source"] == "file_sizes"  # corrected path engaged
+
+    check = RecordingCheck()
+    results = run_smoke_checks(ctx, (check,), (memory_result,))
+
+    assert check.calls == 0  # the gate refused; the smoke check never ran
+    assert len(results) == 1
+    assert results[0].check_id == "text/smoke.memory_budget"
+    assert results[0].status == "fail"
