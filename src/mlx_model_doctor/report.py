@@ -169,3 +169,45 @@ def render_markdown(report: DoctorReport) -> str:
         if result.remediation:
             lines.extend([f"Remediation: {result.remediation}", ""])
     return "\n".join(lines)
+
+
+def _gh_escape_data(value: str) -> str:
+    return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def _gh_escape_property(value: str) -> str:
+    return _gh_escape_data(value).replace(":", "%3A").replace(",", "%2C")
+
+
+def render_github(report: DoctorReport) -> str:
+    """Render a report as GitHub Actions workflow commands (annotations)."""
+    lines: list[str] = []
+    for result in report.results:
+        if result.status not in {"fail", "warn"}:
+            continue
+        command = "error" if result.status == "fail" else "warning"
+        title = _gh_escape_property(result.check_id)
+        message = _gh_escape_data(f"{result.title}: {result.message}")
+        lines.append(f"::{command} title={title}::{message}")
+    summary = report.summary
+    notice = _gh_escape_data(
+        f"{report.target} — pass={summary['pass']} warn={summary['warn']} "
+        f"fail={summary['fail']} skip={summary['skip']}"
+    )
+    lines.append(f"::notice title=mlx-model-doctor::{notice}")
+    return "\n".join(lines)
+
+
+def github_output_lines(report: DoctorReport, *, exit_code: int) -> str:
+    """Render GitHub Actions step-output assignments for the ``$GITHUB_OUTPUT`` file."""
+    summary = report.summary
+    return "\n".join(
+        (
+            f"pass={summary['pass']}",
+            f"warn={summary['warn']}",
+            f"fail={summary['fail']}",
+            f"skip={summary['skip']}",
+            f"schema-version={report.schema_version}",
+            f"exit-code={exit_code}",
+        )
+    )
