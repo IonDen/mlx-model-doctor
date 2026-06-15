@@ -84,13 +84,42 @@ report = check_hf_model("mlx-community/Llama-3.2-3B-Instruct-4bit")
 | `check hf <repo_id>` | Validate a model repository on the Hugging Face Hub (network). |
 | `sample hf` | Survey likely-MLX repos for an author and validate a deterministic sample. |
 
-`check` accepts `--format {text,json,markdown}`, `--output <file>`, `--max-memory <e.g. 32gb>`, `--context-length <n>`, `--fail-on {error,warn,never}`, `--skip-weights` (skip the tensor-header checks for a faster config-only pass), and `--smoke`.
+`check` accepts `--format {text,json,markdown,github}`, `--output <file>`, `--max-memory <e.g. 32gb>`, `--context-length <n>`, `--fail-on {error,warn,never}`, `--skip-weights` (skip the tensor-header checks for a faster config-only pass), and `--smoke`. The `github` format prints GitHub Actions annotations (see [Use it in CI](#use-it-in-ci)).
 
 Exit codes: `0` checks passed (under the fail policy), `1` checks found failures, `2` tool error — a bad target, a missing dependency, or zero checks run.
 
 ## The Hugging Face path
 
 `check hf` and `sample hf` talk to the Hub through `huggingface-hub`. They read repository metadata (the file list, sizes, the small text files, and the safetensors header over a range request) rather than downloading the weights, but they do need network access, and an auth or rate-limit problem surfaces as a clear tool error rather than a stack trace. `sample hf` is a survey: it lists an author's repos, keeps the ones that look like MLX models, validates a deterministic sample of them, and reports each as its own batch item — a per-model failure is recorded and the run continues.
+
+## Use it in CI
+
+Gate a pull request on a model repository with the GitHub Action. It runs the static checks (no weights downloaded, no GPU), writes the report to the job summary, and fails the job under your fail policy:
+
+```yaml
+- uses: IonDen/mlx-model-doctor@v0
+  with:
+    source: hf
+    target: mlx-community/Llama-3.2-3B-Instruct-4bit
+    fail-on: warn
+```
+
+Add `version: "==0.5.0"` to pin the tool to a release; without it the action installs the latest published version.
+
+For a model directory you keep in git, validate it on every commit with the pre-commit hook:
+
+```yaml
+repos:
+  - repo: https://github.com/IonDen/mlx-model-doctor
+    rev: v0.5.0
+    hooks:
+      - id: mlx-model-doctor
+        args: ["path/to/model"]
+```
+
+## Output contract
+
+`--format json` is meant to be built on. The payload has a `schema_version` (currently `1.0`), a `summary` with the `pass` / `warn` / `fail` / `skip` counts, and a `results` array; each result is a frozen record with `check_id`, `title`, `status`, `severity`, `message`, `remediation`, and `details`. The exit codes don't move: `0` passed under the fail policy, `1` failures found, `2` a tool error or zero checks run. `--format github` reports the same results as GitHub Actions annotations, and inside a workflow it also writes the Markdown report to the job summary and the `pass` / `warn` / `fail` / `skip` / `exit-code` / `schema-version` values to the step outputs.
 
 ## Status
 
