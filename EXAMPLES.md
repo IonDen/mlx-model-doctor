@@ -467,7 +467,7 @@ CHECKED mlx-community/LocateAnything-3B-8bit
   Results: pass=11 warn=2 fail=0 skip=1
 ```
 
-**Result:** exit code `0`. Ten MLX repos checked, none with a hard failure — the varying `pass`/`warn`/`skip` counts reflect how complete each repo's metadata is (the high-skip `EfRLFN-x4` row, for instance, is a sparser repo than the chat models around it). Add `--format json`, `--format markdown`, or `--format github` (next section) to any `check` / `sample` command for machine-readable output.
+**Result:** exit code `0`. Ten MLX repos checked, none with a hard failure — the varying `pass`/`warn`/`skip` counts reflect how complete each repo's metadata is (the high-skip `EfRLFN-x4` row, for instance, is a sparser repo than the chat models around it). Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
 
 ## 9. `--format github` — annotations for CI
 
