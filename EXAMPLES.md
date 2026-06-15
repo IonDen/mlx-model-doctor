@@ -2,13 +2,13 @@
 
 Real output from `mlx-model-doctor`, captured by running the tool — so you can see exactly what you get before installing it. Each block shows a command, its actual response, and a short read of what the result means.
 
-> Captured with **mlx-model-doctor 0.4.3** on **2026-06-14**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 6 and 7 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
+> Captured with **mlx-model-doctor 0.5.0** on **2026-06-15**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 6 and 7 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
 
 ## 1. `version` — environment and dependency status
 
 ```console
 $ mlx-model-doctor version
-mlx-model-doctor 0.4.3
+mlx-model-doctor 0.5.0
 Python: 3.13.12
 Executable: /path/to/.venv/bin/python3
 Virtualenv: /path/to/.venv
@@ -434,10 +434,6 @@ CHECKED mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx
   Signal: tag:mlx
   Results: pass=11 warn=1 fail=0 skip=2
 
-CHECKED mlx-community/DeepSeek-R1-2bit
-  Signal: tag:mlx
-  Results: pass=11 warn=1 fail=0 skip=2
-
 CHECKED mlx-community/DeepSeek-V4-Flash-4bit
   Signal: tag:mlx
   Results: pass=10 warn=2 fail=0 skip=2
@@ -450,6 +446,14 @@ CHECKED mlx-community/Kimi-K2.7-Code-4bit
   Signal: tag:mlx
   Results: pass=10 warn=3 fail=0 skip=1
 
+CHECKED mlx-community/Lance-3B-Video-bf16
+  Signal: tag:mlx
+  Results: pass=7 warn=4 fail=0 skip=3
+
+CHECKED mlx-community/Lance-3B-bf16
+  Signal: tag:mlx
+  Results: pass=5 warn=4 fail=0 skip=5
+
 CHECKED mlx-community/Llama-3.2-3B-Instruct-4bit
   Signal: tag:mlx
   Results: pass=11 warn=1 fail=0 skip=2
@@ -461,10 +465,20 @@ CHECKED mlx-community/LocateAnything-3B-4bit
 CHECKED mlx-community/LocateAnything-3B-8bit
   Signal: tag:mlx
   Results: pass=11 warn=2 fail=0 skip=1
-
-CHECKED mlx-community/Midnight-Miqu-70B-v1.5-MLX-8Bit
-  Signal: tag:mlx
-  Results: pass=12 warn=1 fail=0 skip=1
 ```
 
-**Result:** exit code `0`. Ten MLX repos checked, none with a hard failure — the varying `pass`/`warn`/`skip` counts reflect how complete each repo's metadata is (the high-skip `EfRLFN-x4` row, for instance, is a sparser repo than the chat models around it). Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output.
+**Result:** exit code `0`. Ten MLX repos checked, none with a hard failure — the varying `pass`/`warn`/`skip` counts reflect how complete each repo's metadata is (the high-skip `EfRLFN-x4` row, for instance, is a sparser repo than the chat models around it). Add `--format json`, `--format markdown`, or `--format github` (next section) to any `check` / `sample` command for machine-readable output.
+
+## 9. `--format github` — annotations for CI
+
+**Model:** any `check` run with `--format github`, shown here on a directory with no `config.json` so the failure annotations are visible. GitHub renders the `::error` / `::warning` lines as inline annotations on the changed files and the `::notice` line as a run summary. The [GitHub Action](README.md#use-it-in-ci) wraps this format for you.
+
+```console
+$ mlx-model-doctor check local ./model --format github
+::error title=text/files.required::Required config file: Missing required config.json.
+::error title=text/config.json::Config JSON: Missing config.json; cannot validate model configuration.
+::warning title=text/tokenizer.files::Tokenizer files: No tokenizer artifacts were found.
+::notice title=mlx-model-doctor::/path/to/model — pass=1 warn=1 fail=2 skip=14
+```
+
+**Result:** exit code `1`. Each failing or warning check becomes one annotation; passing and skipped checks stay quiet. Inside a GitHub Actions job the same run also writes the full Markdown report to the job summary and the `pass` / `warn` / `fail` / `skip` / `exit-code` / `schema-version` counts to the step outputs, so a later step can read them.
