@@ -1,0 +1,64 @@
+name: Action self-test
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  good-fixture-passes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install the local build
+        shell: bash
+        run: pip install .
+      - name: Build a known-good fixture
+        shell: bash
+        run: |
+          mkdir -p fixture-good
+          echo '{"model_type":"llama","hidden_size":128,"num_hidden_layers":2,"num_attention_heads":4,"num_key_value_heads":2,"head_dim":32,"vocab_size":256,"intermediate_size":512,"pad_token_id":0,"eos_token_id":1,"quantization":{"bits":4,"group_size":64}}' > fixture-good/config.json
+          echo '{}' > fixture-good/tokenizer.json
+      - name: Run the action (expects success)
+        uses: ./
+        with:
+          source: local
+          target: fixture-good
+          install: "false"
+          fail-on: error
+
+  broken-fixture-fails:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install the local build
+        shell: bash
+        run: pip install .
+      - name: Build a known-broken fixture (no config.json)
+        shell: bash
+        run: mkdir -p fixture-broken
+      - name: Run the action (expected to fail)
+        id: doctor
+        continue-on-error: true
+        uses: ./
+        with:
+          source: local
+          target: fixture-broken
+          install: "false"
+          fail-on: error
+      - name: Assert the action failed and reported a failure count
+        shell: bash
+        run: |
+          if [ "${{ steps.doctor.outcome }}" != "failure" ]; then
+            echo "expected the action to fail on a broken repo"; exit 1
+          fi
+          if [ "${{ steps.doctor.outputs.fail }}" -lt 1 ]; then
+            echo "expected fail output >= 1, got '${{ steps.doctor.outputs.fail }}'"; exit 1
+          fi
+          echo "ok: outcome=failure, fail=${{ steps.doctor.outputs.fail }}"
