@@ -117,12 +117,20 @@ def _emit_github(report: DoctorReport, exit_code: int) -> None:
     print(render_github(report))
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_path:
-        with Path(summary_path).open("a", encoding="utf-8") as handle:
-            handle.write(render_markdown(report) + "\n")
+        _append_github_file(Path(summary_path), render_markdown(report) + "\n")
     output_path = os.environ.get("GITHUB_OUTPUT")
     if output_path:
-        with Path(output_path).open("a", encoding="utf-8") as handle:
-            handle.write(github_output_lines(report, exit_code=exit_code) + "\n")
+        _append_github_file(
+            Path(output_path), github_output_lines(report, exit_code=exit_code) + "\n"
+        )
+
+
+def _append_github_file(path: Path, content: str) -> None:
+    try:
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(content)
+    except OSError as exc:
+        raise ModelDoctorError(f"Could not write to {path}: {exc}") from exc
 
 
 def _cmd_sample_hf(args: argparse.Namespace) -> int:

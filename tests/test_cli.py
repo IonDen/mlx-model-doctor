@@ -580,6 +580,22 @@ def test_check_format_choices_include_github() -> None:
     assert args.format == "github"
 
 
+def test_check_github_format_reports_unwritable_output_file(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    model = tmp_path / "missing-config"
+    model.mkdir()
+    unwritable = tmp_path / "no-such-dir" / "outputs.txt"  # parent dir does not exist
+    monkeypatch.setenv("GITHUB_OUTPUT", str(unwritable))
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    code = cli.main(["check", "local", str(model), "--format", "github"])
+    captured = capsys.readouterr()
+
+    assert code == 2  # tool error, not a misleading exit 1
+    assert "Could not write" in (captured.out + captured.err)
+
+
 def write_local_model(root: Path) -> Path:
     model = root / "model"
     model.mkdir()
