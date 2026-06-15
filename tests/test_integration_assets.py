@@ -31,3 +31,4 @@ def test_pre_commit_hook_declares_check_local_entry() -> None:
     assert "entry: mlx-model-doctor check local" in text
     assert "language: python" in text
     assert "pass_filenames: false" in text
+    assert "minimum_pre_commit_version:" in text
