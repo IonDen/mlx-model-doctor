@@ -2,7 +2,9 @@
 name: Release
 on:
   push:
-    tags: ["v*"]
+    # Semver tags only (e.g. v0.5.0, v0.1.0-alpha). The moving major tag used by
+    # the Marketplace Action (v0) must not re-trigger a publish.
+    tags: ["v*.*.*"]
 
 jobs:
   build:
