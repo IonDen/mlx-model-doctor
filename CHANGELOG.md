@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-06-15
+
+The integration on-ramp: run the validator in other people's CI and pre-commit,
+not just by hand.
+
+### Added
+- GitHub Action (`IonDen/mlx-model-doctor@v0`): a composite action that runs the
+  static checks on `ubuntu-latest` (no weights, no GPU), writes the report to the
+  job summary, sets `pass` / `warn` / `fail` / `skip` / `exit-code` /
+  `schema-version` step outputs, and fails the job under your fail policy. Inputs
+  mirror the CLI (`source`, `target`, `fail-on`, `max-memory`, `context-length`,
+  `skip-weights`, `version`); pin the installed release with `version: "==0.5.0"`.
+- pre-commit hook (`id: mlx-model-doctor`): runs `check local` on a model
+  directory you keep in git, with an overridable `args` for the path.
+- `--format github`: emits GitHub Actions annotations — one `::error` or
+  `::warning` per failing or warning check, plus a `::notice` summary. Inside a
+  workflow it also appends the Markdown report to `$GITHUB_STEP_SUMMARY` and the
+  counts to `$GITHUB_OUTPUT`.
+- A documented output contract: `--format json` carries a `schema_version`
+  (`1.0`), the `summary` counts, and a `results` array of frozen check records;
+  the exit codes (`0` pass, `1` failures, `2` tool error or zero checks) are
+  fixed. See the README "Output contract" section.
+
 ## [0.4.3] — 2026-06-14
 
 ### Fixed

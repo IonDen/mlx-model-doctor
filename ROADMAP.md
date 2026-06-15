@@ -5,6 +5,13 @@ as priorities change.
 
 ## Released
 
+- **v0.5.0** (2026-06-15) — the integration on-ramp. A GitHub Action
+  (`IonDen/mlx-model-doctor@v0`) and a pre-commit hook (`id: mlx-model-doctor`) run
+  the static checks in CI and on every commit; a `--format github` output reports
+  results as GitHub Actions annotations, with the Markdown report in the job summary
+  and the counts in the step outputs. The JSON output and exit codes are now
+  documented as a contract to build on — a `schema_version` field and fixed
+  exit-code semantics.
 - **v0.4.3** (2026-06-14) — the memory estimate now reflects mixed-precision
   quantization. When a model gives some layers a different bit width (4-bit
   experts with 8-bit dense, router, and head layers), the weight figure comes
