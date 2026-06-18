@@ -5,6 +5,10 @@ as priorities change.
 
 ## Released
 
+- **v0.5.1** (2026-06-18) — dependency housekeeping. `safetensors` is no longer a
+  runtime dependency (the validator parses the header itself), the `huggingface-hub`
+  floor moved to the 1.x line it's tested against, and Python 3.14 joined the test
+  matrix. No change to the checks or the report.
 - **v0.5.0** (2026-06-15) — the integration on-ramp. A GitHub Action
   (`IonDen/mlx-model-doctor@v0`) and a pre-commit hook (`id: mlx-model-doctor`) run
   the static checks in CI and on every commit; a `--format github` output reports
