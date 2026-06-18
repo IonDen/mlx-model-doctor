@@ -2,24 +2,24 @@
 
 Real output from `mlx-model-doctor`, captured by running the tool — so you can see exactly what you get before installing it. Each block shows a command, its actual response, and a short read of what the result means.
 
-> Captured with **mlx-model-doctor 0.5.0** on **2026-06-15**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 6 and 7 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
+> Captured with **mlx-model-doctor 0.5.1** on **2026-06-18**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 6 and 7 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
 
 ## 1. `version` — environment and dependency status
 
 ```console
 $ mlx-model-doctor version
-mlx-model-doctor 0.5.0
+mlx-model-doctor 0.5.1
 Python: 3.13.12
 Executable: /path/to/.venv/bin/python3
 Virtualenv: /path/to/.venv
 Dependencies:
-  huggingface-hub: 1.17.0
-  safetensors: 0.7.0
+  huggingface-hub: 1.19.0
+  safetensors: not installed
   mlx: not installed
   mlx-lm: not installed
 ```
 
-Exit code `0`. Static checks need only `huggingface-hub` and `safetensors`; `mlx` / `mlx-lm` appear once the optional `[mlx-lm]` extra is installed (for the `--smoke` check).
+Exit code `0`. Static checks need only `huggingface-hub`; `safetensors`, `mlx`, and `mlx-lm` show up once the optional `[mlx-lm]` extra is installed (for the `--smoke` check).
 
 ## 2. `man` — usage and exit codes
 
@@ -430,37 +430,37 @@ CHECKED mlx-community/Bernini-R-int4
   Signal: tag:mlx
   Results: pass=6 warn=2 fail=0 skip=6
 
-CHECKED mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx
+CHECKED mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit
   Signal: tag:mlx
   Results: pass=11 warn=1 fail=0 skip=2
 
-CHECKED mlx-community/DeepSeek-V4-Flash-4bit
+CHECKED mlx-community/DeepSeek-V3-0324-4bit
   Signal: tag:mlx
-  Results: pass=10 warn=2 fail=0 skip=2
+  Results: pass=11 warn=1 fail=0 skip=2
 
 CHECKED mlx-community/EfRLFN-x4
   Signal: tag:mlx
   Results: pass=3 warn=4 fail=0 skip=7
 
+CHECKED mlx-community/GLM-5.2-DQ4plus-q8
+  Signal: tag:mlx
+  Results: pass=10 warn=3 fail=0 skip=1
+
+CHECKED mlx-community/GLM-5.2-mxfp4
+  Signal: tag:mlx
+  Results: pass=10 warn=3 fail=0 skip=1
+
 CHECKED mlx-community/Kimi-K2.7-Code-4bit
   Signal: tag:mlx
   Results: pass=10 warn=3 fail=0 skip=1
 
-CHECKED mlx-community/Lance-3B-Video-bf16
+CHECKED mlx-community/Kimi-K2.7-Code-mlx-DQ3_K_M-q8
   Signal: tag:mlx
-  Results: pass=7 warn=4 fail=0 skip=3
-
-CHECKED mlx-community/Lance-3B-bf16
-  Signal: tag:mlx
-  Results: pass=5 warn=4 fail=0 skip=5
+  Results: pass=10 warn=3 fail=0 skip=1
 
 CHECKED mlx-community/Llama-3.2-3B-Instruct-4bit
   Signal: tag:mlx
   Results: pass=11 warn=1 fail=0 skip=2
-
-CHECKED mlx-community/LocateAnything-3B-4bit
-  Signal: tag:mlx
-  Results: pass=11 warn=2 fail=0 skip=1
 
 CHECKED mlx-community/LocateAnything-3B-8bit
   Signal: tag:mlx

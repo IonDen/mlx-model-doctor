@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] — 2026-06-18
+
+Dependency housekeeping. Nothing about the checks or the report output changed;
+this release only adjusts what gets installed and which Python versions are tested.
+
+### Changed
+- The `huggingface-hub` floor is now `>=1.0`. The tool is built and tested against
+  the 1.x line, so the old `>=0.24` floor described a setup that was never tested.
+
+### Removed
+- `safetensors` is no longer a runtime dependency. The validator reads the
+  safetensors header straight from the file bytes and gets Hugging Face metadata
+  through `huggingface-hub`, so it never imported the `safetensors` package.
+  Installs are a little lighter. If you have it anyway (for example via the
+  `[mlx-lm]` extra), the `version` command still reports it.
+
+### Added
+- Python 3.14 is now tested in CI and listed in the package classifiers.
+
 ## [0.5.0] — 2026-06-15
 
 The integration on-ramp: run the validator in other people's CI and pre-commit,
