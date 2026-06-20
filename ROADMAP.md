@@ -5,6 +5,11 @@ as priorities change.
 
 ## Released
 
+- **v0.5.2** (2026-06-20) — a robustness patch. The optional `--smoke` memory
+  pre-flight no longer treats a partial weight-size sum as its lower bound (the case
+  where a repository has no usable config and one or more weight files report no
+  size), so an over-budget smoke load can't slip through on a too-low estimate. The
+  rest is internal test and code hardening with no change to the checks or the report.
 - **v0.5.1** (2026-06-18) — dependency housekeeping. `safetensors` is no longer a
   runtime dependency (the validator parses the header itself), the `huggingface-hub`
   floor moved to the 1.x line it's tested against, and Python 3.14 joined the test

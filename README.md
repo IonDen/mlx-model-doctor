@@ -104,14 +104,14 @@ Gate a pull request on a model repository with the GitHub Action. It runs the st
     fail-on: warn
 ```
 
-Add `version: "==0.5.1"` to pin the tool to a release; without it the action installs the latest published version.
+Add `version: "==0.5.2"` to pin the tool to a release; without it the action installs the latest published version.
 
 For a model directory you keep in git, validate it on every commit with the pre-commit hook:
 
 ```yaml
 repos:
   - repo: https://github.com/IonDen/mlx-model-doctor
-    rev: v0.5.1
+    rev: v0.5.2
     hooks:
       - id: mlx-model-doctor
         args: ["path/to/model"]
@@ -123,7 +123,7 @@ repos:
 
 ## Status
 
-**Alpha (0.5.1).** The static `check local` path and the report/CLI surface are solid and well tested. The safetensors header (read without downloading weights) backs four tensor-level checks — offset corruption, weight-map parameter sanity, tied-embedding consistency, and MLX quantized-layer shape consistency — which run by default (`--skip-weights` opts out). A single `check` also reports whether a repository looks like an MLX model and why, and flags a vision-language repository that declares no way to resolve its image processor. The quantized-shape and quantization-mode checks read each layer's own `bits`/`group_size`/`mode`, so a mixed-precision model (4-bit experts with 8-bit dense and router layers) is validated per layer rather than reported as broken. The memory estimate handles mixed precision the same way: when a model mixes bit widths it takes the weight figure from the stored file sizes instead of the model-level setting. The Hugging Face path (`check hf`, `sample hf`) is implemented and tested offline against fakes; its live behavior is exercised by opt-in network tests. It also ships a GitHub Action and a pre-commit hook, with a documented JSON and exit-code contract (see [Output contract](#output-contract)) for running the checks in CI. The API may still shift before 1.0 — pin a version if you depend on it.
+**Alpha (0.5.2).** The static `check local` path and the report/CLI surface are solid and well tested. The safetensors header (read without downloading weights) backs four tensor-level checks — offset corruption, weight-map parameter sanity, tied-embedding consistency, and MLX quantized-layer shape consistency — which run by default (`--skip-weights` opts out). A single `check` also reports whether a repository looks like an MLX model and why, and flags a vision-language repository that declares no way to resolve its image processor. The quantized-shape and quantization-mode checks read each layer's own `bits`/`group_size`/`mode`, so a mixed-precision model (4-bit experts with 8-bit dense and router layers) is validated per layer rather than reported as broken. The memory estimate handles mixed precision the same way: when a model mixes bit widths it takes the weight figure from the stored file sizes instead of the model-level setting. The Hugging Face path (`check hf`, `sample hf`) is implemented and tested offline against fakes; its live behavior is exercised by opt-in network tests. It also ships a GitHub Action and a pre-commit hook, with a documented JSON and exit-code contract (see [Output contract](#output-contract)) for running the checks in CI. The API may still shift before 1.0 — pin a version if you depend on it.
 
 ## License
 

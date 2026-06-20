@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] — 2026-06-20
+
+A robustness patch. The optional `--smoke` memory pre-flight is the only behavior
+change; the rest is internal test and code hardening that leaves the checks, the
+report, the CLI, and the exit codes untouched.
+
+### Fixed
+- The `--smoke` memory pre-flight no longer trusts an understated memory estimate.
+  When a repository has no usable `config.json` and one or more weight files report
+  no size (a real case for some Hugging Face repos), the estimate falls back to
+  summing the file sizes it can read — a partial figure that is lower than the true
+  weight total. That partial sum was being used as the gate's lower bound, so an
+  over-budget smoke load could slip through on a number that was too low. The partial
+  figure is still reported for context, but the gate now ignores it and lets the
+  memory-capped load decide. Fully-measured repositories are unaffected. This mirrors
+  the v0.4.3 mixed-precision fix, applied to the no-config fallback path.
+
 ## [0.5.1] — 2026-06-18
 
 Dependency housekeeping. Nothing about the checks or the report output changed;
