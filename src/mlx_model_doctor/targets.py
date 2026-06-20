@@ -317,7 +317,14 @@ class HfTarget:
         return self._metadata.get(path)
 
     def read_bytes(self, path: str, *, max_bytes: int | None = None) -> bytes:
-        """Download and read bytes for one metadata-listed repository file."""
+        """Download and read bytes for one metadata-listed repository file.
+
+        ``max_bytes`` truncates the returned bytes *after* the whole file is
+        downloaded; on this Hugging Face path it is not a bandwidth bound (unlike
+        ``LocalTarget``, which streams only ``max_bytes`` from disk). To avoid
+        fetching a large file, pre-check :meth:`size` or read the safetensors header
+        via :meth:`safetensors_header`, which uses HTTP Range requests.
+        """
         if path not in self._metadata:
             raise self._target_error(
                 f"Hugging Face target path is not listed in repo metadata: {path}",

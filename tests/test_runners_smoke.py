@@ -227,3 +227,47 @@ def test_smoke_runner_refuses_mixed_precision_corrected_bound_end_to_end() -> No
     assert len(results) == 1
     assert results[0].check_id == "text/smoke.memory_budget"
     assert results[0].status == "fail"
+
+
+def test_smoke_runner_ignores_no_config_partial_file_size_bound_end_to_end() -> None:
+    from mlx_model_doctor.checks.memory import MemoryEstimateCheck
+
+    # No usable config.json, and one shard's size is unavailable: the partial measured
+    # weight sum is an understated lower bound, so the gate must not refuse based on it
+    # even when the partial sum alone exceeds the budget — the capped load decides.
+    target = _PartialSizeTarget(
+        files={
+            "config.json": b'{"model_type":"llama"}',
+            "model-00001-of-00002.safetensors": b"a" * 2000,
+            "model-00002-of-00002.safetensors": b"b" * 200,
+        },
+        unavailable_paths=("model-00002-of-00002.safetensors",),
+    )
+    ctx = CheckContext(
+        target=target,
+        options=replace(check_options(), smoke=True, max_memory_bytes=1024),
+    )
+
+    memory_result = MemoryEstimateCheck().run(ctx)
+    assert memory_result.details["estimate_source"] == "file_sizes"
+    assert memory_result.details["lower_bound_bytes"] == 2000  # partial sum, over the 1024 budget
+    assert "memory_lower_bound_kind" not in memory_result.details  # not gate-trusted
+
+    check = RecordingCheck()
+    results = run_smoke_checks(ctx, (check,), (memory_result,))
+
+    assert check.calls == 1  # the gate ignored the partial sum; the smoke check ran
+    assert [result.check_id for result in results] == ["text/recording"]
+
+
+class _PartialSizeTarget(FakeTarget):
+    unavailable_paths: tuple[str, ...]
+
+    def __init__(self, *, files: dict[str, bytes], unavailable_paths: tuple[str, ...]) -> None:
+        super().__init__(files=files)
+        self.unavailable_paths = unavailable_paths
+
+    def size(self, path: str) -> int | None:
+        if path in self.unavailable_paths:
+            return None
+        return super().size(path)

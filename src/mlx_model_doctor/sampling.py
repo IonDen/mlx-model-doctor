@@ -159,14 +159,21 @@ def deterministic_sample(
     models: Iterable[ModelCandidate],
     *,
     limit: int,
-) -> list[ModelCandidate]:
-    """Filter likely MLX candidates, sort by repo ID, and take a deterministic sample."""
+) -> list[tuple[ModelCandidate, str]]:
+    """Filter likely MLX candidates, sort by repo ID, and take a deterministic sample.
+
+    Each returned pair is a candidate and its highest-priority MLX signal, so callers
+    never have to recompute the signal (and the signal is known non-``None`` by
+    construction — only candidates with a signal are kept).
+    """
     if limit < 0:
         raise ModelDoctorError("sample limit must be non-negative")
     if limit == 0:
         return []
-    eligible = [model for model in models if candidate_signal(model) is not None]
-    return sorted(eligible, key=lambda model: model.id)[:limit]
+    eligible = [
+        (model, signal) for model in models if (signal := candidate_signal(model)) is not None
+    ]
+    return sorted(eligible, key=lambda pair: pair[0].id)[:limit]
 
 
 def run_hf_sample(
@@ -203,12 +210,7 @@ def run_hf_sample(
         verbosity="normal",
     )
     items: list[SampledModelResult] = []
-    for model in sampled_models:
-        signal = candidate_signal(model)
-        # deterministic_sample only yields models with a signal; this guard is an
-        # unreachable type-narrowing safeguard (candidate_signal returns str | None).
-        if signal is None:  # pragma: no cover
-            continue
+    for model, signal in sampled_models:
         try:
             report = checker(model.id, options=options, plugin_name=plugin_name)
         except ModelDoctorError as exc:

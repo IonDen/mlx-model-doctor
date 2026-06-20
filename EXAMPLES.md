@@ -2,14 +2,14 @@
 
 Real output from `mlx-model-doctor`, captured by running the tool — so you can see exactly what you get before installing it. Each block shows a command, its actual response, and a short read of what the result means.
 
-> Captured with **mlx-model-doctor 0.5.1** on **2026-06-18**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 6 and 7 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
+> Captured with **mlx-model-doctor 0.5.2** on **2026-06-20**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 6 and 7 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
 
 ## 1. `version` — environment and dependency status
 
 ```console
 $ mlx-model-doctor version
-mlx-model-doctor 0.5.1
-Python: 3.13.12
+mlx-model-doctor 0.5.2
+Python: 3.14.5
 Executable: /path/to/.venv/bin/python3
 Virtualenv: /path/to/.venv
 Dependencies:
@@ -412,7 +412,7 @@ SKIP info text/quantization.shape
 
 ## 8. `sample hf` — survey an author's likely-MLX repos
 
-Lists an author's repositories, keeps the ones that look like MLX models, and validates a deterministic sample. `--limit 10` over-fetches the listing so it checks ten MLX candidates even when some of the first listed repos aren't MLX. Each model is its own batch item; a per-model error is recorded and the run continues. The survey stays config-only — it doesn't fetch tensor headers per repo.
+Lists an author's repositories, keeps the ones that look like MLX models, and validates a deterministic sample. `--limit 10` over-fetches the listing so it checks ten MLX candidates even when some of the first listed repos aren't MLX. Each model is its own batch item; a per-model error is recorded and the run continues. The survey stays config-only — it doesn't fetch tensor headers per repo. A survey that matches no MLX repositories is a valid empty result and still exits `0`: finding nothing is informational, not a tool error.
 
 ```console
 $ mlx-model-doctor sample hf --author mlx-community --limit 10
@@ -438,9 +438,17 @@ CHECKED mlx-community/DeepSeek-V3-0324-4bit
   Signal: tag:mlx
   Results: pass=11 warn=1 fail=0 skip=2
 
+CHECKED mlx-community/DeepSeek-V4-Flash-4bit
+  Signal: tag:mlx
+  Results: pass=10 warn=2 fail=0 skip=2
+
 CHECKED mlx-community/EfRLFN-x4
   Signal: tag:mlx
   Results: pass=3 warn=4 fail=0 skip=7
+
+CHECKED mlx-community/GLM-4.5-Air-4bit
+  Signal: tag:mlx
+  Results: pass=11 warn=2 fail=0 skip=1
 
 CHECKED mlx-community/GLM-5.2-DQ4plus-q8
   Signal: tag:mlx
@@ -457,14 +465,6 @@ CHECKED mlx-community/Kimi-K2.7-Code-4bit
 CHECKED mlx-community/Kimi-K2.7-Code-mlx-DQ3_K_M-q8
   Signal: tag:mlx
   Results: pass=10 warn=3 fail=0 skip=1
-
-CHECKED mlx-community/Llama-3.2-3B-Instruct-4bit
-  Signal: tag:mlx
-  Results: pass=11 warn=1 fail=0 skip=2
-
-CHECKED mlx-community/LocateAnything-3B-8bit
-  Signal: tag:mlx
-  Results: pass=11 warn=2 fail=0 skip=1
 ```
 
 **Result:** exit code `0`. Ten MLX repos checked, none with a hard failure — the varying `pass`/`warn`/`skip` counts reflect how complete each repo's metadata is (the high-skip `EfRLFN-x4` row, for instance, is a sparser repo than the chat models around it). Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.

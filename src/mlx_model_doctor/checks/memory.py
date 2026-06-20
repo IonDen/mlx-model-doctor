@@ -104,7 +104,10 @@ def _estimate_details(
         "weight_lower_bound_bytes": estimate.weight_lower_bound_bytes,
         "kv_cache_lower_bound_bytes": estimate.kv_cache_lower_bound_bytes,
     }
-    if estimate.lower_bound_bytes > 0:
+    # A partial weight sum (some shards unsized) understates the bound, so it is not a
+    # trustworthy smoke-gate floor: report it diagnostically but withhold the gate marker
+    # that runners/smoke.py keys off. Mirrors the mixed-precision posture in 0032.
+    if estimate.lower_bound_bytes > 0 and not estimate.unavailable_weight_paths:
         details[MEMORY_LOWER_BOUND_KIND_DETAIL] = MODEL_RUNTIME_MEMORY_LOWER_BOUND_KIND
     if estimate.estimate_source == "file_sizes":
         details["measured_bytes"] = estimate.weight_lower_bound_bytes

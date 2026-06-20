@@ -80,7 +80,14 @@ def test_mlx_lm_backend_lazily_imports_installs_caps_and_records_peak(monkeypatc
     assert mx.memory_limit == 22 * GIB
     assert mlx_lm.load_saw_reset is True
     assert mlx_lm.load_saw_caps == (20 * GIB, 22 * GIB)
-    assert mlx_lm.generate_kwargs == {"prompt": "Hello", "max_tokens": 8, "verbose": False}
+    # Pin the load-bearing memory-safety knobs; a behavior-preserving prompt tweak should
+    # not break this test, but a bounded max_tokens and quiet generation are contractual.
+    assert mlx_lm.generate_kwargs is not None
+    assert mlx_lm.generate_kwargs["max_tokens"] == 8
+    assert mlx_lm.generate_kwargs["verbose"] is False
+    prompt = mlx_lm.generate_kwargs["prompt"]
+    assert isinstance(prompt, str)
+    assert prompt.strip()  # a real prompt, not blanked to "" or whitespace
 
 
 @pytest.mark.parametrize(

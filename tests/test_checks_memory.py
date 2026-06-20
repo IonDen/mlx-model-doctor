@@ -88,6 +88,8 @@ def test_memory_estimate_check_uses_file_size_fallback_when_config_is_insufficie
     assert result.severity == "low"
     assert result.details["estimate_source"] == "file_sizes"
     assert result.details["lower_bound_bytes"] == 30
+    # A fully-measured no-config sum is a trustworthy smoke-gate lower bound.
+    assert result.details["memory_lower_bound_kind"] == "model_runtime"
 
 
 def test_memory_estimate_check_uses_config_when_vocab_size_is_missing() -> None:
@@ -132,6 +134,8 @@ def test_memory_estimate_check_keeps_measurable_file_sizes_when_one_size_fails()
     assert result.details["estimate_source"] == "file_sizes"
     assert result.details["lower_bound_bytes"] == 10
     assert result.details["unavailable_weight_paths"] == ("model-00002-of-00002.safetensors",)
+    # The partial sum is reported diagnostically only; it must not be smoke-gate-trusted.
+    assert "memory_lower_bound_kind" not in result.details
 
 
 def test_memory_estimate_check_reports_listed_weight_with_unavailable_size() -> None:
@@ -152,6 +156,8 @@ def test_memory_estimate_check_reports_listed_weight_with_unavailable_size() -> 
     assert result.details["lower_bound_bytes"] == 10
     assert result.details["measured_bytes"] == 10
     assert result.details["unavailable_weight_paths"] == ("model-00002-of-00002.safetensors",)
+    # The partial sum is reported diagnostically only; it must not be smoke-gate-trusted.
+    assert "memory_lower_bound_kind" not in result.details
 
 
 def test_memory_estimate_check_skip_reports_all_listed_weights_with_unavailable_sizes() -> None:
