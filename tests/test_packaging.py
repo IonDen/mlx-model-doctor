@@ -98,3 +98,22 @@ def test_wheel_contains_only_the_package(built_artifacts: tuple[Path, Path]) -> 
         assert name.startswith("mlx_model_doctor/") or top_level.endswith(".dist-info"), (
             f"stray wheel member outside the package: {name}"
         )
+
+
+def test_wheel_ships_the_report_schema(built_artifacts: tuple[Path, Path]) -> None:
+    _sdist, wheel = built_artifacts
+    with zipfile.ZipFile(wheel) as zf:
+        names = zf.namelist()
+    assert "mlx_model_doctor/schema/report.v1.schema.json" in names, (
+        f"report schema missing from wheel: {names}"
+    )
+
+
+def test_sdist_ships_the_report_schema(built_artifacts: tuple[Path, Path]) -> None:
+    sdist, _wheel = built_artifacts
+    with tarfile.open(sdist) as tf:
+        # sdist members are prefixed with "<name>-<version>/"; strip it.
+        members = [name.split("/", 1)[1] for name in tf.getnames() if "/" in name]
+    assert "src/mlx_model_doctor/schema/report.v1.schema.json" in members, (
+        f"report schema missing from sdist: {members}"
+    )
