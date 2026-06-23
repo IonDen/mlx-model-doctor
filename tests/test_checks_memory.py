@@ -316,3 +316,15 @@ def test_memory_estimate_stays_config_for_unquantized_config() -> None:
     result = MemoryEstimateCheck().run(_context_for_config(config, context_length=16))
 
     assert result.details["estimate_source"] == "config"
+
+
+def test_promoted_smoke_gate_detail_keys_are_stable() -> None:
+    # Contract pin: these three details keys are the documented cross-check seam the
+    # --smoke memory gate reads (runners/smoke.py). A rename/retype is a breaking change.
+    result = MemoryEstimateCheck().run(_context_for_config(BASE_CONFIG, context_length=16))
+
+    assert isinstance(result.details["lower_bound_bytes"], int)
+    assert isinstance(result.details["estimate_source"], str)
+    assert result.details["estimate_source"] in {"config", "file_sizes", "unknown"}
+    # Only present on a trusted bound (lower_bound_bytes > 0 and no unsized shards).
+    assert result.details["memory_lower_bound_kind"] == "model_runtime"
