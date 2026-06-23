@@ -129,7 +129,7 @@ repos:
 | `plugin` | string | The check plugin that ran (e.g. `"text"`). |
 | `summary` | object | Check counts: `pass`, `warn`, `fail`, `skip` (integers). |
 | `environment` | object | Open object, currently empty — reserved for future environment metadata. |
-| `zero_check_reason` | string or null | Non-null if no checks ran, explains why. |
+| `zero_check_reason` | string or null | Always null today; reserved to explain a zero-check run, which surfaces as exit code `2`. |
 | `results` | array | One entry per check; see below. |
 
 Each result in `results[]` has:
@@ -147,7 +147,7 @@ Each result in `results[]` has:
 
 The machine-readable schema ships with the package at `mlx_model_doctor/schema/report.v1.schema.json` and is validated against real output in CI.
 
-Exit codes: `0` checks passed under the fail policy, `1` failures found, `2` a tool error or zero checks run. `--format github` reports the same results as GitHub Actions annotations; inside a workflow it also writes the Markdown report to the job summary and the `pass` / `warn` / `fail` / `skip` / `exit-code` / `schema-version` values to the step outputs.
+Exit codes: `0` checks passed under the fail policy, `1` failures found, `2` a tool error (a bad target, a missing dependency, or zero checks run). `--format github` reports the same results as GitHub Actions annotations; inside a workflow it also writes the Markdown report to the job summary and the `pass` / `warn` / `fail` / `skip` / `exit-code` / `schema-version` values to the step outputs.
 
 ## Stability policy
 
