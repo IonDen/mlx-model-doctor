@@ -104,14 +104,14 @@ Gate a pull request on a model repository with the GitHub Action. It runs the st
     fail-on: warn
 ```
 
-Add `version: "==0.5.2"` to pin the tool to a release; without it the action installs the latest published version.
+Add `version: "==0.6.0"` to pin the tool to a release; without it the action installs the latest published version.
 
 For a model directory you keep in git, validate it on every commit with the pre-commit hook:
 
 ```yaml
 repos:
   - repo: https://github.com/IonDen/mlx-model-doctor
-    rev: v0.5.2
+    rev: v0.6.0
     hooks:
       - id: mlx-model-doctor
         args: ["path/to/model"]
@@ -169,7 +169,7 @@ The top-level object, `summary`, and each entry in `results[]` are closed (`addi
 
 ### Promoted `details` keys
 
-`details` is otherwise free-form, but three keys from the memory check are stable across the 1.x schema line: `lower_bound_bytes`, `estimate_source`, and `memory_lower_bound_kind`. `lower_bound_bytes` is a structural lower-bound floor: it counts attention, MLP, and embedding parameters at ≤16-bit weights (or quantized-equivalent) plus KV cache, but excludes norms, biases, and an untied `lm_head`. It sits below real runtime use and is not a fit guarantee.
+`details` is otherwise free-form, but three keys from the memory check are stable across the 1.x schema line: `lower_bound_bytes`, `estimate_source`, and `memory_lower_bound_kind`. `lower_bound_bytes` is a structural lower bound — it counts attention, MLP, and embedding parameters at ≤16-bit weights (or quantized-equivalent) plus KV cache, but excludes norms, biases, and an untied `lm_head`. It sits below real runtime use and is not a fit guarantee.
 
 ### Batch output
 

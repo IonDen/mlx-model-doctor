@@ -467,7 +467,7 @@ CHECKED mlx-community/Hermes-3-Llama-3.1-70B-8bit
   Results: pass=11 warn=1 fail=0 skip=2
 ```
 
-**Result:** exit code `0`. Ten MLX repos checked. Three of them — the `Boogu-Image` rows — carry hard failures: they're tagged `mlx`, but they aren't text language models, so the `text` engine's checks fail on them. The survey still exits `0` because it records each model as its own batch item and reports per-repo results rather than gating on them; a per-model failure never fails the run (only a survey where every attempted model errors exits non-zero). The `pass`/`warn`/`skip` spread across the rest reflects how complete each repo's metadata is. Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
+**Result:** exit code `0`. Ten MLX repos checked. Three of them — the `Boogu-Image` rows — carry hard failures: they're tagged `mlx`, but they aren't text language models, so the `text` engine's checks fail on them. The survey still exits `0` because it records each model as its own batch item and reports per-repo results rather than gating on them; a per-model failure never fails the run. The `pass`/`warn`/`skip` spread across the rest reflects how complete each repo's metadata is. Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
 
 ## 9. `--format github` — annotations for CI
 

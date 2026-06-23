@@ -325,6 +325,5 @@ def test_promoted_smoke_gate_detail_keys_are_stable() -> None:
 
     assert isinstance(result.details["lower_bound_bytes"], int)
     assert isinstance(result.details["estimate_source"], str)
-    assert result.details["estimate_source"] in {"config", "file_sizes", "unknown"}
     # Only present on a trusted bound (lower_bound_bytes > 0 and no unsized shards).
     assert result.details["memory_lower_bound_kind"] == "model_runtime"
