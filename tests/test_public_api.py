@@ -24,6 +24,8 @@ FROZEN_SURFACE = frozenset(
 
 
 def test_frozen_surface_is_exported() -> None:
+    # Superset (not ==) is intentional: the stable surface may grow; accidental
+    # exports of internals are guarded by test_internal_helpers_are_not_exported.
     assert set(mmd.__all__) >= FROZEN_SURFACE
 
 
