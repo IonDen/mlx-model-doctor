@@ -119,11 +119,65 @@ repos:
 
 ## Output contract
 
-`--format json` is meant to be built on. The payload has a `schema_version` (currently `1.0`), a `summary` with the `pass` / `warn` / `fail` / `skip` counts, and a `results` array; each result is a frozen record with `check_id`, `title`, `status`, `severity`, `message`, `remediation`, and `details`. The exit codes don't move: `0` passed under the fail policy, `1` failures found, `2` a tool error or zero checks run. `--format github` reports the same results as GitHub Actions annotations, and inside a workflow it also writes the Markdown report to the job summary and the `pass` / `warn` / `fail` / `skip` / `exit-code` / `schema-version` values to the step outputs.
+`--format json` prints a stable, versioned payload. The top-level fields are:
+
+| Field | Type | Description |
+|---|---|---|
+| `schema_version` | string | Schema major.minor version (e.g. `"1.0"`), independent of the package version. |
+| `target` | string | The model path or repo ID that was checked. |
+| `source` | `"local"` or `"hf"` | Where the model came from. |
+| `plugin` | string | The check plugin that ran (e.g. `"text"`). |
+| `summary` | object | Check counts: `pass`, `warn`, `fail`, `skip` (integers). |
+| `environment` | object | Open object, currently empty — reserved for future environment metadata. |
+| `zero_check_reason` | string or null | Non-null if no checks ran, explains why. |
+| `results` | array | One entry per check; see below. |
+
+Each result in `results[]` has:
+
+| Field | Type | Description |
+|---|---|---|
+| `check_id` | string | Namespaced identifier, e.g. `"text/files.required"`. |
+| `title` | string | Short human-readable check name. |
+| `status` | string | `"pass"`, `"warn"`, `"fail"`, or `"skip"`. |
+| `severity` | string | `"info"`, `"low"`, `"medium"`, or `"high"`. |
+| `message` | string | What was found. |
+| `remediation` | string or null | What to do if the check fired. |
+| `details` | object | Open object with check-specific key/value pairs. |
+| `duration_s` | number or null | How long this check took, in seconds. |
+
+The machine-readable schema ships with the package at `mlx_model_doctor/schema/report.v1.schema.json` and is validated against real output in CI.
+
+Exit codes: `0` checks passed under the fail policy, `1` failures found, `2` a tool error or zero checks run. `--format github` reports the same results as GitHub Actions annotations; inside a workflow it also writes the Markdown report to the job summary and the `pass` / `warn` / `fail` / `skip` / `exit-code` / `schema-version` values to the step outputs.
+
+## Stability policy
+
+### Public API
+
+The names you can depend on — only change on a major release:
+
+`check_local_model`, `check_hf_model`, `CheckOptions`, `DoctorReport`, `CheckResult`, `render_json`, `render_text`, `render_markdown`, `render_github`, `exit_code_for`, and the error types `ModelDoctorError`, `TargetError`, `DependencyError`, `MemorySafetyError`. `exit_code_for` raises `ValueError` on an unrecognized `fail-on` value.
+
+### Internal layer
+
+The check, plugin, and target Protocols; `CheckContext`; the plugin registry; and the `hub=` parameter on `check_hf_model` (a test injection seam whose type may change) are internal and not stable across releases.
+
+### Schema versioning
+
+`schema_version` is `MAJOR.MINOR`, versioned independently of the package. A minor bump adds new optional fields or new values to open fields (such as the memory check's `estimate_source` values). A major bump means a documented field was removed, renamed, or retyped, or a closed enum (`status`, `severity`, `source`) changed.
+
+The top-level object, `summary`, and each entry in `results[]` are closed (`additionalProperties: false`), so a new field there is a coordinated schema edit plus a minor version bump. Validate against the schema that matches the payload's `schema_version`, not a pinned older copy — otherwise a newer payload's added field will fail your validator.
+
+### Promoted `details` keys
+
+`details` is otherwise free-form, but three keys from the memory check are stable across the 1.x schema line: `lower_bound_bytes`, `estimate_source`, and `memory_lower_bound_kind`. `lower_bound_bytes` is a structural lower-bound floor: it counts attention, MLP, and embedding parameters at ≤16-bit weights (or quantized-equivalent) plus KV cache, but excludes norms, biases, and an untied `lm_head`. It sits below real runtime use and is not a fit guarantee.
+
+### Batch output
+
+The published schema covers the single `check` report only. The `sample hf` batch output is not yet under the schema guarantee.
 
 ## Status
 
-**Alpha (0.5.2).** The static `check local` path and the report/CLI surface are solid and well tested. The safetensors header (read without downloading weights) backs four tensor-level checks — offset corruption, weight-map parameter sanity, tied-embedding consistency, and MLX quantized-layer shape consistency — which run by default (`--skip-weights` opts out). A single `check` also reports whether a repository looks like an MLX model and why, and flags a vision-language repository that declares no way to resolve its image processor. The quantized-shape and quantization-mode checks read each layer's own `bits`/`group_size`/`mode`, so a mixed-precision model (4-bit experts with 8-bit dense and router layers) is validated per layer rather than reported as broken. The memory estimate handles mixed precision the same way: when a model mixes bit widths it takes the weight figure from the stored file sizes instead of the model-level setting. The Hugging Face path (`check hf`, `sample hf`) is implemented and tested offline against fakes; its live behavior is exercised by opt-in network tests. It also ships a GitHub Action and a pre-commit hook, with a documented JSON and exit-code contract (see [Output contract](#output-contract)) for running the checks in CI. The API may still shift before 1.0 — pin a version if you depend on it.
+**Alpha (0.6.0).** The static `check local` path and the report/CLI surface are solid and well tested. The safetensors header (read without downloading weights) backs four tensor-level checks — offset corruption, weight-map parameter sanity, tied-embedding consistency, and MLX quantized-layer shape consistency — which run by default (`--skip-weights` opts out). A single `check` also reports whether a repository looks like an MLX model and why, and flags a vision-language repository that declares no way to resolve its image processor. The quantized-shape and quantization-mode checks read each layer's own `bits`/`group_size`/`mode`, so a mixed-precision model (4-bit experts with 8-bit dense and router layers) is validated per layer rather than reported as broken. The memory estimate handles mixed precision the same way: when a model mixes bit widths it takes the weight figure from the stored file sizes instead of the model-level setting. The Hugging Face path (`check hf`, `sample hf`) is implemented and tested offline against fakes; its live behavior is exercised by opt-in network tests. It also ships a GitHub Action and a pre-commit hook. The public API and JSON output now have a documented, versioned stability contract — see [Output contract](#output-contract) and [Stability policy](#stability-policy). Pin a version if you depend on the schema or the API.
 
 ## License
 
