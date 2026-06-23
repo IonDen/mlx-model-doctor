@@ -2,13 +2,13 @@
 
 Real output from `mlx-model-doctor`, captured by running the tool — so you can see exactly what you get before installing it. Each block shows a command, its actual response, and a short read of what the result means.
 
-> Captured with **mlx-model-doctor 0.5.2** on **2026-06-20**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 6 and 7 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
+> Captured with **mlx-model-doctor 0.6.0** on **2026-06-23**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 6 and 7 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
 
 ## 1. `version` — environment and dependency status
 
 ```console
 $ mlx-model-doctor version
-mlx-model-doctor 0.5.2
+mlx-model-doctor 0.6.0
 Python: 3.14.5
 Executable: /path/to/.venv/bin/python3
 Virtualenv: /path/to/.venv
@@ -430,25 +430,25 @@ CHECKED mlx-community/Bernini-R-int4
   Signal: tag:mlx
   Results: pass=6 warn=2 fail=0 skip=6
 
-CHECKED mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit
+CHECKED mlx-community/Boogu-Image-0.1-Base-4bit
   Signal: tag:mlx
-  Results: pass=11 warn=1 fail=0 skip=2
+  Results: pass=1 warn=2 fail=2 skip=9
+
+CHECKED mlx-community/Boogu-Image-0.1-Base-bf16
+  Signal: tag:mlx
+  Results: pass=1 warn=2 fail=3 skip=8
+
+CHECKED mlx-community/Boogu-Image-0.1-Edit-4bit
+  Signal: tag:mlx
+  Results: pass=1 warn=2 fail=2 skip=9
 
 CHECKED mlx-community/DeepSeek-V3-0324-4bit
   Signal: tag:mlx
   Results: pass=11 warn=1 fail=0 skip=2
 
-CHECKED mlx-community/DeepSeek-V4-Flash-4bit
+CHECKED mlx-community/Falcon-OCR-bf16
   Signal: tag:mlx
-  Results: pass=10 warn=2 fail=0 skip=2
-
-CHECKED mlx-community/EfRLFN-x4
-  Signal: tag:mlx
-  Results: pass=3 warn=4 fail=0 skip=7
-
-CHECKED mlx-community/GLM-4.5-Air-4bit
-  Signal: tag:mlx
-  Results: pass=11 warn=2 fail=0 skip=1
+  Results: pass=6 warn=3 fail=0 skip=5
 
 CHECKED mlx-community/GLM-5.2-DQ4plus-q8
   Signal: tag:mlx
@@ -458,16 +458,16 @@ CHECKED mlx-community/GLM-5.2-mxfp4
   Signal: tag:mlx
   Results: pass=10 warn=3 fail=0 skip=1
 
-CHECKED mlx-community/Kimi-K2.7-Code-4bit
+CHECKED mlx-community/GLM-OCR-8bit
   Signal: tag:mlx
-  Results: pass=10 warn=3 fail=0 skip=1
+  Results: pass=11 warn=2 fail=0 skip=1
 
-CHECKED mlx-community/Kimi-K2.7-Code-mlx-DQ3_K_M-q8
+CHECKED mlx-community/Hermes-3-Llama-3.1-70B-8bit
   Signal: tag:mlx
-  Results: pass=10 warn=3 fail=0 skip=1
+  Results: pass=11 warn=1 fail=0 skip=2
 ```
 
-**Result:** exit code `0`. Ten MLX repos checked, none with a hard failure — the varying `pass`/`warn`/`skip` counts reflect how complete each repo's metadata is (the high-skip `EfRLFN-x4` row, for instance, is a sparser repo than the chat models around it). Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
+**Result:** exit code `0`. Ten MLX repos checked. Three of them — the `Boogu-Image` rows — carry hard failures: they're tagged `mlx`, but they aren't text language models, so the `text` engine's checks fail on them. The survey still exits `0` because it records each model as its own batch item and reports per-repo results rather than gating on them; a per-model failure never fails the run (only a survey where every attempted model errors exits non-zero). The `pass`/`warn`/`skip` spread across the rest reflects how complete each repo's metadata is. Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
 
 ## 9. `--format github` — annotations for CI
 
