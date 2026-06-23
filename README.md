@@ -155,7 +155,7 @@ Exit codes: `0` checks passed under the fail policy, `1` failures found, `2` a t
 
 The names you can depend on — only change on a major release:
 
-`check_local_model`, `check_hf_model`, `CheckOptions`, `DoctorReport`, `CheckResult`, `render_json`, `render_text`, `render_markdown`, `render_github`, `exit_code_for`, and the error types `ModelDoctorError`, `TargetError`, `DependencyError`, `MemorySafetyError`. `exit_code_for` raises `ValueError` on an unrecognized `fail-on` value.
+`check_local_model`, `check_hf_model`, `CheckOptions`, `DoctorReport`, `CheckResult`, `render_json`, `render_text`, `render_markdown`, `render_github`, `exit_code_for`, `FailOn`, and the error types `ModelDoctorError`, `TargetError`, `DependencyError`, `MemorySafetyError`. `exit_code_for` raises `ValueError` on an unrecognized `fail-on` value.
 
 ### Internal layer
 
