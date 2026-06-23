@@ -31,7 +31,7 @@ def test_frozen_surface_is_exported() -> None:
 
 def test_frozen_surface_is_importable() -> None:
     for name in FROZEN_SURFACE:
-        assert getattr(mmd, name) is not None
+        assert hasattr(mmd, name), f"{name!r} not accessible on the package"
 
 
 def test_internal_helpers_are_not_exported() -> None:

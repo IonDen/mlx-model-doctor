@@ -73,6 +73,8 @@ REPORTS = {
     # shrinkage on either closed field fails validation.
     "hf_source": _report([_result("text/a.b", "pass", "info")], source="hf"),
     "warn_low": _report([_result("text/a.b", "warn", "low")]),
+    "fail_medium": _report([_result("text/a.b", "fail", "medium")]),
+    "fail_low": _report([_result("text/a.b", "fail", "low")]),
 }
 
 
