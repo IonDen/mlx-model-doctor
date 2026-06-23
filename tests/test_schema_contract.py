@@ -9,6 +9,7 @@ tautological.
 
 import json
 from importlib.resources import files
+from typing import Literal
 
 from jsonschema import Draft202012Validator
 
@@ -42,8 +43,10 @@ def _result(check_id: str, status: str, severity: str, **kw: object) -> CheckRes
     )
 
 
-def _report(results: list[CheckResult], source: str = "local", **kw: object) -> DoctorReport:
-    return DoctorReport(target="x", source=source, plugin="text", results=results, **kw)  # type: ignore[arg-type]
+def _report(
+    results: list[CheckResult], source: Literal["local", "hf"] = "local", **kw: object
+) -> DoctorReport:
+    return DoctorReport(target="x", source=source, plugin="text", results=results, **kw)
 
 
 # Representative reports covering every shape the schema must accept.
@@ -90,6 +93,7 @@ def test_payload_keys_match_anchor() -> None:
     assert set(payload) == EXPECTED_TOP_LEVEL_KEYS
     assert set(payload["summary"]) == EXPECTED_SUMMARY_KEYS
     assert set(payload["results"][0]) == EXPECTED_RESULT_KEYS
+    assert set(json.loads(render_json(REPORTS["zero_check"]))) == EXPECTED_TOP_LEVEL_KEYS
 
 
 def test_schema_properties_match_anchor() -> None:
