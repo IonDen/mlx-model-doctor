@@ -4,11 +4,21 @@ import mlx_model_doctor as mmd
 
 FROZEN_SURFACE = frozenset(
     {
-        "check_local_model", "check_hf_model", "CheckOptions",
-        "DoctorReport", "CheckResult",
-        "render_json", "render_text", "render_markdown", "render_github",
-        "exit_code_for", "FailOn",
-        "ModelDoctorError", "TargetError", "DependencyError", "MemorySafetyError",
+        "check_local_model",
+        "check_hf_model",
+        "CheckOptions",
+        "DoctorReport",
+        "CheckResult",
+        "render_json",
+        "render_text",
+        "render_markdown",
+        "render_github",
+        "exit_code_for",
+        "FailOn",
+        "ModelDoctorError",
+        "TargetError",
+        "DependencyError",
+        "MemorySafetyError",
     }
 )
 
