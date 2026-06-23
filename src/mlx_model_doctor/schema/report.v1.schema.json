@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/IonDen/mlx-model-doctor/v0/src/mlx_model_doctor/schema/report.v1.schema.json",
+  "title": "mlx-model-doctor report",
+  "description": "Schema for the `--format json` output of `mlx-model-doctor check`. Versioned by the payload's schema_version (MAJOR.MINOR); this file describes the 1.x major line. `details` and `environment` are open objects and are not part of the stability guarantee except documented promoted keys.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "target", "source", "plugin", "summary",
+    "environment", "zero_check_reason", "results"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "target": { "type": "string" },
+    "source": { "type": "string", "enum": ["local", "hf"] },
+    "plugin": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pass", "warn", "fail", "skip"],
+      "properties": {
+        "pass": { "type": "integer", "minimum": 0 },
+        "warn": { "type": "integer", "minimum": 0 },
+        "fail": { "type": "integer", "minimum": 0 },
+        "skip": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "environment": { "type": "object", "additionalProperties": true },
+    "zero_check_reason": { "type": ["string", "null"] },
+    "results": { "type": "array", "items": { "$ref": "#/$defs/result" } }
+  },
+  "$defs": {
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "check_id", "title", "status", "severity", "message",
+        "remediation", "details", "duration_s"
+      ],
+      "properties": {
+        "check_id": { "type": "string", "pattern": "^[^/]+/.+$" },
+        "title": { "type": "string" },
+        "status": { "type": "string", "enum": ["pass", "warn", "fail", "skip"] },
+        "severity": { "type": "string", "enum": ["info", "low", "medium", "high"] },
+        "message": { "type": "string" },
+        "remediation": { "type": ["string", "null"] },
+        "details": { "type": "object", "additionalProperties": true },
+        "duration_s": { "type": ["number", "null"] }
+      }
+    }
+  }
+}
