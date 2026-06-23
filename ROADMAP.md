@@ -5,6 +5,12 @@ as priorities change.
 
 ## Released
 
+- **v0.6.0** (2026-06-23) — a versioned, documented stability contract for the
+  JSON output and the public API. The `--format json` report now has a published
+  JSON Schema (shipped in the package, validated in CI) and a written policy for
+  what can change and when; `CheckOptions`, the report renderers, `exit_code_for`,
+  and `FailOn` are exported from the package root. No checks, report fields, CLI
+  flags, or exit codes changed.
 - **v0.5.2** (2026-06-20) — a robustness patch. The optional `--smoke` memory
   pre-flight no longer treats a partial weight-size sum as its lower bound (the case
   where a repository has no usable config and one or more weight files report no

@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-06-23
+
+The `--format json` output and the public Python API now come with a versioned,
+documented stability contract. No checks, report fields, CLI flags, or exit codes
+changed; this release writes down and pins what was already there, and makes the
+stable API importable directly from the package.
+
+### Added
+- A versioned JSON Schema for the report, shipped inside the package at
+  `mlx_model_doctor/schema/report.v1.schema.json` and validated against real
+  `--format json` output in CI. It pins the payload shape and the
+  `status` / `severity` / `source` enums. The `details` and `environment` objects
+  stay open, so a check can add a key without a breaking change.
+- A stability policy in the README: which Python API names you can depend on,
+  which internals may still change, the `schema_version` bump rules, and the
+  promoted `details` keys the `--smoke` memory gate reads.
+- `CheckOptions`, the report renderers (`render_json`, `render_text`,
+  `render_markdown`, `render_github`), `exit_code_for`, and `FailOn` are now
+  exported from the package root, so `check_local_model` / `check_hf_model` and the
+  types they use can all be imported from `mlx_model_doctor` directly.
+
 ## [0.5.2] — 2026-06-20
 
 A robustness patch. The optional `--smoke` memory pre-flight is the only behavior
