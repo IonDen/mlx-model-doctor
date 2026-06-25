@@ -10,7 +10,19 @@ requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Denis Ineshin", email = "denis.ineshin@gmail.com" }]
-keywords = ["mlx", "apple-silicon", "huggingface", "model-validation", "mlx-lm"]
+keywords = [
+  "mlx",
+  "mlx-lm",
+  "apple-silicon",
+  "huggingface",
+  "safetensors",
+  "model-validation",
+  "validation",
+  "quantization",
+  "tokenizer",
+  "diagnostics",
+  "cli",
+]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",

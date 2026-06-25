@@ -1,5 +1,9 @@
 # mlx-model-doctor
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/IonDen/mlx-model-doctor/master/docs/assets/mlx-model-doctor.jpeg" alt="mlx-model-doctor" width="100%">
+</p>
+
 [![PyPI version](https://img.shields.io/pypi/v/mlx-model-doctor.svg)](https://pypi.org/project/mlx-model-doctor/)
 [![Python versions](https://img.shields.io/pypi/pyversions/mlx-model-doctor.svg)](https://pypi.org/project/mlx-model-doctor/)
 [![License: Apache 2.0](https://img.shields.io/pypi/l/mlx-model-doctor.svg)](https://github.com/IonDen/mlx-model-doctor/blob/master/LICENSE)
