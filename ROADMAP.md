@@ -5,6 +5,13 @@ as priorities change.
 
 ## Released
 
+- **v0.6.1** (2026-06-28) — a hardening patch. The `sample hf` batch survey now has
+  its own published JSON Schema (validated in CI), so both the single report and the
+  batch output are under the contract. `zero_check_reason` is populated when a run
+  produces no checks, naming the plugin, instead of always being null. And the build
+  ignores the moving `v0` tag when deriving its version, so a `v0` on the release
+  commit can no longer make it publish as version "0". A normal run is unchanged — same
+  checks, report fields, CLI flags, and exit codes.
 - **v0.6.0** (2026-06-23) — a versioned, documented stability contract for the
   JSON output and the public API. The `--format json` report now has a published
   JSON Schema (shipped in the package, validated in CI) and a written policy for

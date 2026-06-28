@@ -252,6 +252,36 @@ def test_check_hf_model_includes_smoke_results_when_requested(monkeypatch) -> No
     ]
 
 
+def test_zero_check_local_run_populates_zero_check_reason(monkeypatch, tmp_path: Path) -> None:
+    model = write_local_model(tmp_path)
+    monkeypatch.setattr(api, "get_plugin", lambda _name: EmptyPlugin())
+
+    report = check_local_model(model)
+
+    assert report.results == ()
+    assert report.zero_check_reason is not None
+    assert "empty" in report.zero_check_reason
+
+
+def test_zero_check_hf_run_populates_zero_check_reason(monkeypatch) -> None:
+    monkeypatch.setattr(api, "get_plugin", lambda _name: EmptyPlugin())
+
+    report = check_hf_model("org/model", hub=FakeHub(files=valid_hf_files()))
+
+    assert report.results == ()
+    assert report.zero_check_reason is not None
+    assert "empty" in report.zero_check_reason
+
+
+def test_normal_local_run_leaves_zero_check_reason_null(tmp_path: Path) -> None:
+    model = write_local_model(tmp_path)
+
+    report = check_local_model(model)
+
+    assert report.results
+    assert report.zero_check_reason is None
+
+
 def test_check_local_model_chat_model_passes_new_checks(tmp_path: Path) -> None:
     model = tmp_path / "chat-model"
     model.mkdir()
@@ -397,6 +427,19 @@ class FakePlugin:
 
     def smoke_checks(self) -> tuple[ModelCheck, ...]:
         return (FakeCheck("text/smoke.fake"),)
+
+
+class EmptyPlugin:
+    name = "empty"
+
+    def static_checks(self) -> tuple[ModelCheck, ...]:
+        return ()
+
+    def weight_checks(self) -> tuple[ModelCheck, ...]:
+        return ()
+
+    def smoke_checks(self) -> tuple[ModelCheck, ...]:
+        return ()
 
 
 class FakeCheck:

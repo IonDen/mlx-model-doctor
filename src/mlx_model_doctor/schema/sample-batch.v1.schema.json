@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/IonDen/mlx-model-doctor/v0/src/mlx_model_doctor/schema/sample-batch.v1.schema.json",
+  "title": "mlx-model-doctor sample batch",
+  "description": "Schema for the `--format json` output of `mlx-model-doctor sample hf`. Versioned by the payload's schema_version (the literal prefix `sample-batch/` followed by MAJOR.MINOR); this file describes the 1.x major line. Each checked item embeds a full single `check` report, which conforms to report.v1.schema.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "source", "author", "task", "limit", "plugin", "summary", "items"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "source": { "type": "string", "enum": ["hf"] },
+    "author": { "type": "string" },
+    "task": { "type": ["string", "null"] },
+    "limit": { "type": "integer", "minimum": 0 },
+    "plugin": { "type": "string" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["checked", "tool-error"],
+      "properties": {
+        "checked": { "type": "integer", "minimum": 0 },
+        "tool-error": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "items": { "type": "array", "items": { "$ref": "#/$defs/item" } }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo_id", "signal", "status", "error"],
+      "properties": {
+        "repo_id": { "type": "string" },
+        "signal": { "type": "string" },
+        "status": { "type": "string", "enum": ["checked", "tool-error"] },
+        "error": { "type": ["string", "null"] },
+        "report": {
+          "$ref": "https://raw.githubusercontent.com/IonDen/mlx-model-doctor/v0/src/mlx_model_doctor/schema/report.v1.schema.json"
+        }
+      }
+    }
+  }
+}

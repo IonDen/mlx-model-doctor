@@ -12,7 +12,15 @@ from mlx_model_doctor.report import (
     render_json,
     render_markdown,
     render_text,
+    zero_check_reason_for,
 )
+
+
+def test_zero_check_reason_for_explains_the_empty_run_and_names_the_plugin() -> None:
+    assert "text" in zero_check_reason_for("text")
+    # The plugin name must come from the argument, not a hardcoded literal.
+    assert "vision" in zero_check_reason_for("vision")
+    assert "vision" not in zero_check_reason_for("text")
 
 
 def test_pass_result_must_have_info_severity() -> None:

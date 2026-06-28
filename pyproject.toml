@@ -64,6 +64,7 @@ test = [
     "hatchling>=1.27",
     "hatch-vcs>=0.4",
     "jsonschema>=4.18",
+    "referencing>=0.30",
 ]
 typecheck = ["mypy>=1.13"]
 lint = ["ruff>=0.7"]
@@ -77,6 +78,14 @@ dev = [
 
 [tool.hatch.version]
 source = "vcs"
+# The moving `v0` Marketplace tag (for `uses: IonDen/mlx-model-doctor@v0`) parses
+# as PEP 440 "0"; if it shares the release commit, `git describe` can pick it and
+# the build derives version "0" (the 2026-06-23 v0.6.0 publish incident). Restrict
+# `git describe --match` to full vX.Y.Z tags so `v0` is never selected, with
+# `tag-pattern` as a backstop that fails the build rather than derive a bad version
+# if some other non-semver tag is ever described.
+tag-pattern = '^(?:[\w-]+-)?(?P<version>[vV]?\d+\.\d+\.\d+[^\+]*)(?:\+.*)?$'
+raw-options = { scm = { git = { describe_command = "git describe --dirty --tags --long --abbrev=40 --match v[0-9]*.[0-9]*.[0-9]*" } } }
 
 [tool.hatch.build.hooks.vcs]
 version-file = "src/mlx_model_doctor/_version.py"

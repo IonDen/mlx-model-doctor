@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] — 2026-06-28
+
+A hardening patch. A normal run is unchanged — same checks, report fields, CLI flags,
+and exit codes. This finishes the stability-contract story for the batch output and
+closes a release-time versioning trap.
+
+### Added
+- A published JSON Schema for the `sample hf` batch survey, shipped at
+  `mlx_model_doctor/schema/sample-batch.v1.schema.json` and validated against real
+  `--format json` output in CI. The batch already stamped a `sample-batch/1.0` version
+  string; now there is an actual schema behind it. Each checked item embeds a full
+  single-`check` report, which conforms to `report.v1.schema.json`.
+
+### Changed
+- `zero_check_reason` is now populated when a run produces no checks, with a message
+  naming the plugin, instead of always being null. A zero-check run still exits `2`;
+  the field just says why. A normal run leaves it null.
+
+### Fixed
+- The build no longer derives version "0" from the moving `v0` tag. `git describe` is
+  restricted to full `vX.Y.Z` tags, with a `tag-pattern` backstop, so a `v0` that
+  shares the release commit can't be picked instead of the real version tag — the
+  failure that 400'd the v0.6.0 publish.
+
 ## [0.6.0] — 2026-06-23
 
 The `--format json` output and the public Python API now come with a versioned,
