@@ -12,6 +12,7 @@ def test_warns_when_generation_config_has_eos_without_pad() -> None:
     files = {"config.json": {"model_type": "llama"}, "generation_config.json": {"eos_token_id": 2}}
     result = GenerationConfigTokensCheck().run(_ctx(files))
     assert result.status == "warn"
+    assert result.severity == "low"  # eos-without-pad is informational, not policy-failing
     assert "pad" in result.message.lower()
 
 
@@ -22,6 +23,7 @@ def test_warns_on_cross_file_eos_disagreement() -> None:
     }
     result = GenerationConfigTokensCheck().run(_ctx(files))
     assert result.status == "warn"
+    assert result.severity == "medium"  # a genuine cross-file disagreement
     assert "eos" in result.message.lower()
 
 
@@ -54,6 +56,7 @@ def test_warns_when_generation_config_present_but_unparseable() -> None:
     )
     result = GenerationConfigTokensCheck().run(ctx)
     assert result.status == "warn"
+    assert result.severity == "medium"
     assert "parse" in result.message.lower() or "read" in result.message.lower()
 
 
@@ -64,6 +67,7 @@ def test_warns_on_cross_file_bos_disagreement() -> None:
     }
     result = GenerationConfigTokensCheck().run(_ctx(files))
     assert result.status == "warn"
+    assert result.severity == "medium"  # a genuine cross-file disagreement
     assert "bos" in result.message.lower()
 
 

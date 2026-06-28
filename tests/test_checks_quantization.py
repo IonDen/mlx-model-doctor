@@ -113,6 +113,9 @@ def test_quant_mode_fails_for_unknown_mode() -> None:
     assert result.status == "fail"
     assert result.severity == "high"
     assert "mode" in result.message.lower()
+    # The scalar path's details carry the offending mode (published contract). The
+    # per-layer path pins its details; without this the scalar path could return {}.
+    assert result.details == {"mode": "int8"}
 
 
 def test_quant_mode_warns_for_off_table_affine_bits() -> None:
@@ -120,6 +123,8 @@ def test_quant_mode_warns_for_off_table_affine_bits() -> None:
         _context_for_config({"quantization": {"bits": 7, "group_size": 64}})
     )
     assert result.status == "warn"
+    assert result.severity == "medium"
+    assert result.details == {"mode": "affine", "bits": 7}
 
 
 def test_quant_mode_warns_for_noncanonical_fixed_mode() -> None:
@@ -127,6 +132,8 @@ def test_quant_mode_warns_for_noncanonical_fixed_mode() -> None:
         _context_for_config({"quantization": {"mode": "mxfp4", "bits": 8, "group_size": 32}})
     )
     assert result.status == "warn"
+    assert result.severity == "medium"
+    assert result.details == {"mode": "mxfp4", "group_size": 32, "bits": 8}
 
 
 def test_quant_mode_skips_when_not_quantized() -> None:

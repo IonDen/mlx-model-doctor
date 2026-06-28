@@ -58,6 +58,18 @@ def test_install_mlx_memory_caps_sets_byte_limits_on_fake_mx() -> None:
     assert mx.memory_limit == 22 * GIB
 
 
+def test_install_mlx_memory_caps_is_noop_below_minimum_recommended_working_set() -> None:
+    # A recommended working set under the 2-GiB floor yields no usable wired cap.
+    # install must bail out at the `wired_gib == 0` guard and never call
+    # set_wired_limit — pinning a 0-byte wired cap is worse than installing none.
+    # Deleting that guard would call set_wired_limit(0); this catches that.
+    mx = FakeMx({"max_recommended_working_set_size": 1 * GIB})
+
+    assert install_mlx_memory_caps(mx) == (0, 0)
+    assert mx.wired_limit is None
+    assert mx.memory_limit is None
+
+
 class FakeMx:
     def __init__(self, device_info: dict[str, object]) -> None:
         self._device_info = device_info

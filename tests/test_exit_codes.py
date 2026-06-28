@@ -34,6 +34,10 @@ def test_exit_code_for_failures_and_warn_strictness() -> None:
 def test_exit_code_for_zero_checks_is_tool_error() -> None:
     report = DoctorReport(target="fixture", source="local", plugin="text", results=[])
     assert exit_code_for(report, fail_on="error") == 2
+    # The zero-checks tool-error guard must preempt the never-policy guard: no
+    # checks ran is exit 2 regardless of --fail-on. fail_on="error" reaches 2 by
+    # either guard ordering, so it cannot pin the precedence on its own.
+    assert exit_code_for(report, fail_on="never") == 2
 
 
 def test_exit_code_for_rejects_unknown_fail_on_policy() -> None:
