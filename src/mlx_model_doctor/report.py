@@ -70,6 +70,17 @@ class DoctorReport:
         object.__setattr__(self, "environment", _freeze_mapping(self.environment))
 
 
+def zero_check_reason_for(plugin_name: str) -> str:
+    """Explain why a run produced no checks, naming the plugin responsible.
+
+    A zero-check run is an edge case: the selected plugin contributed no static,
+    weight, or smoke checks for the target. It surfaces as exit code ``2`` and is
+    recorded in ``DoctorReport.zero_check_reason`` so the result is self-describing
+    rather than an unexplained empty report.
+    """
+    return f"The '{plugin_name}' plugin produced no checks to run."
+
+
 def _result_to_dict(result: CheckResult) -> dict[str, object]:
     return {
         "check_id": result.check_id,

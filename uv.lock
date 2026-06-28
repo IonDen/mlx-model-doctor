@@ -941,6 +941,7 @@ dev = [
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "referencing" },
     { name = "ruff" },
 ]
 docs = [
@@ -958,6 +959,7 @@ test = [
     { name = "jsonschema" },
     { name = "pytest" },
     { name = "pytest-cov" },
+    { name = "referencing" },
 ]
 typecheck = [
     { name = "mypy" },
@@ -982,6 +984,7 @@ dev = [
     { name = "mypy", specifier = ">=1.13" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-cov", specifier = ">=5.0" },
+    { name = "referencing", specifier = ">=0.30" },
     { name = "ruff", specifier = ">=0.7" },
 ]
 docs = [
@@ -997,6 +1000,7 @@ test = [
     { name = "jsonschema", specifier = ">=4.18" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-cov", specifier = ">=5.0" },
+    { name = "referencing", specifier = ">=0.30" },
 ]
 typecheck = [{ name = "mypy", specifier = ">=1.13" }]
 

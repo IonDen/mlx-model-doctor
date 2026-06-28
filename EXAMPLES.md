@@ -2,13 +2,13 @@
 
 Real output from `mlx-model-doctor`, captured by running the tool — so you can see exactly what you get before installing it. Each block shows a command, its actual response, and a short read of what the result means.
 
-> Captured with **mlx-model-doctor 0.6.0** on **2026-06-23**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 6 and 7 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
+> Captured with **mlx-model-doctor 0.6.1** on **2026-06-28**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 6 and 7 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
 
 ## 1. `version` — environment and dependency status
 
 ```console
 $ mlx-model-doctor version
-mlx-model-doctor 0.6.0
+mlx-model-doctor 0.6.1
 Python: 3.14.5
 Executable: /path/to/.venv/bin/python3
 Virtualenv: /path/to/.venv
@@ -426,48 +426,48 @@ Summary:
   checked: 10
   tool-error: 0
 
-CHECKED mlx-community/Bernini-R-int4
-  Signal: tag:mlx
-  Results: pass=6 warn=2 fail=0 skip=6
-
 CHECKED mlx-community/Boogu-Image-0.1-Base-4bit
   Signal: tag:mlx
   Results: pass=1 warn=2 fail=2 skip=9
 
-CHECKED mlx-community/Boogu-Image-0.1-Base-bf16
+CHECKED mlx-community/DeepSeek-OCR-6bit
   Signal: tag:mlx
-  Results: pass=1 warn=2 fail=3 skip=8
+  Results: pass=11 warn=2 fail=0 skip=1
 
-CHECKED mlx-community/Boogu-Image-0.1-Edit-4bit
+CHECKED mlx-community/DeepSeek-OCR-bf16
   Signal: tag:mlx
-  Results: pass=1 warn=2 fail=2 skip=9
+  Results: pass=9 warn=3 fail=0 skip=2
 
-CHECKED mlx-community/DeepSeek-V3-0324-4bit
+CHECKED mlx-community/DeepSeek-R1-4bit
   Signal: tag:mlx
   Results: pass=11 warn=1 fail=0 skip=2
 
-CHECKED mlx-community/Falcon-OCR-bf16
+CHECKED mlx-community/DeepSeek-R1-Distill-Llama-70B-8bit
   Signal: tag:mlx
-  Results: pass=6 warn=3 fail=0 skip=5
+  Results: pass=11 warn=1 fail=0 skip=2
+
+CHECKED mlx-community/DeepSeek-V3.2-4bit
+  Signal: tag:mlx
+  Results: pass=8 warn=3 fail=0 skip=3
+
+CHECKED mlx-community/Devstral-Small-2-24B-Instruct-2512-4bit
+  Signal: tag:mlx
+  Results: pass=10 warn=2 fail=1 skip=1
+
+CHECKED mlx-community/GLM-5-4bit
+  Signal: tag:mlx
+  Results: pass=10 warn=3 fail=0 skip=1
+
+CHECKED mlx-community/GLM-5.2-4bit
+  Signal: tag:mlx
+  Results: pass=10 warn=3 fail=0 skip=1
 
 CHECKED mlx-community/GLM-5.2-DQ4plus-q8
   Signal: tag:mlx
   Results: pass=10 warn=3 fail=0 skip=1
-
-CHECKED mlx-community/GLM-5.2-mxfp4
-  Signal: tag:mlx
-  Results: pass=10 warn=3 fail=0 skip=1
-
-CHECKED mlx-community/GLM-OCR-8bit
-  Signal: tag:mlx
-  Results: pass=11 warn=2 fail=0 skip=1
-
-CHECKED mlx-community/Hermes-3-Llama-3.1-70B-8bit
-  Signal: tag:mlx
-  Results: pass=11 warn=1 fail=0 skip=2
 ```
 
-**Result:** exit code `0`. Ten MLX repos checked. Three of them — the `Boogu-Image` rows — carry hard failures: they're tagged `mlx`, but they aren't text language models, so the `text` engine's checks fail on them. The survey still exits `0` because it records each model as its own batch item and reports per-repo results rather than gating on them; a per-model failure never fails the run. The `pass`/`warn`/`skip` spread across the rest reflects how complete each repo's metadata is. Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
+**Result:** exit code `0`. Ten MLX repos checked. Two carry hard failures: `Boogu-Image-0.1-Base-4bit` is an image model, so the `text` engine's checks fail on it, and `Devstral-Small-2-24B-Instruct-2512-4bit` trips one check. The survey still exits `0` because it records each model as its own batch item and reports per-repo results rather than gating on them; a per-model failure never fails the run. The `pass`/`warn`/`skip` spread across the rest reflects how complete each repo's metadata is. Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
 
 ## 9. `--format github` — annotations for CI
 
