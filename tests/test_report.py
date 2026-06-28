@@ -1,3 +1,4 @@
+import dataclasses
 import json
 from pathlib import Path
 
@@ -82,6 +83,13 @@ def test_report_copies_mutable_inputs() -> None:
     assert data["results"][0]["details"] == {"path": "config.json"}
     with pytest.raises(TypeError):
         result.details["path"] = "other.json"
+    # The dataclass fields themselves must be frozen, not only the details proxy.
+    # Dropping frozen=True leaves __post_init__'s MappingProxy in place (so the
+    # check above still passes) while letting plain field assignment succeed.
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        result.message = "mutated"
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        report.target = "mutated"
 
 
 def test_invalid_status_and_severity_are_rejected() -> None:

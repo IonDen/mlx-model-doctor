@@ -186,8 +186,11 @@ def test_context_routes_hf_header_target_error() -> None:
             raise TargetError("boom", target="org/repo", source="hf")
 
     ctx = CheckContext(target=HfErrorTarget(files={}, _source="hf"), options=check_options())
-    with pytest.raises(TargetError):
+    with pytest.raises(TargetError) as exc_info:
         ctx.safetensors_header()
+    # The re-raise must preserve source="hf" so a Hub/network failure is never
+    # mistaken for a clean "file absent" (which degrades to None on the local path).
+    assert exc_info.value.source == "hf"
 
 
 def test_context_exposes_local_header_parse_error() -> None:

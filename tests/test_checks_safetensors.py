@@ -204,7 +204,7 @@ def test_safetensors_index_check_handles_oversized_index_without_reading() -> No
     oversized = b"{}" + b" " * (_MAX_METADATA_BYTES + 1)
     target = OversizedReadAssertTarget(files={"model.safetensors.index.json": oversized})
     result = SafetensorsIndexCheck().run(CheckContext(target=target, options=check_options()))
-    assert result.status in {"warn", "fail"}
+    assert result.status == "warn"
     assert "too large" in result.message
 
 

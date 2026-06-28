@@ -56,6 +56,18 @@ def test_mlx_lm_smoke_check_propagates_dependency_errors() -> None:
         check.run(CheckContext(target=FakeTarget(files={}), options=check_options()))
 
 
+def test_mlx_lm_smoke_check_propagates_memory_safety_errors() -> None:
+    # MemorySafetyError is a ModelDoctorError and must propagate as a tool error
+    # (exit 2), never be demoted to a `fail` CheckResult (exit 1) by the broad
+    # `except Exception` branch. DependencyError alone cannot pin this: a mutation
+    # adding `except MemorySafetyError: return fail` before the ModelDoctorError
+    # re-raise would leave the DependencyError test green.
+    check = MlxLmSmokeCheck(backend=FakeSmokeBackend(error=MemorySafetyError("caps unavailable")))
+
+    with pytest.raises(MemorySafetyError, match="caps"):
+        check.run(CheckContext(target=FakeTarget(files={}), options=check_options()))
+
+
 def test_mlx_lm_backend_lazily_imports_installs_caps_and_records_peak(monkeypatch) -> None:
     mx = FakeMx()
     mlx_lm = FakeMlxLm(mx)

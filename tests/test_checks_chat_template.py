@@ -44,6 +44,7 @@ def test_presence_skips_when_no_tokenizer_metadata() -> None:
 def test_presence_warns_when_tokenizer_config_present_but_unparseable() -> None:
     result = ChatTemplatePresenceCheck().run(_ctx({"tokenizer_config.json": b"{not-json"}))
     assert result.status == "warn"
+    assert result.severity == "medium"
     assert "parse" in result.message.lower() or "read" in result.message.lower()
 
 

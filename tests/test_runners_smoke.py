@@ -97,11 +97,12 @@ def test_smoke_runner_uses_mlx_recommended_working_set_budget(monkeypatch) -> No
         options=replace(check_options(), smoke=True),
     )
 
-    monkeypatch.setattr(
-        smoke_runner.importlib,
-        "import_module",
-        lambda _name: FakeMx({"max_recommended_working_set_size": 10 * GIB}),
-    )
+    def import_module(name: str) -> object:
+        if name == "mlx.core":
+            return FakeMx({"max_recommended_working_set_size": 10 * GIB})
+        raise ImportError(name)
+
+    monkeypatch.setattr(smoke_runner.importlib, "import_module", import_module)
 
     results = run_smoke_checks(ctx, (check,), (memory_estimate_result(lower_bound_bytes=9 * GIB),))
 

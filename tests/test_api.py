@@ -83,7 +83,10 @@ def test_check_local_model_reports_missing_config_without_crashing(tmp_path: Pat
 
     assert report.plugin == "text"
     assert report.summary["fail"] >= 1
-    assert any(result.check_id == "text/files.required" for result in report.results)
+    # Assert this specific check FAILED, not merely that it ran: an empty dir also
+    # fails tokenizer/other checks, so summary["fail"] >= 1 would stay true even if
+    # files.required silently downgraded from fail to warn.
+    assert result_by_id(report.results, "text/files.required").status == "fail"
 
 
 def test_check_local_model_propagates_custom_options_to_memory_estimate(

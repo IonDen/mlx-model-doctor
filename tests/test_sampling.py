@@ -114,19 +114,22 @@ def test_candidate_signal_uses_priority_order() -> None:
 
 
 def test_deterministic_sample_filters_sorts_and_limits_with_carried_signals() -> None:
+    # ids and signals are deliberately in OPPOSITE alphabetical order so this pins
+    # that the sort key is the repo id, not the carried signal. By id: a, b, c;
+    # by signal: library:mlx (b), repo-name (c), tag:mlx (a) -> a different top-2.
     models = (
-        FakeModel(id="z/not-a-candidate"),
-        FakeModel(id="c/model", tags=("mlx",)),
-        FakeModel(id="a/model", library_name="mlx"),
-        FakeModel(id="b/model-4bit"),
+        FakeModel(id="z/not-a-candidate"),  # no signal -> filtered out
+        FakeModel(id="a/model", tags=("mlx",)),  # signal tag:mlx      (id 1st, signal last)
+        FakeModel(id="b/model", library_name="mlx"),  # signal library:mlx (id 2nd, signal 1st)
+        FakeModel(id="c/model-4bit"),  # signal repo-name   (id 3rd, signal middle)
     )
 
     sampled = deterministic_sample(models, limit=2)
 
-    # Each sample carries its candidate and that candidate's highest-priority signal.
+    # Sorted by id (a, b); sorting by signal instead would yield (b, c).
     assert [(model.id, signal) for model, signal in sampled] == [
-        ("a/model", "library:mlx"),
-        ("b/model-4bit", "repo-name"),
+        ("a/model", "tag:mlx"),
+        ("b/model", "library:mlx"),
     ]
 
 
@@ -316,13 +319,24 @@ def test_sample_batch_renderers_include_repo_signals_statuses_reports_and_errors
     assert data["items"][0]["report"]["summary"]["pass"] == 1
     assert data["items"][1]["status"] == "tool-error"
     assert data["items"][1]["error"] == "not found"
-    assert "a/good" in markdown
-    assert "tag:mlx" in markdown
-    assert "tool-error" in markdown
-    assert "b/bad" in text
-    assert "not found" in text
-    assert "checked: 1" in text
-    assert "tool-error: 1" in text
+    # Per-row/per-line co-location: each item's fields must land together on its
+    # own row/section, not merely appear somewhere in the document (which a loose
+    # substring check, blind to table layout or swapped rows, would accept).
+    md_rows = [line for line in markdown.splitlines() if line.startswith("| `")]
+    a_row = next(row for row in md_rows if "a/good" in row)
+    b_row = next(row for row in md_rows if "b/bad" in row)
+    assert "tag:mlx" in a_row
+    assert "checked" in a_row
+    assert "tool-error" in b_row
+    assert "not found" in b_row
+
+    text_lines = text.splitlines()
+    assert "CHECKED a/good" in text_lines
+    assert "  Signal: tag:mlx" in text_lines
+    assert "TOOL-ERROR b/bad" in text_lines
+    assert "  Error: not found" in text_lines
+    assert "  checked: 1" in text_lines
+    assert "  tool-error: 1" in text_lines
 
 
 def test_sample_batch_exit_code_is_two_when_no_models_could_be_checked() -> None:

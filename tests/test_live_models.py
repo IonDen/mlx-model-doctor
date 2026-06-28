@@ -27,14 +27,21 @@ def test_live_records_exercise_check_hf_tool_behavior(record: dict[str, str], ca
     captured = capsys.readouterr()
 
     assert "Traceback" not in captured.err
-    if code in {0, 1}:
+
+    # The `expected` field drives the assertion: a known-good repo must validate
+    # cleanly, a known-broken record must not report success. Without this the test
+    # ignored outcome entirely, so a known-good repo silently regressing stayed green.
+    if record["expected"] == "pass":
+        assert code == 0, captured.err
         payload = json.loads(captured.out)
         assert payload["target"] == record["repo"]
-        assert "summary" in payload
-        return
-
-    assert code == 2
-    assert captured.err.startswith("Error: ")
+        assert payload["summary"]["fail"] == 0
+    else:
+        assert code != 0
+        if code == 2:
+            assert captured.err.startswith("Error: ")
+        else:
+            assert json.loads(captured.out)["summary"]["fail"] >= 1
 
 
 @pytest.mark.network

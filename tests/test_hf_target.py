@@ -30,6 +30,7 @@ class FakeHub:
         model_info_error: Exception | None = None,
         download_error: Exception | None = None,
         safetensors: object | None = None,
+        safetensors_error: Exception | None = None,
         tags: tuple[str, ...] | None = None,
         library_name: str | None = None,
     ) -> None:
@@ -40,6 +41,7 @@ class FakeHub:
         self.model_info_error = model_info_error
         self.download_error = download_error
         self.safetensors = safetensors
+        self.safetensors_error = safetensors_error
         self.tags = tags
         self.library_name = library_name
         self.model_info_calls: list[tuple[str, bool]] = []
@@ -64,6 +66,8 @@ class FakeHub:
         return self.files[filename]
 
     def safetensors_metadata(self, repo_id: str) -> object | None:
+        if self.safetensors_error is not None:
+            raise self.safetensors_error
         return self.safetensors
 
 
@@ -187,6 +191,22 @@ def test_hf_target_maps_safetensors_header_with_sibling_file_size() -> None:
 def test_hf_target_returns_none_for_non_safetensors_repo() -> None:
     hub = FakeHub(files={"config.json": b"{}"}, safetensors=None)
     assert _HfTargetForST("org/repo", hub=hub).safetensors_header() is None
+
+
+def test_hf_target_safetensors_header_propagates_target_error() -> None:
+    # A Hub/network failure while reading the safetensors header must surface as an
+    # hf TargetError, never be swallowed into a "no safetensors" None (which would
+    # hide a network/auth fault as a clean absence). safetensors_header() has no
+    # try/except, so adding a bare `except: return None` there is what this catches.
+    hub = FakeHub(
+        files={"config.json": b"{}"},
+        safetensors_error=TargetError("hub header read failed", target="org/repo", source="hf"),
+    )
+    target = HfTarget("org/repo", hub=hub)
+
+    with pytest.raises(TargetError, match="hub header read failed") as exc_info:
+        target.safetensors_header()
+    assert exc_info.value.source == "hf"
 
 
 def test_hf_target_retains_tags_and_library_name() -> None:

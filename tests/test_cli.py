@@ -422,6 +422,36 @@ def test_sample_hf_exits_two_when_no_models_could_be_checked(monkeypatch, capsys
     assert json.loads(captured.out)["items"][0]["status"] == "tool-error"
 
 
+def test_sample_hf_empty_batch_exits_zero(monkeypatch, capsys) -> None:
+    from mlx_model_doctor.sampling import SampleBatchReport
+
+    def fake_run_hf_sample(
+        *,
+        author: str = "mlx-community",
+        task: str | None = None,
+        limit: int = 10,
+        plugin_name: str = "text",
+    ) -> SampleBatchReport:
+        return SampleBatchReport(
+            author=author,
+            task=task,
+            limit=limit,
+            plugin=plugin_name,
+            items=(),
+        )
+
+    monkeypatch.setattr(cli, "run_hf_sample", fake_run_hf_sample)
+
+    code = cli.main(["sample", "hf", "--format", "json"])
+    captured = capsys.readouterr()
+
+    # An empty survey (no MLX candidates matched the filter) is informational, not
+    # an error: exit 0. Dropping the `batch.items and` guard in sample_batch_exit_code
+    # would make this empty batch return 2 — the all-errors test cannot catch that.
+    assert code == 0
+    assert json.loads(captured.out)["items"] == []
+
+
 def test_check_hf_markdown_output_and_fail_on_warn(monkeypatch, tmp_path: Path, capsys) -> None:
     def fake_check_hf_model(
         repo_id: str,
