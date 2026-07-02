@@ -132,7 +132,7 @@ repos:
 | `source` | `"local"` or `"hf"` | Where the model came from. |
 | `plugin` | string | The check plugin that ran (e.g. `"text"`). |
 | `summary` | object | Check counts: `pass`, `warn`, `fail`, `skip` (integers). |
-| `environment` | object | Open object, currently empty — reserved for future environment metadata. |
+| `environment` | object | Reserved and currently always empty (`{}`); kept empty so JSON output stays stable to diff across environments. |
 | `zero_check_reason` | string or null | When a run produced no checks (a zero-check run, which exits `2`), a message naming the responsible plugin; null on a normal run. |
 | `results` | array | One entry per check; see below. |
 
@@ -147,7 +147,7 @@ Each result in `results[]` has:
 | `message` | string | What was found. |
 | `remediation` | string or null | What to do if the check fired. |
 | `details` | object | Open object with check-specific key/value pairs. |
-| `duration_s` | number or null | How long this check took, in seconds. |
+| `duration_s` | number or null | Reserved; currently always `null`. Per-check timing is not emitted so JSON output stays stable to diff run-to-run. |
 
 The machine-readable schema ships with the package at `mlx_model_doctor/schema/report.v1.schema.json` and is validated against real output in CI.
 
