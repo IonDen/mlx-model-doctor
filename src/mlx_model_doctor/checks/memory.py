@@ -72,7 +72,7 @@ class MemoryEstimateCheck:
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,
-                status="warn",
+                status="fail",
                 severity="high",
                 message="Estimated lower bound memory exceeds the configured budget.",
                 remediation=(
@@ -84,10 +84,9 @@ class MemoryEstimateCheck:
         return CheckResult(
             check_id=self.check_id,
             title=self.title,
-            status="warn",
-            severity="low",
+            status="pass",
+            severity="info",
             message="Estimated lower bound memory is advisory and may be below runtime use.",
-            remediation="Treat this as a floor; account for runtime overhead before loading the model.",
             details=details,
         )
 
