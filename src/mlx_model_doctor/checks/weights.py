@@ -45,7 +45,7 @@ class WeightParamCountCheck:
                 severity="medium",
                 message="The safetensors header reports no tensor parameters.",
                 remediation="Confirm the safetensors shards actually contain weights.",
-                details={"empty_or_zero_param_files": empty_files, "total_parameter_count": total},
+                details={"empty_or_zero_param_files": empty_files, "stored_element_count": total},
             )
         return CheckResult(
             check_id=self.check_id,
@@ -53,7 +53,7 @@ class WeightParamCountCheck:
             status="pass",
             severity="info",
             message="The weight map resolves to present tensors with non-zero parameters.",
-            details={"total_parameter_count": total},
+            details={"stored_element_count": total},
         )
 
 
@@ -116,7 +116,7 @@ class TiedEmbeddingCheck:
                 title=self.title,
                 status="warn",
                 severity="medium",
-                message="tie_word_embeddings is not set but no output-head weight is stored.",
+                message="tie_word_embeddings is not enabled but no output-head weight is stored.",
                 remediation="Store an lm_head weight or set tie_word_embeddings to true.",
                 details={"missing_output_head": True},
             )
