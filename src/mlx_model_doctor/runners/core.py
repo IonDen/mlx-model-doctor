@@ -11,7 +11,7 @@ from mlx_model_doctor.report import CheckResult
 
 def _safe_check_id(check: ModelCheck) -> str:
     """Return a plugin-namespaced check_id, sanitizing a malformed one."""
-    raw = getattr(check, "check_id", "") or ""
+    raw = str(getattr(check, "check_id", "") or "")
     namespace, separator, name = raw.partition("/")
     if namespace and separator and name:
         return raw

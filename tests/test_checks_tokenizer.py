@@ -107,6 +107,19 @@ def test_special_tokens_check_warns_when_pad_in_eos_list() -> None:
     assert "eos_token_id" in result.message
 
 
+def test_special_tokens_check_warns_when_pad_matches_later_eos_list_element() -> None:
+    result = SpecialTokensCheck().run(
+        context_for_files(
+            {"config.json": b'{"pad_token_id":128009,"eos_token_id":[128001,128009]}'}
+        )
+    )
+
+    assert result.status == "warn"
+    assert result.severity == "medium"
+    assert "pad_token_id" in result.message
+    assert "eos_token_id" in result.message
+
+
 def test_special_tokens_check_warns_for_malformed_lists_and_bools() -> None:
     for config in (
         b'{"pad_token_id":0,"eos_token_id":[2,"x"]}',  # non-int entry

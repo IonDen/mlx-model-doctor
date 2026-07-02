@@ -351,21 +351,8 @@ def test_offsets_pass_with_empty_tensor_after_real_weight() -> None:
 
 
 def test_offset_scan_reports_leading_gap() -> None:
-    from mlx_model_doctor.checks.safetensors import SafetensorsOffsetScanCheck
-    from mlx_model_doctor.safetensors_header import FileHeader, TensorEntry
-
-    file_header = FileHeader(
-        filename="model.safetensors",
-        tensors={
-            "w": TensorEntry(
-                dtype="F32", shape=(2, 2), data_offsets=(8, 24), stored_element_count=4
-            )
-        },
-        metadata={},
-        header_length=None,
-        file_size=None,
-    )
-    gaps: list[str] = []
-    SafetensorsOffsetScanCheck()._scan_file(file_header, [], [], [], gaps)
-
-    assert gaps == ["model.safetensors:w"]  # first tensor begins at 8, not 0
+    # Single tensor begins at offset 8, not 0 -> a leading gap before the data section.
+    header = _offsets_header({"w": _entry("F32", 8, 24)}, file_size=None, header_length=None)
+    result = _run_offsets(header)
+    assert result.status == "warn"
+    assert "model.safetensors:w" in result.details["gaps"]

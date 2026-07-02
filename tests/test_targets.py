@@ -205,6 +205,12 @@ def test_canonical_shard_paths_ignores_nested_when_index_only_names_top_level() 
     assert _canonical_shard_paths(files, {"w": "model.safetensors"}) == ["model.safetensors"]
 
 
+def test_canonical_shard_paths_falls_back_when_weight_map_has_no_matching_files() -> None:
+    files = ["model.safetensors", "vae/model.safetensors"]
+    weight_map = {"w": "stale-missing.safetensors"}
+    assert _canonical_shard_paths(files, weight_map) == ["model.safetensors"]
+
+
 def test_local_target_header_excludes_nested_component_shards(tmp_path: Path) -> None:
     tensor = {"w": {"dtype": "F32", "shape": [2, 2], "data_offsets": [0, 16]}}
     _write_safetensors(tmp_path / "model.safetensors", tensor)
