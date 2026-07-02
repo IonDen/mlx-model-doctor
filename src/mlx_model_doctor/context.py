@@ -106,9 +106,9 @@ class CheckContext:
             if not self.target.exists(name):
                 return None
             size = self.target.size(name)
-            if size is not None and size > _MAX_METADATA_BYTES:
+            if size is None or size > _MAX_METADATA_BYTES:
                 return None
-            return self.target.read_text(name)
+            return self.target.read_text(name, max_bytes=_MAX_METADATA_BYTES)
         except TargetError as exc:
             raise_for_hf_target_error(exc)
             return None
