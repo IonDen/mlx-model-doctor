@@ -230,6 +230,21 @@ def test_render_text_quiet_omits_pass_and_skip_blocks() -> None:
     assert "text/a.pass" in render_text(report)
 
 
+def test_zero_check_reason_rendered_in_text_and_markdown() -> None:
+    from mlx_model_doctor.report import DoctorReport, render_markdown, render_text
+
+    report = DoctorReport(
+        target="t",
+        source="local",
+        plugin="text",
+        results=(),
+        zero_check_reason="The 'text' plugin produced no checks to run.",
+    )
+
+    assert "produced no checks" in render_text(report)
+    assert "produced no checks" in render_markdown(report)
+
+
 def test_render_github_emits_error_and_warning_annotations() -> None:
     report = DoctorReport(
         target="org/model",

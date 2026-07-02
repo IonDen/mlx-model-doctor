@@ -169,9 +169,10 @@ def render_markdown(report: DoctorReport) -> str:
         "|---|---:|",
         *(f"| {key} | {value} |" for key, value in report.summary.items()),
         "",
-        "## Results",
-        "",
     ]
+    if report.zero_check_reason:
+        lines.extend([f"> {report.zero_check_reason}", ""])
+    lines.extend(["## Results", ""])
     for result in report.results:
         lines.extend(
             [
