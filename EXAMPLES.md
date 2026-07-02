@@ -122,8 +122,8 @@ $ mlx-model-doctor check local ./model
 MLX Model Doctor: /path/to/model
 
 Summary:
-  pass: 6
-  warn: 2
+  pass: 7
+  warn: 1
   fail: 1
   skip: 9
 
@@ -167,9 +167,8 @@ SKIP info text/generation_config.tokens
 SKIP info text/vlm.image_processor
   VLM image processor: Not a vision-language repo; skipped.
 
-WARN low text/memory.estimate
+PASS info text/memory.estimate
   Memory estimate: Estimated lower bound memory is advisory and may be below runtime use.
-  Fix: Treat this as a floor; account for runtime overhead before loading the model.
 
 FAIL high text/safetensors.offsets
   Safetensors offsets: Safetensors header has corrupt tensor offsets (overlap or out of bounds).
