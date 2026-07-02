@@ -68,12 +68,10 @@ test = [
 ]
 typecheck = ["mypy>=1.13"]
 lint = ["ruff>=0.7"]
-docs = ["mkdocs-material>=9.5", "mkdocstrings[python]>=0.27"]
 dev = [
   { include-group = "test" },
   { include-group = "typecheck" },
   { include-group = "lint" },
-  { include-group = "docs" },
 ]
 
 [tool.hatch.version]
