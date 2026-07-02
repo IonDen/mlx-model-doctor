@@ -2,7 +2,7 @@
 
 import json
 import struct
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from stat import S_ISREG
 from typing import Literal, Protocol, cast, runtime_checkable
@@ -18,6 +18,24 @@ from mlx_model_doctor.safetensors_header import (
     map_hf_repo_metadata,
     parse_file_header,
 )
+
+
+def _canonical_shard_paths(
+    files: "Sequence[str]", weight_map: "Mapping[str, str] | None"
+) -> list[str]:
+    """Select the canonical safetensors shards, matching the HF metadata set.
+
+    Prefer the shards named by a safetensors index ``weight_map``; otherwise fall back to
+    top-level ``*.safetensors`` files, excluding nested component weights (e.g.
+    ``vae/*.safetensors``) that ``get_safetensors_metadata`` does not aggregate.
+    """
+    all_shards = [path for path in files if path.endswith(".safetensors")]
+    if weight_map:
+        named = set(weight_map.values())
+        selected = [path for path in all_shards if path in named]
+        if selected:
+            return sorted(selected)
+    return sorted(path for path in all_shards if "/" not in path)
 
 
 class ModelTarget(Protocol):
@@ -209,10 +227,10 @@ class LocalTarget:
 
     def safetensors_header(self) -> SafetensorsHeader | None:
         """Read and aggregate safetensors headers from disk without reading weights."""
-        shard_paths = sorted(p for p in self.list_files() if p.endswith(".safetensors"))
+        weight_map = self._safetensors_index_weight_map()
+        shard_paths = _canonical_shard_paths(self.list_files(), weight_map)
         if not shard_paths:
             return None
-        weight_map = self._safetensors_index_weight_map()
         file_headers = [self._read_local_file_header(path) for path in shard_paths]
         return build_local_header(file_headers, weight_map=weight_map)
 
