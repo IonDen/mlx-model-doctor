@@ -42,8 +42,9 @@ def test_memory_estimate_check_uses_config_and_includes_kv_cache_term() -> None:
     )
     expected_kv = 2 * layers * 16 * kv_hidden_size * 2
 
-    assert result.status == "warn"
-    assert result.severity == "low"
+    assert result.status == "pass"
+    assert result.severity == "info"
+    assert result.remediation is None
     assert result.details["estimate_source"] == "config"
     assert result.details["context_length"] == 16
     assert result.details["memory_lower_bound_kind"] == "model_runtime"
@@ -51,25 +52,25 @@ def test_memory_estimate_check_uses_config_and_includes_kv_cache_term() -> None:
     assert result.details["lower_bound_bytes"] == expected_weights + expected_kv
 
 
-def test_memory_estimate_check_warns_high_when_lower_bound_exceeds_budget() -> None:
+def test_memory_estimate_check_fails_when_lower_bound_exceeds_budget() -> None:
     result = MemoryEstimateCheck().run(
         _context_for_config(BASE_CONFIG, max_memory_bytes=1024, context_length=16)
     )
 
-    assert result.status == "warn"
+    assert result.status == "fail"
     assert result.severity == "high"
     assert "lower bound" in result.message
     assert result.remediation is not None
     assert "context" in result.remediation
 
 
-def test_memory_estimate_check_warns_low_when_lower_bound_is_within_budget() -> None:
+def test_memory_estimate_check_passes_when_lower_bound_is_within_budget() -> None:
     result = MemoryEstimateCheck().run(
         _context_for_config(BASE_CONFIG, max_memory_bytes=10**12, context_length=16)
     )
 
-    assert result.status == "warn"
-    assert result.severity == "low"
+    assert result.status == "pass"
+    assert result.severity == "info"
     assert "lower bound" in result.message
 
 
@@ -84,12 +85,39 @@ def test_memory_estimate_check_uses_file_size_fallback_when_config_is_insufficie
         )
     )
 
-    assert result.status == "warn"
-    assert result.severity == "low"
+    assert result.status == "pass"
+    assert result.severity == "info"
     assert result.details["estimate_source"] == "file_sizes"
     assert result.details["lower_bound_bytes"] == 30
     # A fully-measured no-config sum is a trustworthy smoke-gate lower bound.
     assert result.details["memory_lower_bound_kind"] == "model_runtime"
+
+
+def test_memory_estimate_prefers_safetensors_over_dual_format_bin() -> None:
+    result = MemoryEstimateCheck().run(
+        context_for_files(
+            {
+                "config.json": b'{"model_type":"llama"}',
+                "model.safetensors": b"a" * 10,
+                "pytorch_model.bin": b"b" * 20,
+            }
+        )
+    )
+
+    assert result.status == "pass"
+    assert result.details["estimate_source"] == "file_sizes"
+    assert result.details["lower_bound_bytes"] == 10  # safetensors only, not 30
+
+
+def test_memory_estimate_falls_back_to_torch_weights_without_safetensors() -> None:
+    result = MemoryEstimateCheck().run(
+        context_for_files(
+            {"config.json": b'{"model_type":"llama"}', "pytorch_model.bin": b"b" * 20}
+        )
+    )
+
+    assert result.status == "pass"
+    assert result.details["lower_bound_bytes"] == 20
 
 
 def test_memory_estimate_check_uses_config_when_vocab_size_is_missing() -> None:
@@ -97,8 +125,8 @@ def test_memory_estimate_check_uses_config_when_vocab_size_is_missing() -> None:
 
     result = MemoryEstimateCheck().run(_context_for_config(config, context_length=16))
 
-    assert result.status == "warn"
-    assert result.severity == "low"
+    assert result.status == "pass"
+    assert result.severity == "info"
     assert result.details["estimate_source"] == "config"
     assert result.details["lower_bound_bytes"] > 0
     assert result.details["weight_lower_bound_bytes"] > 0
@@ -110,8 +138,8 @@ def test_memory_estimate_check_uses_config_when_intermediate_size_is_missing() -
 
     result = MemoryEstimateCheck().run(_context_for_config(config, context_length=16))
 
-    assert result.status == "warn"
-    assert result.severity == "low"
+    assert result.status == "pass"
+    assert result.severity == "info"
     assert result.details["estimate_source"] == "config"
     assert result.details["lower_bound_bytes"] > 0
     assert result.details["weight_lower_bound_bytes"] > 0
@@ -129,8 +157,8 @@ def test_memory_estimate_check_keeps_measurable_file_sizes_when_one_size_fails()
 
     result = MemoryEstimateCheck().run(CheckContext(target=target, options=check_options()))
 
-    assert result.status == "warn"
-    assert result.severity == "low"
+    assert result.status == "pass"
+    assert result.severity == "info"
     assert result.details["estimate_source"] == "file_sizes"
     assert result.details["lower_bound_bytes"] == 10
     assert result.details["unavailable_weight_paths"] == ("model-00002-of-00002.safetensors",)
@@ -150,8 +178,8 @@ def test_memory_estimate_check_reports_listed_weight_with_unavailable_size() -> 
 
     result = MemoryEstimateCheck().run(CheckContext(target=target, options=check_options()))
 
-    assert result.status == "warn"
-    assert result.severity == "low"
+    assert result.status == "pass"
+    assert result.severity == "info"
     assert result.details["estimate_source"] == "file_sizes"
     assert result.details["lower_bound_bytes"] == 10
     assert result.details["measured_bytes"] == 10
@@ -253,7 +281,7 @@ def test_memory_estimate_uses_file_sizes_for_mixed_precision_when_all_weights_si
 
     result = MemoryEstimateCheck().run(ctx)
 
-    assert result.status == "warn"
+    assert result.status == "pass"
     assert result.details["estimate_source"] == "file_sizes"
     assert result.details["memory_lower_bound_kind"] == "model_runtime"
     assert result.details["weight_lower_bound_bytes"] == 300
@@ -327,3 +355,15 @@ def test_promoted_smoke_gate_detail_keys_are_stable() -> None:
     assert isinstance(result.details["estimate_source"], str)
     # Only present on a trusted bound (lower_bound_bytes > 0 and no unsized shards).
     assert result.details["memory_lower_bound_kind"] == "model_runtime"
+
+
+def test_memory_healthy_pass_renders_without_fix_line() -> None:
+    from mlx_model_doctor.report import DoctorReport, render_text
+
+    result = MemoryEstimateCheck().run(_context_for_config(BASE_CONFIG, context_length=16))
+    report = DoctorReport(target="fake", source="local", plugin="text", results=(result,))
+    rendered = render_text(report)
+
+    assert result.status == "pass"
+    assert result.remediation is None
+    assert "Fix:" not in rendered

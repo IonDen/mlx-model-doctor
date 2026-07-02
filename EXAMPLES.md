@@ -2,13 +2,13 @@
 
 Real output from `mlx-model-doctor`, captured by running the tool — so you can see exactly what you get before installing it. Each block shows a command, its actual response, and a short read of what the result means.
 
-> Captured with **mlx-model-doctor 0.6.1** on **2026-06-28**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 6 and 7 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
+> Captured with **mlx-model-doctor 0.6.2** on **2026-07-02**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 6 and 7 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
 
 ## 1. `version` — environment and dependency status
 
 ```console
 $ mlx-model-doctor version
-mlx-model-doctor 0.6.1
+mlx-model-doctor 0.6.2
 Python: 3.14.5
 Executable: /path/to/.venv/bin/python3
 Virtualenv: /path/to/.venv
@@ -51,8 +51,8 @@ $ mlx-model-doctor check local ./Qwen2.5-0.5B-Instruct-4bit
 MLX Model Doctor: /path/to/Qwen2.5-0.5B-Instruct-4bit
 
 Summary:
-  pass: 15
-  warn: 1
+  pass: 16
+  warn: 0
   fail: 0
   skip: 2
 
@@ -95,9 +95,8 @@ PASS info text/generation_config.tokens
 SKIP info text/vlm.image_processor
   VLM image processor: Not a vision-language repo; skipped.
 
-WARN low text/memory.estimate
+PASS info text/memory.estimate
   Memory estimate: Estimated lower bound memory is advisory and may be below runtime use.
-  Fix: Treat this as a floor; account for runtime overhead before loading the model.
 
 PASS info text/safetensors.offsets
   Safetensors offsets: Safetensors header tensor offsets are well-formed and in bounds.
@@ -112,7 +111,7 @@ PASS info text/quantization.shape
   Quantization shape: Quantized tensor shapes are consistent with config bits/group_size.
 ```
 
-**Result:** exit code `0` — a clean MLX repo. The one `warn` is the always-advisory memory floor, and the two `skip`s are checks that don't apply (no special-token IDs in this config; not a vision model). The `--skip-weights` flag drops the four tensor-header checks for a faster config-only pass.
+**Result:** exit code `0` — a clean MLX repo. The two `skip`s are the only non-pass results, and both are checks that don't apply (no special-token IDs in this config; not a vision model). The `--skip-weights` flag drops the four tensor-header checks for a faster config-only pass.
 
 ## 4. `check local` — catching a corrupt safetensors before you load it
 
@@ -123,8 +122,8 @@ $ mlx-model-doctor check local ./model
 MLX Model Doctor: /path/to/model
 
 Summary:
-  pass: 6
-  warn: 2
+  pass: 7
+  warn: 1
   fail: 1
   skip: 9
 
@@ -168,9 +167,8 @@ SKIP info text/generation_config.tokens
 SKIP info text/vlm.image_processor
   VLM image processor: Not a vision-language repo; skipped.
 
-WARN low text/memory.estimate
+PASS info text/memory.estimate
   Memory estimate: Estimated lower bound memory is advisory and may be below runtime use.
-  Fix: Treat this as a floor; account for runtime overhead before loading the model.
 
 FAIL high text/safetensors.offsets
   Safetensors offsets: Safetensors header has corrupt tensor offsets (overlap or out of bounds).
@@ -199,8 +197,8 @@ $ mlx-model-doctor check hf mlx-community/Qwen2.5-0.5B-Instruct-4bit
 MLX Model Doctor: mlx-community/Qwen2.5-0.5B-Instruct-4bit
 
 Summary:
-  pass: 15
-  warn: 1
+  pass: 16
+  warn: 0
   fail: 0
   skip: 2
 
@@ -243,9 +241,8 @@ PASS info text/generation_config.tokens
 SKIP info text/vlm.image_processor
   VLM image processor: Not a vision-language repo; skipped.
 
-WARN low text/memory.estimate
+PASS info text/memory.estimate
   Memory estimate: Estimated lower bound memory is advisory and may be below runtime use.
-  Fix: Treat this as a floor; account for runtime overhead before loading the model.
 
 PASS info text/safetensors.offsets
   Safetensors offsets: Safetensors tensor offsets are well-formed; the data-section upper bound was not checked (header length unavailable on this target).
@@ -271,8 +268,8 @@ $ mlx-model-doctor check hf ybelkada/opt-350m-lora
 MLX Model Doctor: ybelkada/opt-350m-lora
 
 Summary:
-  pass: 1
-  warn: 2
+  pass: 2
+  warn: 1
   fail: 2
   skip: 13
 
@@ -318,9 +315,8 @@ SKIP info text/generation_config.tokens
 SKIP info text/vlm.image_processor
   VLM image processor: Not a vision-language repo; skipped.
 
-WARN low text/memory.estimate
+PASS info text/memory.estimate
   Memory estimate: Estimated lower bound memory is advisory and may be below runtime use.
-  Fix: Treat this as a floor; account for runtime overhead before loading the model.
 
 SKIP info text/safetensors.offsets
   Safetensors offsets: No safetensors header to scan.
@@ -426,48 +422,48 @@ Summary:
   checked: 10
   tool-error: 0
 
+CHECKED mlx-community/Agents-A1-4bit
+  Signal: tag:mlx
+  Results: pass=11 warn=1 fail=0 skip=2
+
+CHECKED mlx-community/Agents-A1-5bit
+  Signal: tag:mlx
+  Results: pass=11 warn=1 fail=0 skip=2
+
+CHECKED mlx-community/Agents-A1-6bit
+  Signal: tag:mlx
+  Results: pass=11 warn=1 fail=0 skip=2
+
+CHECKED mlx-community/Agents-A1-8bit
+  Signal: tag:mlx
+  Results: pass=11 warn=1 fail=0 skip=2
+
+CHECKED mlx-community/Agents-A1-bf16
+  Signal: tag:mlx
+  Results: pass=9 warn=2 fail=0 skip=3
+
 CHECKED mlx-community/Boogu-Image-0.1-Base-4bit
   Signal: tag:mlx
-  Results: pass=1 warn=2 fail=2 skip=9
+  Results: pass=2 warn=1 fail=2 skip=9
 
-CHECKED mlx-community/DeepSeek-OCR-6bit
+CHECKED mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit
   Signal: tag:mlx
-  Results: pass=11 warn=2 fail=0 skip=1
-
-CHECKED mlx-community/DeepSeek-OCR-bf16
-  Signal: tag:mlx
-  Results: pass=9 warn=3 fail=0 skip=2
-
-CHECKED mlx-community/DeepSeek-R1-4bit
-  Signal: tag:mlx
-  Results: pass=11 warn=1 fail=0 skip=2
-
-CHECKED mlx-community/DeepSeek-R1-Distill-Llama-70B-8bit
-  Signal: tag:mlx
-  Results: pass=11 warn=1 fail=0 skip=2
-
-CHECKED mlx-community/DeepSeek-V3.2-4bit
-  Signal: tag:mlx
-  Results: pass=8 warn=3 fail=0 skip=3
-
-CHECKED mlx-community/Devstral-Small-2-24B-Instruct-2512-4bit
-  Signal: tag:mlx
-  Results: pass=10 warn=2 fail=1 skip=1
-
-CHECKED mlx-community/GLM-5-4bit
-  Signal: tag:mlx
-  Results: pass=10 warn=3 fail=0 skip=1
-
-CHECKED mlx-community/GLM-5.2-4bit
-  Signal: tag:mlx
-  Results: pass=10 warn=3 fail=0 skip=1
+  Results: pass=12 warn=0 fail=0 skip=2
 
 CHECKED mlx-community/GLM-5.2-DQ4plus-q8
   Signal: tag:mlx
-  Results: pass=10 warn=3 fail=0 skip=1
+  Results: pass=11 warn=2 fail=0 skip=1
+
+CHECKED mlx-community/GLM-5.2-mxfp4
+  Signal: tag:mlx
+  Results: pass=11 warn=2 fail=0 skip=1
+
+CHECKED mlx-community/Huihui-Qwen3.6-35B-A3B-Claude-4.7-Opus-abliterated-mlx-8bit
+  Signal: tag:mlx
+  Results: pass=12 warn=1 fail=0 skip=1
 ```
 
-**Result:** exit code `0`. Ten MLX repos checked. Two carry hard failures: `Boogu-Image-0.1-Base-4bit` is an image model, so the `text` engine's checks fail on it, and `Devstral-Small-2-24B-Instruct-2512-4bit` trips one check. The survey still exits `0` because it records each model as its own batch item and reports per-repo results rather than gating on them; a per-model failure never fails the run. The `pass`/`warn`/`skip` spread across the rest reflects how complete each repo's metadata is. Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
+**Result:** exit code `0`. Ten MLX repos checked. One carries hard failures: `Boogu-Image-0.1-Base-4bit` is an image model, so the `text` engine's checks fail on it. The survey still exits `0` because it records each model as its own batch item and reports per-repo results rather than gating on them; a per-model failure never fails the run. The `pass`/`warn`/`skip` spread across the rest reflects how complete each repo's metadata is. Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
 
 ## 9. `--format github` — annotations for CI
 

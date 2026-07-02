@@ -96,6 +96,17 @@ def test_check_local_returns_zero_for_valid_fixture(tmp_path: Path, capsys) -> N
     assert "MLX Model Doctor" in output
 
 
+def test_cli_quiet_suppresses_pass_lines(tmp_path: Path, capsys) -> None:
+    (tmp_path / "config.json").write_text('{"model_type":"llama"}')
+
+    cli.main(["check", "local", str(tmp_path), "--quiet"])
+    out = capsys.readouterr().out
+
+    assert "Summary:" in out
+    assert "PASS" not in out
+    assert "SKIP" not in out
+
+
 def test_check_local_missing_config_fails_by_default_and_can_be_non_strict(
     tmp_path: Path,
     capsys,
@@ -110,7 +121,7 @@ def test_check_local_missing_config_fails_by_default_and_can_be_non_strict(
 
 
 def test_check_local_fail_on_warn_fails_for_warn_only_model(tmp_path: Path, capsys) -> None:
-    model = write_local_model(tmp_path)
+    model = write_warn_only_local_model(tmp_path)
 
     default_code = cli.main(["check", "local", str(model)])
     capsys.readouterr()
@@ -189,8 +200,8 @@ def test_check_local_memory_options_are_reflected_in_json_report(
         result for result in data["results"] if result["check_id"] == "text/memory.estimate"
     )
 
-    assert code == 0
-    assert memory["status"] == "warn"
+    assert code == 1
+    assert memory["status"] == "fail"
     assert memory["severity"] == "high"
     assert memory["details"]["max_memory_bytes"] == 1
     assert memory["details"]["context_length"] == 8
@@ -640,6 +651,31 @@ def write_local_model(root: Path) -> Path:
         "intermediate_size": 512,
         "pad_token_id": 0,
         "eos_token_id": 1,
+        "quantization": {"bits": 4, "group_size": 64},
+    }
+    (model / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    (model / "tokenizer.json").write_text("{}", encoding="utf-8")
+    return model
+
+
+def write_warn_only_local_model(root: Path) -> Path:
+    # The memory-estimate check now passes on a healthy config (H1), so the previous
+    # warn-only fixture (write_local_model) no longer produces any warn. Use equal
+    # pad/eos token IDs instead: text/tokenizer.special_tokens warns on that without
+    # failing any other check.
+    model = root / "model"
+    model.mkdir()
+    config = {
+        "model_type": "llama",
+        "hidden_size": 128,
+        "num_hidden_layers": 2,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2,
+        "head_dim": 32,
+        "vocab_size": 256,
+        "intermediate_size": 512,
+        "pad_token_id": 0,
+        "eos_token_id": 0,
         "quantization": {"bits": 4, "group_size": 64},
     }
     (model / "config.json").write_text(json.dumps(config), encoding="utf-8")

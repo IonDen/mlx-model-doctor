@@ -72,7 +72,7 @@ class MemoryEstimateCheck:
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,
-                status="warn",
+                status="fail",
                 severity="high",
                 message="Estimated lower bound memory exceeds the configured budget.",
                 remediation=(
@@ -84,10 +84,9 @@ class MemoryEstimateCheck:
         return CheckResult(
             check_id=self.check_id,
             title=self.title,
-            status="warn",
-            severity="low",
+            status="pass",
+            severity="info",
             message="Estimated lower bound memory is advisory and may be below runtime use.",
-            remediation="Treat this as a floor; account for runtime overhead before loading the model.",
             details=details,
         )
 
@@ -236,11 +235,12 @@ def _mixed_precision_estimate(
 
 
 def _measured_weight_bytes(ctx: CheckContext, files: Sequence[str]) -> tuple[int, tuple[str, ...]]:
+    weight_files = [path for path in files if _is_weight_file(path)]
+    safetensors = [path for path in weight_files if path.endswith(".safetensors")]
+    selected = safetensors or weight_files
     total = 0
     unavailable_paths: list[str] = []
-    for path in files:
-        if not _is_weight_file(path):
-            continue
+    for path in selected:
         try:
             size = ctx.target.size(path)
         except TargetError as exc:

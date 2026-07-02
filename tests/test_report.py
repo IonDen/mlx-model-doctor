@@ -202,6 +202,49 @@ def test_markdown_and_text_include_failed_check_title_and_message() -> None:
     assert "Missing config.json" in render_text(report)
 
 
+def test_render_text_quiet_omits_pass_and_skip_blocks() -> None:
+    results = (
+        CheckResult(
+            check_id="text/a.pass", title="A", status="pass", severity="info", message="ok"
+        ),
+        CheckResult(
+            check_id="text/b.skip", title="B", status="skip", severity="info", message="skipped"
+        ),
+        CheckResult(
+            check_id="text/c.warn", title="C", status="warn", severity="low", message="careful"
+        ),
+        CheckResult(
+            check_id="text/d.fail", title="D", status="fail", severity="high", message="broken"
+        ),
+    )
+    report = DoctorReport(target="t", source="local", plugin="text", results=results)
+
+    quiet = render_text(report, quiet=True)
+
+    assert "Summary:" in quiet
+    assert "text/c.warn" in quiet
+    assert "text/d.fail" in quiet
+    assert "text/a.pass" not in quiet
+    assert "text/b.skip" not in quiet
+    # Default stays verbose:
+    assert "text/a.pass" in render_text(report)
+
+
+def test_zero_check_reason_rendered_in_text_and_markdown() -> None:
+    from mlx_model_doctor.report import DoctorReport, render_markdown, render_text
+
+    report = DoctorReport(
+        target="t",
+        source="local",
+        plugin="text",
+        results=(),
+        zero_check_reason="The 'text' plugin produced no checks to run.",
+    )
+
+    assert "produced no checks" in render_text(report)
+    assert "produced no checks" in render_markdown(report)
+
+
 def test_render_github_emits_error_and_warning_annotations() -> None:
     report = DoctorReport(
         target="org/model",

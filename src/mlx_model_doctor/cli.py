@@ -108,7 +108,7 @@ def _finish_check(report: DoctorReport, args: argparse.Namespace) -> int:
             )
         _emit_github(report, code)
         return code
-    rendered = _render_report(report, args.format)
+    rendered = _render_report(report, args.format, quiet=_verbosity(args) == "quiet")
     _emit_report(rendered, args.output)
     return code
 
@@ -190,12 +190,12 @@ def _verbosity(args: argparse.Namespace) -> Verbosity:
     return "normal"
 
 
-def _render_report(report: DoctorReport, output_format: str) -> str:
+def _render_report(report: DoctorReport, output_format: str, *, quiet: bool = False) -> str:
     if output_format == "json":
         return render_json(report)
     if output_format == "markdown":
         return render_markdown(report)
-    return render_text(report)
+    return render_text(report, quiet=quiet)
 
 
 def _render_sample_batch(batch: SampleBatchReport, output_format: str) -> str:

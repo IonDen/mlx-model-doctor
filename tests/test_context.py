@@ -1,4 +1,5 @@
 import json
+from collections.abc import Sequence
 
 import pytest
 
@@ -100,6 +101,11 @@ class CountingTarget(FakeTarget):
 class TargetErrorTarget(FakeTarget):
     def exists(self, path: str) -> bool:
         return True
+
+    def size(self, path: str) -> int | None:
+        # Known (not None) so the L7 unknown-size guard doesn't short-circuit
+        # before the read this fixture exists to exercise.
+        return 0
 
     def read_text(self, path: str, *, max_bytes: int | None = None) -> str:
         raise TargetError("read failed", target=path, source=self.source)
@@ -267,3 +273,45 @@ def test_preprocessor_config_json_swallows_local_target_error() -> None:
         options=check_options(),
     )
     assert ctx.preprocessor_config_json() is None
+
+
+# ---------------------------------------------------------------------------
+# Unknown file size guard (L7)
+# ---------------------------------------------------------------------------
+
+
+class UnknownSizeRecordingTarget:
+    def __init__(self) -> None:
+        self.read_attempted = False
+
+    @property
+    def source(self) -> str:
+        return "hf"
+
+    def exists(self, path: str) -> bool:
+        return path == "config.json"
+
+    def list_files(self) -> Sequence[str]:
+        return ("config.json",)
+
+    def size(self, path: str) -> int | None:
+        return None  # sibling metadata lacks a size
+
+    def read_bytes(self, path: str, *, max_bytes: int | None = None) -> bytes:
+        self.read_attempted = True
+        return b"{}"
+
+    def read_text(self, path: str, *, max_bytes: int | None = None) -> str:
+        self.read_attempted = True
+        return "{}"
+
+    def safetensors_header(self) -> SafetensorsHeader | None:
+        return None
+
+
+def test_unknown_size_metadata_is_not_read() -> None:
+    target = UnknownSizeRecordingTarget()
+    ctx = CheckContext(target=target, options=check_options())
+
+    assert ctx.config_json() is None
+    assert target.read_attempted is False

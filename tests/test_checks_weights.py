@@ -37,6 +37,13 @@ def test_param_count_pass_when_map_complete_and_nonzero() -> None:
     assert _run(header).status == "pass"
 
 
+def test_weight_param_count_detail_key_is_stored_element_count() -> None:
+    header = _header(tensors={"w": _entry()}, weight_map={"w": "model.safetensors"})
+    result = _run(header)
+    assert result.details["stored_element_count"] == 4
+    assert "total_parameter_count" not in result.details
+
+
 def test_param_count_warn_on_declared_but_missing_tensor() -> None:
     header = _header(
         tensors={"w": _entry()}, weight_map={"w": "model.safetensors", "ghost": "model.safetensors"}
@@ -71,7 +78,8 @@ def test_param_count_warn_on_nonempty_files_but_zero_total() -> None:
     )
     result = _run(header)
     assert result.status == "warn"
-    assert result.details["total_parameter_count"] == 0
+    assert result.details["stored_element_count"] == 0
+    assert "total_parameter_count" not in result.details
 
 
 def _ctx(header: SafetensorsHeader | None, config: object) -> CheckContext:
@@ -111,6 +119,8 @@ def test_tied_warn_when_untied_but_no_output_head() -> None:
     result = TiedEmbeddingCheck().run(_ctx(header, {"tie_word_embeddings": False}))
     assert result.status == "warn"
     assert result.details["missing_output_head"] is True
+    assert "not enabled" in result.message
+    assert "not set" not in result.message
 
 
 def test_tied_skip_without_config_or_header() -> None:

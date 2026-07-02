@@ -174,3 +174,52 @@ def test_local_target_uses_index_weight_map_for_sharded_model(tmp_path: Path) ->
         "a": "model-00001-of-00002.safetensors",
         "b": "model-00002-of-00002.safetensors",
     }
+
+
+from mlx_model_doctor.targets import _canonical_shard_paths  # noqa: E402
+
+
+def test_canonical_shard_paths_top_level_only_without_index() -> None:
+    files = ["config.json", "model.safetensors", "vae/model.safetensors"]
+    assert _canonical_shard_paths(files, None) == ["model.safetensors"]
+
+
+def test_canonical_shard_paths_prefers_index_named_shards() -> None:
+    files = [
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
+        "vae/diffusion.safetensors",
+    ]
+    weight_map = {
+        "w1": "model-00001-of-00002.safetensors",
+        "w2": "model-00002-of-00002.safetensors",
+    }
+    assert _canonical_shard_paths(files, weight_map) == [
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
+    ]
+
+
+def test_canonical_shard_paths_ignores_nested_when_index_only_names_top_level() -> None:
+    files = ["model.safetensors", "vae/model.safetensors"]
+    assert _canonical_shard_paths(files, {"w": "model.safetensors"}) == ["model.safetensors"]
+
+
+def test_canonical_shard_paths_falls_back_when_weight_map_has_no_matching_files() -> None:
+    files = ["model.safetensors", "vae/model.safetensors"]
+    weight_map = {"w": "stale-missing.safetensors"}
+    assert _canonical_shard_paths(files, weight_map) == ["model.safetensors"]
+
+
+def test_local_target_header_excludes_nested_component_shards(tmp_path: Path) -> None:
+    tensor = {"w": {"dtype": "F32", "shape": [2, 2], "data_offsets": [0, 16]}}
+    _write_safetensors(tmp_path / "model.safetensors", tensor)
+    (tmp_path / "vae").mkdir()
+    _write_safetensors(tmp_path / "vae" / "model.safetensors", {"vae.w": tensor["w"]})
+
+    header = LocalTarget(tmp_path).safetensors_header()
+
+    assert header is not None
+    names = list(header.tensor_names())
+    assert "w" in names
+    assert "vae.w" not in names

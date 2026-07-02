@@ -83,3 +83,51 @@ def test_special_tokens_check_skips_when_config_unavailable() -> None:
 class ExistsErrorTarget(FakeTarget):
     def exists(self, path: str) -> bool:
         raise TargetError("exists failed", target=path, source=self.source)
+
+
+def test_special_tokens_check_passes_for_list_eos_distinct_pad() -> None:
+    result = SpecialTokensCheck().run(
+        context_for_files({"config.json": b'{"pad_token_id":0,"eos_token_id":[128001,128009]}'})
+    )
+
+    assert result.status == "pass"
+    assert result.severity == "info"
+
+
+def test_special_tokens_check_warns_when_pad_in_eos_list() -> None:
+    result = SpecialTokensCheck().run(
+        context_for_files(
+            {"config.json": b'{"pad_token_id":128001,"eos_token_id":[128001,128009]}'}
+        )
+    )
+
+    assert result.status == "warn"
+    assert result.severity == "medium"
+    assert "pad_token_id" in result.message
+    assert "eos_token_id" in result.message
+
+
+def test_special_tokens_check_warns_when_pad_matches_later_eos_list_element() -> None:
+    result = SpecialTokensCheck().run(
+        context_for_files(
+            {"config.json": b'{"pad_token_id":128009,"eos_token_id":[128001,128009]}'}
+        )
+    )
+
+    assert result.status == "warn"
+    assert result.severity == "medium"
+    assert "pad_token_id" in result.message
+    assert "eos_token_id" in result.message
+
+
+def test_special_tokens_check_warns_for_malformed_lists_and_bools() -> None:
+    for config in (
+        b'{"pad_token_id":0,"eos_token_id":[2,"x"]}',  # non-int entry
+        b'{"pad_token_id":0,"eos_token_id":[true]}',  # bool entry
+        b'{"pad_token_id":0,"eos_token_id":[]}',  # empty list
+    ):
+        result = SpecialTokensCheck().run(context_for_files({"config.json": config}))
+
+        assert result.status == "warn"
+        assert result.severity == "medium"
+        assert "token" in result.message.lower()

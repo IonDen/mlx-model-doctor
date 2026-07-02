@@ -104,7 +104,7 @@ def test_check_local_model_propagates_custom_options_to_memory_estimate(
     report = check_local_model(model, options=options)
 
     memory = result_by_id(report.results, "text/memory.estimate")
-    assert memory.status == "warn"
+    assert memory.status == "fail"
     assert memory.severity == "high"
     assert memory.details["context_length"] == 8
     assert memory.details["max_memory_bytes"] == 1
@@ -162,7 +162,7 @@ def test_check_hf_model_propagates_custom_options_to_memory_estimate() -> None:
     report = check_hf_model("org/model", options=options, hub=hub)
 
     memory = result_by_id(report.results, "text/memory.estimate")
-    assert memory.status == "warn"
+    assert memory.status == "fail"
     assert memory.severity == "high"
     assert memory.details["context_length"] == 8
     assert memory.details["max_memory_bytes"] == 1

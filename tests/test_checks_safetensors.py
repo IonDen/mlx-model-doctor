@@ -348,3 +348,11 @@ def test_offsets_pass_with_empty_tensor_after_real_weight() -> None:
     )
     result = _run_offsets(header)
     assert result.status == "pass"
+
+
+def test_offset_scan_reports_leading_gap() -> None:
+    # Single tensor begins at offset 8, not 0 -> a leading gap before the data section.
+    header = _offsets_header({"w": _entry("F32", 8, 24)}, file_size=None, header_length=None)
+    result = _run_offsets(header)
+    assert result.status == "warn"
+    assert "model.safetensors:w" in result.details["gaps"]

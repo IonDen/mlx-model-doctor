@@ -108,14 +108,14 @@ Gate a pull request on a model repository with the GitHub Action. It runs the st
     fail-on: warn
 ```
 
-Add `version: "==0.6.1"` to pin the tool to a release; without it the action installs the latest published version.
+Add `version: "==0.6.2"` to pin the tool to a release; without it the action installs the latest published version.
 
 For a model directory you keep in git, validate it on every commit with the pre-commit hook:
 
 ```yaml
 repos:
   - repo: https://github.com/IonDen/mlx-model-doctor
-    rev: v0.6.1
+    rev: v0.6.2
     hooks:
       - id: mlx-model-doctor
         args: ["path/to/model"]
@@ -132,7 +132,7 @@ repos:
 | `source` | `"local"` or `"hf"` | Where the model came from. |
 | `plugin` | string | The check plugin that ran (e.g. `"text"`). |
 | `summary` | object | Check counts: `pass`, `warn`, `fail`, `skip` (integers). |
-| `environment` | object | Open object, currently empty — reserved for future environment metadata. |
+| `environment` | object | Reserved and currently always empty (`{}`); kept empty so JSON output stays stable to diff across environments. |
 | `zero_check_reason` | string or null | When a run produced no checks (a zero-check run, which exits `2`), a message naming the responsible plugin; null on a normal run. |
 | `results` | array | One entry per check; see below. |
 
@@ -147,7 +147,7 @@ Each result in `results[]` has:
 | `message` | string | What was found. |
 | `remediation` | string or null | What to do if the check fired. |
 | `details` | object | Open object with check-specific key/value pairs. |
-| `duration_s` | number or null | How long this check took, in seconds. |
+| `duration_s` | number or null | Reserved; currently always `null`. Per-check timing is not emitted so JSON output stays stable to diff run-to-run. |
 
 The machine-readable schema ships with the package at `mlx_model_doctor/schema/report.v1.schema.json` and is validated against real output in CI.
 
@@ -181,7 +181,7 @@ The `sample hf --format json` survey has its own published schema, at `mlx_model
 
 ## Status
 
-**Alpha (0.6.1).** The static `check local` path and the report/CLI surface are solid and well tested. The safetensors header (read without downloading weights) backs four tensor-level checks — offset corruption, weight-map parameter sanity, tied-embedding consistency, and MLX quantized-layer shape consistency — which run by default (`--skip-weights` opts out). A single `check` also reports whether a repository looks like an MLX model and why, and flags a vision-language repository that declares no way to resolve its image processor. The quantized-shape and quantization-mode checks read each layer's own `bits`/`group_size`/`mode`, so a mixed-precision model (4-bit experts with 8-bit dense and router layers) is validated per layer rather than reported as broken. The memory estimate handles mixed precision the same way: when a model mixes bit widths it takes the weight figure from the stored file sizes instead of the model-level setting. The Hugging Face path (`check hf`, `sample hf`) is implemented and tested offline against fakes; its live behavior is exercised by opt-in network tests. It also ships a GitHub Action and a pre-commit hook. The public API and JSON output now have a documented, versioned stability contract — see [Output contract](#output-contract) and [Stability policy](#stability-policy). Pin a version if you depend on the schema or the API.
+**Alpha (0.6.2).** The static `check local` path and the report/CLI surface are solid and well tested. The safetensors header (read without downloading weights) backs four tensor-level checks — offset corruption, weight-map parameter sanity, tied-embedding consistency, and MLX quantized-layer shape consistency — which run by default (`--skip-weights` opts out). A single `check` also reports whether a repository looks like an MLX model and why, and flags a vision-language repository that declares no way to resolve its image processor. The quantized-shape and quantization-mode checks read each layer's own `bits`/`group_size`/`mode`, so a mixed-precision model (4-bit experts with 8-bit dense and router layers) is validated per layer rather than reported as broken. The memory estimate handles mixed precision the same way: when a model mixes bit widths it takes the weight figure from the stored file sizes instead of the model-level setting. The Hugging Face path (`check hf`, `sample hf`) is implemented and tested offline against fakes; its live behavior is exercised by opt-in network tests. It also ships a GitHub Action and a pre-commit hook. The public API and JSON output now have a documented, versioned stability contract — see [Output contract](#output-contract) and [Stability policy](#stability-policy). Pin a version if you depend on the schema or the API.
 
 ## License
 

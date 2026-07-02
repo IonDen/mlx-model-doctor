@@ -59,6 +59,19 @@ class TokenizerFilesCheck:
         )
 
 
+def _valid_token_ids(value: object) -> frozenset[int] | None:
+    """Return the id set for a valid int|list[int] token id, or None when malformed.
+
+    ``type(x) is int`` excludes booleans (``type(True) is bool``). An empty list or a
+    list with any non-int entry is malformed.
+    """
+    if type(value) is int:
+        return frozenset({value})
+    if isinstance(value, list) and value and all(type(item) is int for item in value):
+        return frozenset(value)
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class SpecialTokensCheck:
     """Check for risky special token ID configuration."""
@@ -88,25 +101,27 @@ class SpecialTokensCheck:
                 severity="info",
                 message="pad_token_id or eos_token_id is unavailable in config.json.",
             )
-        if type(pad_token_id) is not int or type(eos_token_id) is not int:
+        pad_ids = _valid_token_ids(pad_token_id)
+        eos_ids = _valid_token_ids(eos_token_id)
+        if pad_ids is None or eos_ids is None:
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,
                 status="warn",
                 severity="medium",
-                message="pad_token_id and eos_token_id should be integer token IDs.",
+                message="pad_token_id and eos_token_id should be integer token IDs (or a list of them).",
                 remediation="Use integer token IDs in config.json special token metadata.",
                 details={"pad_token_id": pad_token_id, "eos_token_id": eos_token_id},
             )
 
         details = {"pad_token_id": pad_token_id, "eos_token_id": eos_token_id}
-        if pad_token_id == eos_token_id:
+        if pad_ids & eos_ids:
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,
                 status="warn",
                 severity="medium",
-                message="pad_token_id equals eos_token_id, which can make padding ambiguous.",
+                message="pad_token_id is also an eos_token_id, which can make padding ambiguous.",
                 remediation="Use distinct pad_token_id and eos_token_id values when the model supports it.",
                 details=details,
             )

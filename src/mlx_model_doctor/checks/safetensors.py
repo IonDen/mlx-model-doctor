@@ -346,7 +346,7 @@ class SafetensorsOffsetScanCheck:
                 continue
             if prev_name is not None and begin < prev_end:
                 overlapping.append(f"{file_header.filename}:{prev_name}->{name}")
-            elif prev_name is not None and begin > prev_end:
+            elif begin > prev_end:
                 gaps.append(label)
             prev_end = max(prev_end, end)
             prev_name = name
