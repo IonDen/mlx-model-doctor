@@ -235,11 +235,12 @@ def _mixed_precision_estimate(
 
 
 def _measured_weight_bytes(ctx: CheckContext, files: Sequence[str]) -> tuple[int, tuple[str, ...]]:
+    weight_files = [path for path in files if _is_weight_file(path)]
+    safetensors = [path for path in weight_files if path.endswith(".safetensors")]
+    selected = safetensors or weight_files
     total = 0
     unavailable_paths: list[str] = []
-    for path in files:
-        if not _is_weight_file(path):
-            continue
+    for path in selected:
         try:
             size = ctx.target.size(path)
         except TargetError as exc:

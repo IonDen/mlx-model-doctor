@@ -93,6 +93,33 @@ def test_memory_estimate_check_uses_file_size_fallback_when_config_is_insufficie
     assert result.details["memory_lower_bound_kind"] == "model_runtime"
 
 
+def test_memory_estimate_prefers_safetensors_over_dual_format_bin() -> None:
+    result = MemoryEstimateCheck().run(
+        context_for_files(
+            {
+                "config.json": b'{"model_type":"llama"}',
+                "model.safetensors": b"a" * 10,
+                "pytorch_model.bin": b"b" * 20,
+            }
+        )
+    )
+
+    assert result.status == "pass"
+    assert result.details["estimate_source"] == "file_sizes"
+    assert result.details["lower_bound_bytes"] == 10  # safetensors only, not 30
+
+
+def test_memory_estimate_falls_back_to_torch_weights_without_safetensors() -> None:
+    result = MemoryEstimateCheck().run(
+        context_for_files(
+            {"config.json": b'{"model_type":"llama"}', "pytorch_model.bin": b"b" * 20}
+        )
+    )
+
+    assert result.status == "pass"
+    assert result.details["lower_bound_bytes"] == 20
+
+
 def test_memory_estimate_check_uses_config_when_vocab_size_is_missing() -> None:
     config = {key: value for key, value in BASE_CONFIG.items() if key != "vocab_size"}
 
