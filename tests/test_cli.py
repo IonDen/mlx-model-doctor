@@ -96,6 +96,17 @@ def test_check_local_returns_zero_for_valid_fixture(tmp_path: Path, capsys) -> N
     assert "MLX Model Doctor" in output
 
 
+def test_cli_quiet_suppresses_pass_lines(tmp_path: Path, capsys) -> None:
+    (tmp_path / "config.json").write_text('{"model_type":"llama"}')
+
+    cli.main(["check", "local", str(tmp_path), "--quiet"])
+    out = capsys.readouterr().out
+
+    assert "Summary:" in out
+    assert "PASS" not in out
+    assert "SKIP" not in out
+
+
 def test_check_local_missing_config_fails_by_default_and_can_be_non_strict(
     tmp_path: Path,
     capsys,

@@ -135,15 +135,19 @@ def render_json(report: DoctorReport) -> str:
     return json.dumps(payload, indent=2, sort_keys=True)
 
 
-def render_text(report: DoctorReport) -> str:
-    """Render a report as plain text."""
+def render_text(report: DoctorReport, *, quiet: bool = False) -> str:
+    """Render a report as plain text. When ``quiet``, omit pass/skip result blocks."""
     lines = [
         f"MLX Model Doctor: {report.target}",
         "",
         "Summary:",
         *(f"  {key}: {value}" for key, value in report.summary.items()),
     ]
+    if report.zero_check_reason:
+        lines.extend(["", f"Note: {report.zero_check_reason}"])
     for result in report.results:
+        if quiet and result.status in {"pass", "skip"}:
+            continue
         lines.extend(
             [
                 "",
