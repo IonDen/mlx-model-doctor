@@ -5,6 +5,13 @@ as priorities change.
 
 ## Released
 
+- **v0.6.2** (2026-07-02) — a correctness and hardening patch. The memory estimate now
+  passes a repository within budget and fails one that exceeds `--max-memory`, instead
+  of always warning, so `--fail-on warn` works on a clean repo and `--max-memory` gates
+  under the default policy. `--quiet` drops the pass/skip lines from the text report; a
+  list-valued `eos_token_id` no longer draws a false warning; a local repository
+  aggregates only its canonical safetensors shards to match the Hub path; plus a batch
+  of smaller fixes. The unused `docs` dependency group is gone.
 - **v0.6.1** (2026-06-28) — a hardening patch. The `sample hf` batch survey now has
   its own published JSON Schema (validated in CI), so both the single report and the
   batch output are under the contract. `zero_check_reason` is populated when a run

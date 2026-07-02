@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] — 2026-07-02
+
+A correctness and hardening patch. One behavior change is worth knowing before you
+upgrade: the memory estimate now passes a repository that fits and fails one that
+exceeds `--max-memory`, where it used to always warn. That makes `--fail-on warn`
+usable on a clean repo and lets `--max-memory` gate under the default policy, and it
+means a memory result now affects the exit code where it never did before. The
+`--smoke` pre-flight is unchanged, since it reads the estimate details rather than the
+status, and nothing else changes the report shape, CLI flags, or exit-code policy.
+
+### Added
+- `--quiet` now drops the `pass` and `skip` lines from the text report while keeping the
+  summary and any `warn`/`fail` lines. It was previously accepted and ignored.
+
+### Changed
+- The memory estimate reports `pass` when a repository is within budget (or when no
+  `--max-memory` is set) and `fail` when its estimated lower bound exceeds the budget,
+  instead of always warning.
+- `zero_check_reason` now appears in the text and Markdown reports, not only in JSON.
+- The weights check reports its stored-element total under a `stored_element_count`
+  detail key, renamed from `total_parameter_count` because it counts bit-packed stored
+  elements rather than logical parameters. Its tied-embedding message now reads "not
+  enabled" instead of "not set", so it fits the case where the flag is explicitly false.
+- `duration_s` and `environment` are documented as reserved output fields; they stay
+  `null` and `{}` so the JSON stays stable to diff.
+
+### Fixed
+- A list-valued `eos_token_id` or `pad_token_id`, as recent Llama-family configs
+  declare, no longer draws a false "should be integer" warning. The check still warns
+  when a pad ID is also an end-of-sequence ID, and still flags genuinely malformed
+  values.
+- A local model directory aggregates only its canonical top-level (or index-named)
+  safetensors shards, so nested component weights no longer merge into one header and a
+  repository gets the same verdict on disk as it does from the Hub.
+- The memory estimate no longer double-counts a repository that ships both
+  `.safetensors` and PyTorch `.bin` copies of the same weights; it uses the safetensors
+  set when both are present.
+- Repository metadata is not read when its size is unknown, so an unsized file on the
+  Hub path cannot trigger an unbounded download.
+- The safetensors offset scan reports a gap before the first tensor.
+- A check whose identifier is malformed can no longer crash the whole run through the
+  crash-isolation path.
+
+### Removed
+- The unused `docs` dependency group.
+
 ## [0.6.1] — 2026-06-28
 
 A hardening patch. A normal run is unchanged — same checks, report fields, CLI flags,
