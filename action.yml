@@ -30,7 +30,7 @@ inputs:
     required: false
     default: "false"
   version:
-    description: "Version spec appended to the pip install, e.g. '==0.5.0' (empty = latest)."
+    description: "Version spec appended to the pip install, e.g. '==0.7.0' (empty = latest)."
     required: false
     default: ""
   python-version:

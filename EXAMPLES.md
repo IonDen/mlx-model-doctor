@@ -4,6 +4,18 @@ Real output from `mlx-model-doctor`, captured by running the tool — so you can
 
 > Captured with **mlx-model-doctor 0.6.2** on **2026-07-02**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 6 and 7 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
 
+## Producer pre-upload workflow
+
+Use this when you have just converted or exported an MLX model directory and want to publish it to the Hub.
+
+```bash
+mlx-model-doctor check local ./dist/my-mlx-model --fail-on warn
+hf upload my-org/my-mlx-model ./dist/my-mlx-model --repo-type model
+mlx-model-doctor check hf my-org/my-mlx-model --fail-on warn
+```
+
+**Result:** the local directory must have no warnings or failures before upload. The final `check hf` confirms that the uploaded repository exposes the expected files and metadata through the Hub path.
+
 ## 1. `version` — environment and dependency status
 
 ```console

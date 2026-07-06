@@ -5,6 +5,13 @@ as priorities change.
 
 ## Released
 
+- **v0.7.0** (2026-07-06) — a reach/readiness minor release with no runtime
+  validation behavior change. It adds a producer pre-upload workflow for Hugging
+  Face publishing, verifies the GitHub Marketplace Action listing, introduces an
+  adoption-scorecard process for release decisions, records the profile-routing
+  decision for future non-text plugins, and removes the stale docs-site milestone
+  from the active 1.0 path. Existing checks, JSON schemas, check IDs, CLI
+  defaults, public API exports, and exit codes are unchanged.
 - **v0.6.2** (2026-07-02) — a correctness and hardening patch. The memory estimate now
   passes a repository within budget and fails one that exceeds `--max-memory`, instead
   of always warning, so `--fail-on warn` works on a clean repo and `--max-memory` gates
@@ -97,8 +104,9 @@ garbage" class of problems statically, before a load attempt.
   further vision-language checks.
 - **Richer Hugging Face surveying** — caching, broader candidate signals, and
   pagination so `sample hf` can cover more of an author's catalog.
-- **A docs site** — the `mkdocs-material` group is wired, but there's no
-  published site yet.
+- **Documentation expansion** — README and EXAMPLES remain the source of truth for
+  now. A separate docs site stays deferred until the adoption scorecard shows docs
+  discovery or reference depth is the release bottleneck.
 
 ## Out of scope (deliberate non-goals)
 

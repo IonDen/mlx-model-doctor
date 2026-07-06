@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-07-06
+
+A reach/readiness minor release. It does not add checks, change runtime validation
+behavior, alter JSON schemas, rename check IDs, change CLI defaults, change public
+API exports, or change exit-code semantics.
+
+Release gate: after the `v0.7.0` semver release publishes successfully, move the
+moving `v0` Action tag to the release commit, confirm the remote `v0` SHA matches
+that commit, and confirm the release workflow did not run from the bare `v0` tag.
+
+### Added
+- A producer pre-upload workflow for Hugging Face publishing: validate local output
+  with `check local --fail-on warn`, upload with `hf upload` or
+  `upload_folder()`, then optionally verify the remote repo with `check hf`.
+- An adoption scorecard process for release decisions, covering Action usage,
+  pre-commit usage, generic mentions, PyPI downloads, repo metadata, and
+  Marketplace discoverability.
+- A profile-routing decision for future VLM/embedding/diffusion work that
+  preserves current `text` defaults until a versioned routing change is designed.
+
+### Changed
+- The public roadmap no longer claims a wired docs-site milestone. README and
+  EXAMPLES remain the source of truth until adoption evidence justifies a separate
+  site.
+- GitHub Action and pre-commit examples now pin the v0.7.0 release where a fixed
+  version is shown.
+
 ## [0.6.2] — 2026-07-02
 
 A correctness and hardening patch. One behavior change is worth knowing before you

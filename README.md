@@ -96,9 +96,34 @@ Exit codes: `0` checks passed (under the fail policy), `1` checks found failures
 
 `check hf` and `sample hf` talk to the Hub through `huggingface-hub`. They read repository metadata (the file list, sizes, the small text files, and the safetensors header over a range request) rather than downloading the weights, but they do need network access, and an auth or rate-limit problem surfaces as a clear tool error rather than a stack trace. `sample hf` is a survey: it lists an author's repos, keeps the ones that look like MLX models, validates a deterministic sample of them, and reports each as its own batch item — a per-model failure is recorded and the run continues.
 
+## Validate before uploading to Hugging Face
+
+For a model you build or convert locally, run the static checks before upload and treat warnings as release blockers unless you have reviewed them:
+
+```bash
+mlx-model-doctor check local ./dist/my-mlx-model --fail-on warn
+hf upload my-org/my-mlx-model ./dist/my-mlx-model --repo-type model
+mlx-model-doctor check hf my-org/my-mlx-model --fail-on warn
+```
+
+If your publisher is Python-based, keep the same order:
+
+```python
+from huggingface_hub import upload_folder
+
+# Run `mlx-model-doctor check local ./dist/my-mlx-model --fail-on warn` first.
+upload_folder(
+    repo_id="my-org/my-mlx-model",
+    folder_path="./dist/my-mlx-model",
+    repo_type="model",
+)
+```
+
+Use `--fail-on warn` before upload when you want a clean producer release gate. Use the default `--fail-on error` when warnings are acceptable but hard failures should still block. After upload, `check hf` verifies that the Hub repository exposes the same files and metadata the local directory did.
+
 ## Use it in CI
 
-Gate a pull request on a model repository with the GitHub Action. It runs the static checks (no weights downloaded, no GPU), writes the report to the job summary, and fails the job under your fail policy:
+Gate a pull request on a model repository with the [GitHub Marketplace Action](https://github.com/marketplace/actions/mlx-model-doctor). It runs the static checks (no weights downloaded, no GPU), writes the report to the job summary, and fails the job under your fail policy:
 
 ```yaml
 - uses: IonDen/mlx-model-doctor@v0
@@ -108,14 +133,14 @@ Gate a pull request on a model repository with the GitHub Action. It runs the st
     fail-on: warn
 ```
 
-Add `version: "==0.6.2"` to pin the tool to a release; without it the action installs the latest published version.
+Add `version: "==0.7.0"` to pin the tool to a release; without it the action installs the latest published version.
 
 For a model directory you keep in git, validate it on every commit with the pre-commit hook:
 
 ```yaml
 repos:
   - repo: https://github.com/IonDen/mlx-model-doctor
-    rev: v0.6.2
+    rev: v0.7.0
     hooks:
       - id: mlx-model-doctor
         args: ["path/to/model"]
@@ -181,7 +206,7 @@ The `sample hf --format json` survey has its own published schema, at `mlx_model
 
 ## Status
 
-**Alpha (0.6.2).** The static `check local` path and the report/CLI surface are solid and well tested. The safetensors header (read without downloading weights) backs four tensor-level checks — offset corruption, weight-map parameter sanity, tied-embedding consistency, and MLX quantized-layer shape consistency — which run by default (`--skip-weights` opts out). A single `check` also reports whether a repository looks like an MLX model and why, and flags a vision-language repository that declares no way to resolve its image processor. The quantized-shape and quantization-mode checks read each layer's own `bits`/`group_size`/`mode`, so a mixed-precision model (4-bit experts with 8-bit dense and router layers) is validated per layer rather than reported as broken. The memory estimate handles mixed precision the same way: when a model mixes bit widths it takes the weight figure from the stored file sizes instead of the model-level setting. The Hugging Face path (`check hf`, `sample hf`) is implemented and tested offline against fakes; its live behavior is exercised by opt-in network tests. It also ships a GitHub Action and a pre-commit hook. The public API and JSON output now have a documented, versioned stability contract — see [Output contract](#output-contract) and [Stability policy](#stability-policy). Pin a version if you depend on the schema or the API.
+**Alpha (0.7.0).** The static `check local` path and the report/CLI surface are solid and well tested. v0.7.0 does not change validation behavior; it makes the integration path clearer with Marketplace visibility, release-decision metrics, and a producer pre-upload workflow. The safetensors header (read without downloading weights) backs four tensor-level checks — offset corruption, weight-map parameter sanity, tied-embedding consistency, and MLX quantized-layer shape consistency — which run by default (`--skip-weights` opts out). A single `check` also reports whether a repository looks like an MLX model and why, and flags a vision-language repository that declares no way to resolve its image processor. The quantized-shape and quantization-mode checks read each layer's own `bits`/`group_size`/`mode`, so a mixed-precision model (4-bit experts with 8-bit dense and router layers) is validated per layer rather than reported as broken. The memory estimate handles mixed precision the same way: when a model mixes bit widths it takes the weight figure from the stored file sizes instead of the model-level setting. The Hugging Face path (`check hf`, `sample hf`) is implemented and tested offline against fakes; its live behavior is exercised by opt-in network tests. It also ships a GitHub Action and a pre-commit hook. The public API and JSON output now have a documented, versioned stability contract — see [Output contract](#output-contract) and [Stability policy](#stability-policy). Pin a version if you depend on the schema or the API.
 
 ## License
 
