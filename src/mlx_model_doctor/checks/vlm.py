@@ -102,13 +102,9 @@ def is_vlm_metadata(
     preproc: Mapping[str, object] | None,
 ) -> bool:
     """Return whether config/preprocessor metadata has VLM structural signals."""
-    if isinstance(config, Mapping):
-        if any(key in config for key in _VLM_CONFIG_KEYS):
-            return True
-    if isinstance(preproc, Mapping):
-        if any(key in preproc for key in _IMAGE_PREPROCESSOR_KEYS):
-            return True
-    return False
+    if isinstance(config, Mapping) and any(key in config for key in _VLM_CONFIG_KEYS):
+        return True
+    return isinstance(preproc, Mapping) and any(key in preproc for key in _IMAGE_PREPROCESSOR_KEYS)
 
 
 def _has_custom_processor_signal(cfg: Mapping[str, object]) -> bool:
@@ -175,18 +171,18 @@ def _iter_special_token_values(value: object) -> tuple[str, ...]:
     if isinstance(value, str):
         return (value,)
     if isinstance(value, Mapping):
-        out: list[str] = []
+        mapping_tokens: list[str] = []
         content = value.get("content")
         if isinstance(content, str):
-            out.append(content)
+            mapping_tokens.append(content)
         for item in value.values():
-            out.extend(_iter_special_token_values(item))
-        return tuple(out)
+            mapping_tokens.extend(_iter_special_token_values(item))
+        return tuple(mapping_tokens)
     if isinstance(value, list):
-        out: list[str] = []
+        list_tokens: list[str] = []
         for item in value:
-            out.extend(_iter_special_token_values(item))
-        return tuple(out)
+            list_tokens.extend(_iter_special_token_values(item))
+        return tuple(list_tokens)
     return ()
 
 
@@ -290,7 +286,12 @@ class VlmImageTokenWiringCheck:
         if ids:
             token_id = next(iter(ids.values()))
             mapped = _added_token_by_id(tokenizer_config, token_id)
-            if mapped in _ACTUAL_IMAGE_TOKENS:
+            configured_token = image_token.strip() if isinstance(image_token, str) else None
+            if mapped in _ACTUAL_IMAGE_TOKENS or (
+                mapped is not None
+                and mapped == configured_token
+                and _token_visible_in_metadata(ctx, mapped, known_tokens)
+            ):
                 return self._result(
                     "pass",
                     "info",
@@ -341,19 +342,19 @@ class VlmImageTokenWiringCheck:
                 details={"image_token": token},
             )
 
-        if _has_custom_processor_signal(config) or (
-            isinstance(preproc, Mapping) and _has_custom_processor_signal(preproc)
+        if actual and (
+            _has_custom_processor_signal(config)
+            or (isinstance(preproc, Mapping) and _has_custom_processor_signal(preproc))
         ):
-            if actual:
-                return self._result(
-                    "pass",
-                    "info",
-                    "Custom processor path exposes runtime image-token wiring.",
-                    details={
-                        "resolution": "custom_processor",
-                        "image_tokens": tuple(sorted(actual)),
-                    },
-                )
+            return self._result(
+                "pass",
+                "info",
+                "Custom processor path exposes runtime image-token wiring.",
+                details={
+                    "resolution": "custom_processor",
+                    "image_tokens": tuple(sorted(actual)),
+                },
+            )
 
         if actual:
             return self._result(

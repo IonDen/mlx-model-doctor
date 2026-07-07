@@ -229,6 +229,21 @@ def test_custom_config_image_token_in_tokenizer_metadata_passes():
     assert r.details["image_token"] == "<IMG_CONTEXT_CUSTOM>"
 
 
+def test_numeric_id_maps_to_custom_config_image_token_passes():
+    r = _run_token(
+        config={
+            "vision_config": {},
+            "image_token_id": 92547,
+            "image_token": "<IMG_CONTEXT_CUSTOM>",
+        },
+        tokenizer_config={"added_tokens_decoder": {"92547": {"content": "<IMG_CONTEXT_CUSTOM>"}}},
+    )
+
+    assert r.status == "pass"
+    assert r.details["image_token_id"] == 92547
+    assert r.details["image_token"] == "<IMG_CONTEXT_CUSTOM>"
+
+
 def test_config_image_token_in_special_tokens_map_passes():
     r = _run_token(
         config={"vision_config": {}, "image_token": "<image>"},
