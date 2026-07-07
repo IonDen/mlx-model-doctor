@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from mlx_model_doctor.checks.memory import _estimate_details, _file_size_estimate
 from mlx_model_doctor.context import CheckContext
 from mlx_model_doctor.report import CheckResult
 
@@ -94,6 +95,58 @@ class VlmImageProcessorCheck:
             message=message,
             remediation=remediation,
             details=details or {},
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class VlmMemoryEstimateCheck:
+    """Estimate VLM memory using measured model file sizes only."""
+
+    check_id: str = "vlm/memory.estimate"
+    title: str = "VLM memory estimate"
+
+    def run(self, ctx: CheckContext) -> CheckResult:
+        """Return a measured weight-file lower bound for VLM memory use."""
+        estimate = _file_size_estimate(ctx)
+        if estimate is None or estimate.estimate_source == "unknown":
+            details = {"estimate_source": "unknown", "context_length": ctx.options.context_length}
+            if estimate is not None and estimate.unavailable_weight_paths:
+                details["unavailable_weight_paths"] = estimate.unavailable_weight_paths
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="skip",
+                severity="info",
+                message="VLM memory estimate skipped because weight file sizes are unavailable.",
+                details=details,
+            )
+
+        details = _estimate_details(
+            estimate, ctx.options.context_length, ctx.options.max_memory_bytes
+        )
+        max_memory_bytes = ctx.options.max_memory_bytes
+        if max_memory_bytes is not None and estimate.lower_bound_bytes > max_memory_bytes:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="fail",
+                severity="high",
+                message="Estimated VLM file-size lower bound exceeds the configured budget.",
+                remediation=(
+                    "Use a smaller model, stronger quantization, or a higher memory budget "
+                    "before loading."
+                ),
+                details=details,
+            )
+        return CheckResult(
+            check_id=self.check_id,
+            title=self.title,
+            status="pass",
+            severity="info",
+            message=(
+                "Estimated VLM file-size lower bound is advisory and below the configured budget."
+            ),
+            details=details,
         )
 
 

@@ -1,14 +1,20 @@
 """Tests for the VLM image-processor check."""
 
 import json
+from dataclasses import replace
 
 import pytest
 
-from mlx_model_doctor.checks.vlm import VlmImageProcessorCheck, VlmImageTokenWiringCheck
-from tests.fakes import context_for_files
+from mlx_model_doctor.checks.vlm import (
+    VlmImageProcessorCheck,
+    VlmImageTokenWiringCheck,
+    VlmMemoryEstimateCheck,
+)
+from tests.fakes import check_options, context_for_files
 
 CHECK = VlmImageProcessorCheck()
 TOKEN_CHECK = VlmImageTokenWiringCheck()
+MEMORY_CHECK = VlmMemoryEstimateCheck()
 
 
 def _files(config=None, preproc=None):
@@ -297,3 +303,50 @@ def test_conflicting_numeric_image_token_fields_warn():
 
     assert r.status == "warn"
     assert "conflict" in r.message
+
+
+def test_vlm_memory_uses_file_sizes_not_text_config_estimate():
+    config = {
+        "vision_config": {},
+        "hidden_size": 4096,
+        "num_hidden_layers": 32,
+        "vocab_size": 32000,
+        "intermediate_size": 11008,
+        "quantization": {"bits": 4},
+    }
+    r = MEMORY_CHECK.run(
+        context_for_files(
+            {
+                "config.json": json.dumps(config).encode(),
+                "model.safetensors": b"x" * 123,
+            }
+        )
+    )
+
+    assert r.status == "pass"
+    assert r.check_id == "vlm/memory.estimate"
+    assert r.details["estimate_source"] == "file_sizes"
+    assert r.details["lower_bound_bytes"] == 123
+    assert r.details["kv_cache_lower_bound_bytes"] == 0
+
+
+def test_vlm_memory_fails_when_file_size_lower_bound_exceeds_budget():
+    r = MEMORY_CHECK.run(
+        context_for_files(
+            {
+                "config.json": b'{"vision_config":{}}',
+                "model.safetensors": b"x" * 10,
+            },
+            options=replace(check_options(), max_memory_bytes=9),
+        )
+    )
+
+    assert r.status == "fail"
+    assert r.details["max_memory_bytes"] == 9
+
+
+def test_vlm_memory_skips_without_weight_sizes():
+    r = MEMORY_CHECK.run(context_for_files({"config.json": b'{"vision_config":{}}'}))
+
+    assert r.status == "skip"
+    assert r.details["estimate_source"] == "unknown"
