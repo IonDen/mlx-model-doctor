@@ -4,10 +4,11 @@ import json
 
 import pytest
 
-from mlx_model_doctor.checks.vlm import VlmImageProcessorCheck
+from mlx_model_doctor.checks.vlm import VlmImageProcessorCheck, VlmImageTokenWiringCheck
 from tests.fakes import context_for_files
 
 CHECK = VlmImageProcessorCheck()
+TOKEN_CHECK = VlmImageTokenWiringCheck()
 
 
 def _files(config=None, preproc=None):
@@ -21,6 +22,19 @@ def _files(config=None, preproc=None):
 
 def _run(config=None, preproc=None, source="hf", name="org/m"):
     return CHECK.run(context_for_files(_files(config, preproc), source=source, name=name))
+
+
+def _run_token(
+    config=None, preproc=None, tokenizer_config=None, special_tokens=None, template=None
+):
+    files = _files(config, preproc)
+    if tokenizer_config is not None:
+        files["tokenizer_config.json"] = json.dumps(tokenizer_config).encode()
+    if special_tokens is not None:
+        files["special_tokens_map.json"] = json.dumps(special_tokens).encode()
+    if template is not None:
+        files["chat_template.jinja"] = template.encode()
+    return TOKEN_CHECK.run(context_for_files(files))
 
 
 def test_non_vlm_skips():
@@ -145,3 +159,78 @@ def test_unknown_future_type_string_passes():
         preproc={"image_processor_type": "SomeFuture2030ImageProcessor"},
     )
     assert r.status == "pass"
+
+
+def test_vlm_gate_detects_legacy_llava_structural_keys():
+    r = _run_token(
+        config={
+            "model_type": "llava",
+            "mm_vision_tower": "openai/clip",
+            "image_token_index": 32000,
+        },
+        tokenizer_config={"added_tokens_decoder": {"32000": {"content": "<image>"}}},
+        template="{{ '<image>' }}",
+    )
+
+    assert r.status == "pass"
+
+
+def test_image_token_numeric_id_maps_to_actual_placeholder():
+    r = _run_token(
+        config={"vision_config": {}, "image_token_id": 151655},
+        tokenizer_config={
+            "added_tokens_decoder": {"151655": {"content": "<|image_pad|>"}},
+            "extra_special_tokens": {"image_token": "<|image_pad|>"},
+        },
+        template="<|vision_start|><|image_pad|><|vision_end|>",
+    )
+
+    assert r.status == "pass"
+    assert r.details["image_token"] == "<|image_pad|>"
+
+
+def test_image_token_numeric_id_mapping_to_wrapper_warns():
+    r = _run_token(
+        config={"vision_config": {}, "image_token_id": 151652},
+        tokenizer_config={"added_tokens_decoder": {"151652": {"content": "<|vision_start|>"}}},
+        template="<|vision_start|><|image_pad|><|vision_end|>",
+    )
+
+    assert r.status == "warn"
+    assert "wrapper" in r.message
+
+
+def test_image_token_placeholder_without_config_warns_without_custom_processor():
+    r = _run_token(config={"vision_config": {}}, template="<image>")
+
+    assert r.status == "warn"
+    assert "config" in r.message
+
+
+def test_custom_processor_with_runtime_image_token_passes_without_config_field():
+    r = _run_token(
+        config={"vision_config": {}, "processor_class": "InternVLChatProcessor"},
+        tokenizer_config={"added_tokens_decoder": {"92546": {"content": "<IMG_CONTEXT>"}}},
+        template="<IMG_CONTEXT>",
+    )
+
+    assert r.status == "pass"
+    assert r.details["resolution"] == "custom_processor"
+
+
+def test_malformed_image_token_id_fails():
+    r = _run_token(config={"vision_config": {}, "image_token_id": True}, template="<image>")
+
+    assert r.status == "fail"
+    assert "image_token_id" in r.message
+
+
+def test_conflicting_numeric_image_token_fields_warn():
+    r = _run_token(
+        config={"vision_config": {}, "image_token_id": 7, "image_token_index": 8},
+        tokenizer_config={"added_tokens_decoder": {"7": {"content": "<image>"}}},
+        template="<image>",
+    )
+
+    assert r.status == "warn"
+    assert "conflict" in r.message
