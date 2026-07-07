@@ -16,6 +16,7 @@ _MODEL_METADATA_EXPAND: list[str] = ["tags", "library_name"]
 _ITEM_STATUSES: tuple[ItemStatus, ...] = ("checked", "tool-error")
 _OVERFETCH_FACTOR = 5
 _OVERFETCH_CEILING = 200
+VLM_SAMPLE_TASKS = frozenset({"image-text-to-text"})
 
 
 class ModelCandidate(Protocol):
@@ -176,6 +177,16 @@ def deterministic_sample(
     return sorted(eligible, key=lambda pair: pair[0].id)[:limit]
 
 
+def _validate_sample_plugin_task(plugin_name: str, task: str | None) -> None:
+    if plugin_name != "vlm":
+        return
+    if task not in VLM_SAMPLE_TASKS:
+        allowed = ", ".join(sorted(VLM_SAMPLE_TASKS))
+        raise ModelDoctorError(
+            f"sample hf --plugin vlm requires --task to be one of: {allowed}"
+        )
+
+
 def run_hf_sample(
     *,
     author: str = "mlx-community",
@@ -188,6 +199,7 @@ def run_hf_sample(
     """List, sample, and statically check likely MLX Hugging Face models."""
     if limit < 0:
         raise ModelDoctorError("sample limit must be non-negative")
+    _validate_sample_plugin_task(plugin_name, task)
 
     model_lister = lister if lister is not None else DefaultHfModelLister()
     fetch_limit = min(max(limit * _OVERFETCH_FACTOR, limit), _OVERFETCH_CEILING)
