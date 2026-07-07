@@ -287,6 +287,18 @@ class VlmImageTokenWiringCheck:
             token_id = next(iter(ids.values()))
             mapped = _added_token_by_id(tokenizer_config, token_id)
             configured_token = image_token.strip() if isinstance(image_token, str) else None
+            if configured_token is not None and mapped is not None and mapped != configured_token:
+                return self._result(
+                    "warn",
+                    "medium",
+                    "Image token ID mapping conflicts with image_token.",
+                    remediation="Use one consistent image token string and token ID mapping.",
+                    details={
+                        "image_token_id": token_id,
+                        "mapped_token": mapped,
+                        "image_token": configured_token,
+                    },
+                )
             if mapped in _ACTUAL_IMAGE_TOKENS or (
                 mapped is not None
                 and mapped == configured_token

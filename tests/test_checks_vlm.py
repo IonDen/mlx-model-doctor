@@ -244,6 +244,22 @@ def test_numeric_id_maps_to_custom_config_image_token_passes():
     assert r.details["image_token"] == "<IMG_CONTEXT_CUSTOM>"
 
 
+def test_numeric_id_conflicts_with_config_image_token_warns():
+    r = _run_token(
+        config={
+            "vision_config": {},
+            "image_token_id": 32000,
+            "image_token": "<IMG_CONTEXT_CUSTOM>",
+        },
+        tokenizer_config={"added_tokens_decoder": {"32000": {"content": "<image>"}}},
+    )
+
+    assert r.status == "warn"
+    assert "image_token" in r.message
+    assert r.details["mapped_token"] == "<image>"
+    assert r.details["image_token"] == "<IMG_CONTEXT_CUSTOM>"
+
+
 def test_config_image_token_in_special_tokens_map_passes():
     r = _run_token(
         config={"vision_config": {}, "image_token": "<image>"},
