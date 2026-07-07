@@ -108,17 +108,28 @@ class VlmMemoryEstimateCheck:
     def run(self, ctx: CheckContext) -> CheckResult:
         """Return a measured weight-file lower bound for VLM memory use."""
         estimate = _file_size_estimate(ctx)
-        if estimate is None or estimate.estimate_source == "unknown":
-            details = {"estimate_source": "unknown", "context_length": ctx.options.context_length}
-            if estimate is not None and estimate.unavailable_weight_paths:
-                details["unavailable_weight_paths"] = estimate.unavailable_weight_paths
+        if estimate is None:
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,
                 status="skip",
                 severity="info",
                 message="VLM memory estimate skipped because weight file sizes are unavailable.",
-                details=details,
+                details={
+                    "estimate_source": "unknown",
+                    "context_length": ctx.options.context_length,
+                },
+            )
+        if estimate.estimate_source == "unknown":
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="skip",
+                severity="info",
+                message="VLM memory estimate skipped because weight file sizes are unavailable.",
+                details=_estimate_details(
+                    estimate, ctx.options.context_length, ctx.options.max_memory_bytes
+                ),
             )
 
         details = _estimate_details(
@@ -145,6 +156,8 @@ class VlmMemoryEstimateCheck:
             severity="info",
             message=(
                 "Estimated VLM file-size lower bound is advisory and below the configured budget."
+                if max_memory_bytes is not None
+                else "Estimated VLM file-size lower bound is advisory; no memory budget was configured."
             ),
             details=details,
         )

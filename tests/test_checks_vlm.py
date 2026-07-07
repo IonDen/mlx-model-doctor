@@ -10,7 +10,8 @@ from mlx_model_doctor.checks.vlm import (
     VlmImageTokenWiringCheck,
     VlmMemoryEstimateCheck,
 )
-from tests.fakes import check_options, context_for_files
+from mlx_model_doctor.context import CheckContext
+from tests.fakes import FakeTarget, check_options, context_for_files
 
 CHECK = VlmImageProcessorCheck()
 TOKEN_CHECK = VlmImageTokenWiringCheck()
@@ -328,6 +329,7 @@ def test_vlm_memory_uses_file_sizes_not_text_config_estimate():
     assert r.details["estimate_source"] == "file_sizes"
     assert r.details["lower_bound_bytes"] == 123
     assert r.details["kv_cache_lower_bound_bytes"] == 0
+    assert r.details["memory_lower_bound_kind"] == "model_runtime"
 
 
 def test_vlm_memory_fails_when_file_size_lower_bound_exceeds_budget():
@@ -350,3 +352,46 @@ def test_vlm_memory_skips_without_weight_sizes():
 
     assert r.status == "skip"
     assert r.details["estimate_source"] == "unknown"
+
+
+def test_vlm_memory_unknown_estimate_uses_standard_details_without_gate_marker():
+    target = UnavailableNoneSizeTarget(
+        files={
+            "config.json": b'{"vision_config":{}}',
+            "model-00001-of-00002.safetensors": b"a" * 10,
+            "model-00002-of-00002.safetensors": b"b" * 20,
+        },
+        unavailable_paths=(
+            "model-00001-of-00002.safetensors",
+            "model-00002-of-00002.safetensors",
+        ),
+    )
+    options = replace(check_options(), max_memory_bytes=9)
+
+    r = MEMORY_CHECK.run(CheckContext(target=target, options=options))
+
+    assert r.status == "skip"
+    assert r.details["estimate_source"] == "unknown"
+    assert r.details["context_length"] == 4096
+    assert r.details["lower_bound_bytes"] == 0
+    assert r.details["weight_lower_bound_bytes"] == 0
+    assert r.details["kv_cache_lower_bound_bytes"] == 0
+    assert r.details["max_memory_bytes"] == 9
+    assert r.details["unavailable_weight_paths"] == (
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
+    )
+    assert "memory_lower_bound_kind" not in r.details
+
+
+class UnavailableNoneSizeTarget(FakeTarget):
+    unavailable_paths: tuple[str, ...]
+
+    def __init__(self, *, files: dict[str, bytes], unavailable_paths: tuple[str, ...]) -> None:
+        super().__init__(files=files)
+        self.unavailable_paths = unavailable_paths
+
+    def size(self, path: str) -> int | None:
+        if path in self.unavailable_paths:
+            return None
+        return super().size(path)
