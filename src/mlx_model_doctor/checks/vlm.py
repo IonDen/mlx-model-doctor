@@ -105,12 +105,8 @@ def is_vlm_metadata(
     if isinstance(config, Mapping):
         if any(key in config for key in _VLM_CONFIG_KEYS):
             return True
-        if _has_custom_processor_signal(config):
-            return True
     if isinstance(preproc, Mapping):
         if any(key in preproc for key in _IMAGE_PREPROCESSOR_KEYS):
-            return True
-        if _has_custom_processor_signal(preproc):
             return True
     return False
 
@@ -179,8 +175,13 @@ def _iter_special_token_values(value: object) -> tuple[str, ...]:
     if isinstance(value, str):
         return (value,)
     if isinstance(value, Mapping):
+        out: list[str] = []
         content = value.get("content")
-        return (content,) if isinstance(content, str) else ()
+        if isinstance(content, str):
+            out.append(content)
+        for item in value.values():
+            out.extend(_iter_special_token_values(item))
+        return tuple(out)
     if isinstance(value, list):
         out: list[str] = []
         for item in value:
@@ -222,6 +223,13 @@ def _template_text(ctx: CheckContext) -> str | None:
         ]
         return "\n".join(parts) if parts else None
     return None
+
+
+def _token_visible_in_metadata(ctx: CheckContext, token: str, known_tokens: set[str]) -> bool:
+    if token in known_tokens:
+        return True
+    template = _template_text(ctx)
+    return template is not None and token in template
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,7 +323,7 @@ class VlmImageTokenWiringCheck:
 
         if isinstance(image_token, str) and image_token.strip():
             token = image_token.strip()
-            if token in actual or token in _ACTUAL_IMAGE_TOKENS:
+            if _token_visible_in_metadata(ctx, token, known_tokens):
                 return self._result(
                     "pass",
                     "info",

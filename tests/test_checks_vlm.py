@@ -147,6 +147,11 @@ def test_audio_repo_with_feature_extractor_preprocessor_skips():
     assert r.status == "skip"
 
 
+def test_non_vlm_custom_processor_signal_skips_image_processor_check():
+    r = _run(config={"processor_class": "WhisperProcessor"})
+    assert r.status == "skip"
+
+
 @pytest.mark.parametrize("bad", [0, [], {}, None, ""])
 def test_empty_or_nonstring_type_fails(bad):
     r = _run(config={"vision_config": {}}, preproc={"image_processor_type": bad})
@@ -205,6 +210,33 @@ def test_image_token_placeholder_without_config_warns_without_custom_processor()
 
     assert r.status == "warn"
     assert "config" in r.message
+
+
+def test_config_image_token_without_metadata_evidence_warns():
+    r = _run_token(config={"vision_config": {}, "image_token": "<image>"})
+
+    assert r.status == "warn"
+    assert "not visible" in r.message
+
+
+def test_custom_config_image_token_in_tokenizer_metadata_passes():
+    r = _run_token(
+        config={"vision_config": {}, "image_token": "<IMG_CONTEXT_CUSTOM>"},
+        tokenizer_config={"added_tokens_decoder": {"92547": {"content": "<IMG_CONTEXT_CUSTOM>"}}},
+    )
+
+    assert r.status == "pass"
+    assert r.details["image_token"] == "<IMG_CONTEXT_CUSTOM>"
+
+
+def test_config_image_token_in_special_tokens_map_passes():
+    r = _run_token(
+        config={"vision_config": {}, "image_token": "<image>"},
+        special_tokens={"additional_special_tokens": ["<image>"]},
+    )
+
+    assert r.status == "pass"
+    assert r.details["image_token"] == "<image>"
 
 
 def test_custom_processor_with_runtime_image_token_passes_without_config_field():
