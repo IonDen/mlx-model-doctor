@@ -182,9 +182,7 @@ def _validate_sample_plugin_task(plugin_name: str, task: str | None) -> None:
         return
     if task not in VLM_SAMPLE_TASKS:
         allowed = ", ".join(sorted(VLM_SAMPLE_TASKS))
-        raise ModelDoctorError(
-            f"sample hf --plugin vlm requires --task to be one of: {allowed}"
-        )
+        raise ModelDoctorError(f"sample hf --plugin vlm requires --task to be one of: {allowed}")
 
 
 def run_hf_sample(
