@@ -3,9 +3,9 @@
 A non-binding sketch of where the library is headed. Items move between sections
 as priorities change.
 
-## Pending Release
+## Released
 
-- **v0.7.0** — reach/readiness plus first explicit VLM breadth.
+- **v0.7.0** (2026-07-08) — reach/readiness plus first explicit VLM breadth.
   Keeps `text` defaults, schemas, exit codes, and runtime smoke/load behavior
   unchanged while adding `--plugin vlm` for non-runtime VLM metadata and
   safetensors-header validation. It also adds a producer pre-upload workflow for
@@ -13,8 +13,6 @@ as priorities change.
   introduces an adoption-scorecard process for release decisions, records the
   profile-routing decision, and removes the stale docs-site milestone from the
   active 1.0 path.
-
-## Released
 - **v0.6.2** (2026-07-02) — a correctness and hardening patch. The memory estimate now
   passes a repository within budget and fails one that exceeds `--max-memory`, instead
   of always warning, so `--fail-on warn` works on a clean repo and `--max-memory` gates
