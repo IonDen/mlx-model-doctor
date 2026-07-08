@@ -408,6 +408,72 @@ def test_sample_hf_dispatches_fake_batch_runner_without_network(monkeypatch, cap
     assert data["items"][0]["signal"] == "author:mlx-community"
 
 
+def test_sample_hf_vlm_json_dispatches_plugin_and_task(monkeypatch, capsys) -> None:
+    from mlx_model_doctor.sampling import SampleBatchReport, SampledModelResult
+
+    captured: dict[str, object] = {}
+
+    def fake_run_hf_sample(
+        *,
+        author: str = "mlx-community",
+        task: str | None = None,
+        limit: int = 10,
+        plugin_name: str = "text",
+    ) -> SampleBatchReport:
+        captured.update(
+            {"author": author, "task": task, "limit": limit, "plugin_name": plugin_name}
+        )
+        return SampleBatchReport(
+            author=author,
+            task=task,
+            limit=limit,
+            plugin=plugin_name,
+            items=(
+                SampledModelResult(
+                    repo_id="mlx-community/vlm",
+                    signal="tag:mlx",
+                    status="checked",
+                    report=DoctorReport(
+                        target="mlx-community/vlm",
+                        source="hf",
+                        plugin="vlm",
+                        results=(
+                            CheckResult(
+                                check_id="vlm/image_token.wiring",
+                                title="VLM image token wiring",
+                                status="pass",
+                                severity="info",
+                                message="ok",
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+    monkeypatch.setattr(cli, "run_hf_sample", fake_run_hf_sample)
+
+    code = cli.main(
+        [
+            "sample",
+            "hf",
+            "--plugin",
+            "vlm",
+            "--task",
+            "image-text-to-text",
+            "--format",
+            "json",
+        ]
+    )
+    data = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert captured["plugin_name"] == "vlm"
+    assert captured["task"] == "image-text-to-text"
+    assert data["plugin"] == "vlm"
+    assert data["items"][0]["report"]["plugin"] == "vlm"
+
+
 def test_sample_hf_exits_two_when_no_models_could_be_checked(monkeypatch, capsys) -> None:
     from mlx_model_doctor.sampling import SampleBatchReport, SampledModelResult
 
