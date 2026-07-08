@@ -25,6 +25,8 @@ _VLM_CONFIG_KEYS: tuple[str, ...] = (
 )
 _ACTUAL_IMAGE_TOKENS = frozenset(("<image>", "<|image|>", "<|image_pad|>", "<IMG_CONTEXT>"))
 _WRAPPER_IMAGE_TOKENS = frozenset(("<|vision_start|>", "<|vision_end|>"))
+_MAX_SPECIAL_TOKEN_SCAN_DEPTH = 256
+_MAX_SPECIAL_TOKEN_SCAN_NODES = 4096
 
 
 @dataclass(frozen=True, slots=True)
@@ -234,22 +236,26 @@ def _added_token_by_id(tokenizer_config: Mapping[str, object], token_id: int) ->
 
 
 def _iter_special_token_values(value: object) -> tuple[str, ...]:
-    if isinstance(value, str):
-        return (value,)
-    if isinstance(value, Mapping):
-        mapping_tokens: list[str] = []
-        content = value.get("content")
-        if isinstance(content, str):
-            mapping_tokens.append(content)
-        for item in value.values():
-            mapping_tokens.extend(_iter_special_token_values(item))
-        return tuple(mapping_tokens)
-    if isinstance(value, list):
-        list_tokens: list[str] = []
-        for item in value:
-            list_tokens.extend(_iter_special_token_values(item))
-        return tuple(list_tokens)
-    return ()
+    tokens: list[str] = []
+    stack: list[tuple[object, int]] = [(value, 0)]
+    scanned = 0
+    while stack and scanned < _MAX_SPECIAL_TOKEN_SCAN_NODES:
+        current, depth = stack.pop()
+        scanned += 1
+        if isinstance(current, str):
+            tokens.append(current)
+            continue
+        if depth >= _MAX_SPECIAL_TOKEN_SCAN_DEPTH:
+            continue
+        if isinstance(current, Mapping):
+            content = current.get("content")
+            if isinstance(content, str):
+                tokens.append(content)
+            stack.extend((item, depth + 1) for item in current.values())
+            continue
+        if isinstance(current, list):
+            stack.extend((item, depth + 1) for item in current)
+    return tuple(tokens)
 
 
 def _known_token_strings(ctx: CheckContext) -> set[str]:

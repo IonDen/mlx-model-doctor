@@ -259,6 +259,20 @@ def test_run_hf_sample_rejects_vlm_plugin_without_vlm_task_before_listing() -> N
     assert lister.calls == []
 
 
+def test_run_hf_sample_rejects_vlm_plugin_with_non_vlm_task_before_listing() -> None:
+    lister = FakeLister((FakeModel(id="mlx-community/model", tags=("mlx",)),))
+
+    with pytest.raises(ModelDoctorError, match="image-text-to-text"):
+        run_hf_sample(
+            plugin_name="vlm",
+            task="text-generation",
+            lister=lister,
+            check_model=unused_check,
+        )
+
+    assert lister.calls == []
+
+
 def test_run_hf_sample_accepts_vlm_plugin_with_image_text_task() -> None:
     lister = FakeLister((FakeModel(id="mlx-community/model", tags=("mlx",)),))
     calls: list[tuple[str, CheckOptions | None, str]] = []

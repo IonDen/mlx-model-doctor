@@ -277,6 +277,21 @@ def test_config_image_token_in_special_tokens_map_passes():
     assert r.details["image_token"] == "<image>"
 
 
+def test_deep_special_token_metadata_warns_instead_of_crashing():
+    nested_tokens = (
+        '{"additional_special_tokens":' + '{"x":' * 1200 + '"<image>"' + "}" * 1200 + "}"
+    )
+    files = {
+        "config.json": b'{"vision_config": {}, "image_token": "<image>"}',
+        "special_tokens_map.json": nested_tokens.encode(),
+    }
+
+    r = TOKEN_CHECK.run(context_for_files(files))
+
+    assert r.status == "warn"
+    assert "not visible" in r.message
+
+
 def test_custom_processor_with_runtime_image_token_passes_without_config_field():
     r = _run_token(
         config={"vision_config": {}, "processor_class": "InternVLChatProcessor"},
