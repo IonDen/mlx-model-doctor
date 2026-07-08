@@ -97,7 +97,7 @@ class CheckContext:
             return None
         try:
             value: object = json.loads(text)
-        except (json.JSONDecodeError, UnicodeError):
+        except (json.JSONDecodeError, RecursionError, UnicodeError):
             return None
         return cast("dict[str, object]", value) if isinstance(value, dict) else None
 
