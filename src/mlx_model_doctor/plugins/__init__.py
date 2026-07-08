@@ -6,9 +6,13 @@ from types import MappingProxyType
 from mlx_model_doctor.errors import ModelDoctorError
 from mlx_model_doctor.plugins.base import DoctorPlugin
 from mlx_model_doctor.plugins.text import TextModelPlugin
+from mlx_model_doctor.plugins.vlm import VlmModelPlugin
 
 TEXT_PLUGIN: DoctorPlugin = TextModelPlugin()
-BUILTIN_PLUGINS: Mapping[str, DoctorPlugin] = MappingProxyType({"text": TEXT_PLUGIN})
+VLM_PLUGIN: DoctorPlugin = VlmModelPlugin()
+BUILTIN_PLUGINS: Mapping[str, DoctorPlugin] = MappingProxyType(
+    {"text": TEXT_PLUGIN, "vlm": VLM_PLUGIN}
+)
 
 
 def get_plugin(name: str) -> DoctorPlugin:
@@ -19,4 +23,10 @@ def get_plugin(name: str) -> DoctorPlugin:
     return plugin
 
 
-__all__ = ["BUILTIN_PLUGINS", "DoctorPlugin", "TextModelPlugin", "get_plugin"]
+__all__ = [
+    "BUILTIN_PLUGINS",
+    "DoctorPlugin",
+    "TextModelPlugin",
+    "VlmModelPlugin",
+    "get_plugin",
+]

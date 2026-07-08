@@ -40,12 +40,12 @@ def test_man_command_prints_exit_codes(capsys) -> None:
     assert "check local" in output
 
 
-def test_plugins_command_lists_text_plugin(capsys) -> None:
+def test_plugins_command_lists_registered_plugins(capsys) -> None:
     code = cli.main(["plugins"])
-    output = capsys.readouterr().out
+    output = capsys.readouterr().out.splitlines()
 
     assert code == 0
-    assert "text" in output
+    assert output == ["text", "vlm"]
 
 
 def test_main_maps_model_doctor_errors_to_exit_code_two(monkeypatch, capsys) -> None:
@@ -141,6 +141,17 @@ def test_check_local_json_format_emits_schema_and_target(tmp_path: Path, capsys)
     assert data["schema_version"] == "1.0"
     assert data["target"] == str(model.resolve())
     assert data["plugin"] == "text"
+
+
+def test_check_local_accepts_vlm_plugin(tmp_path: Path, capsys) -> None:
+    model = write_vlm_local_model(tmp_path)
+
+    code = cli.main(["check", "local", str(model), "--plugin", "vlm", "--format", "json"])
+    data = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert data["plugin"] == "vlm"
+    assert any(result["check_id"] == "vlm/image_token.wiring" for result in data["results"])
 
 
 def test_check_local_markdown_output_writes_file_without_stdout(
@@ -656,6 +667,37 @@ def write_local_model(root: Path) -> Path:
     (model / "config.json").write_text(json.dumps(config), encoding="utf-8")
     (model / "tokenizer.json").write_text("{}", encoding="utf-8")
     return model
+
+
+def write_vlm_local_model(root: Path) -> Path:
+    model = root / "vlm"
+    model.mkdir()
+    for name, data in valid_vlm_files().items():
+        (model / name).write_bytes(data)
+    return model
+
+
+def valid_vlm_files() -> dict[str, bytes]:
+    config = {
+        "model_type": "qwen2_5_vl",
+        "vision_config": {},
+        "image_token_id": 151655,
+        "quantization": {"bits": 4, "group_size": 64},
+        "pad_token_id": 0,
+        "eos_token_id": 1,
+    }
+    tokenizer_config = {
+        "added_tokens_decoder": {"151655": {"content": "<|image_pad|>"}},
+        "extra_special_tokens": {"image_token": "<|image_pad|>"},
+        "chat_template": "<|vision_start|><|image_pad|><|vision_end|>",
+    }
+    preproc = {"image_processor_type": "Qwen2VLImageProcessor"}
+    return {
+        "config.json": json.dumps(config).encode(),
+        "tokenizer.json": b"{}",
+        "tokenizer_config.json": json.dumps(tokenizer_config).encode(),
+        "preprocessor_config.json": json.dumps(preproc).encode(),
+    }
 
 
 def write_warn_only_local_model(root: Path) -> Path:
