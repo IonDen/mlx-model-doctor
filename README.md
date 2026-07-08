@@ -12,14 +12,14 @@ Validate an MLX / Hugging Face model repository before you load it.
 
 A model repo can be broken in ways you only discover halfway through `load()`: a `config.json` that's missing or internally inconsistent, a missing tokenizer file, a `model.safetensors.index.json` that points at shards that aren't there, quantization metadata that uses a mode or group size MLX rejects, a chat template that's absent or whose stop token has a typo, a corrupt safetensors header, a quantized layer whose packed weight and scales shapes disagree, or a model that simply won't fit in the memory you have. `mlx-model-doctor` checks those up front and prints a report, so a bad repo fails fast with a clear reason instead of a confusing crash.
 
-The checks read repository metadata and the safetensors *header* — `config.json`, the tokenizer files, the safetensors index, quantization fields, and the tensor map (dtypes, shapes, byte-offsets) parsed from the header alone. They need no GPU or MLX and never download the weights; on the Hub the header arrives over a small HTTP range request, so the checks stay cheap to run anywhere. An optional `--smoke` check loads the model through `mlx-lm` (Apple Silicon) under a memory cap, to confirm it loads and generates.
+The checks read repository metadata and the safetensors *header* — `config.json`, the tokenizer files, the safetensors index, quantization fields, and the tensor map (dtypes, shapes, byte-offsets) parsed from the header alone. They need no GPU or MLX and never download the weights; on the Hub the header arrives over a small HTTP range request, so the checks stay cheap to run anywhere. For the default `text` profile, an optional `--smoke` check loads the model through `mlx-lm` (Apple Silicon) under a memory cap, to confirm it loads and generates. VLM smoke through `mlx-vlm` is future work.
 
 ```bash
 mlx-model-doctor check local ./my-model
 mlx-model-doctor check hf mlx-community/Llama-3.2-3B-Instruct-4bit
 ```
 
-See [EXAMPLES.md](EXAMPLES.md) for real, dated transcripts of every command.
+See [EXAMPLES.md](EXAMPLES.md) for real, dated transcripts plus newer command examples.
 
 ## Install
 
@@ -43,11 +43,16 @@ mlx-model-doctor version
 mlx-model-doctor --help
 ```
 
-Requires Python ≥ 3.11. The static checks are pure Python and need only `huggingface-hub`; the optional `--smoke` runtime check is the one part that needs `mlx-lm` and Apple Silicon.
+Requires Python ≥ 3.11. The static checks are pure Python and need only `huggingface-hub`; the optional `--smoke` runtime check currently applies to the default `text` profile and needs `mlx-lm` plus Apple Silicon.
 
 ## What it checks
 
 The built-in `text` plugin runs these against a model repository, broadly in this order:
+
+`text` is the default plugin. For vision-language repositories, pass `--plugin vlm`
+to run the explicit non-runtime VLM profile. The VLM plugin keeps the same metadata
+and safetensors-header posture: no weights are downloaded and no model runtime is
+loaded.
 
 - **Required files** — `config.json` is present and readable.
 - **Config consistency** — `config.json` parses, and its `model_type` is set.
@@ -83,12 +88,12 @@ report = check_hf_model("mlx-community/Llama-3.2-3B-Instruct-4bit")
 |---|---|
 | `version` | Print the version plus the active Python, virtualenv, and dependency status. |
 | `man` | Print usage examples and the exit-code table. |
-| `plugins` | List registered check plugins (`text` today). |
+| `plugins` | List registered check plugins (`text`, `vlm`). |
 | `check local <path>` | Validate a model directory on disk. |
 | `check hf <repo_id>` | Validate a model repository on the Hugging Face Hub (network). |
 | `sample hf` | Survey likely-MLX repos for an author and validate a deterministic sample. |
 
-`check` accepts `--format {text,json,markdown,github}`, `--output <file>`, `--max-memory <e.g. 32gb>`, `--context-length <n>`, `--fail-on {error,warn,never}`, `--skip-weights` (skip the tensor-header checks for a faster config-only pass), and `--smoke`. The `github` format prints GitHub Actions annotations (see [Use it in CI](#use-it-in-ci)).
+`check` accepts `--format {text,json,markdown,github}`, `--output <file>`, `--max-memory <e.g. 32gb>`, `--context-length <n>`, `--fail-on {error,warn,never}`, `--skip-weights` (skip the tensor-header checks for a faster config-only pass), and `--smoke` for the default text smoke backend. Use `--plugin vlm` for vision-language repositories; omit it for the default `text` profile. The `github` format prints GitHub Actions annotations (see [Use it in CI](#use-it-in-ci)).
 
 Exit codes: `0` checks passed (under the fail policy), `1` checks found failures, `2` tool error — a bad target, a missing dependency, or zero checks run.
 
@@ -96,26 +101,62 @@ Exit codes: `0` checks passed (under the fail policy), `1` checks found failures
 
 `check hf` and `sample hf` talk to the Hub through `huggingface-hub`. They read repository metadata (the file list, sizes, the small text files, and the safetensors header over a range request) rather than downloading the weights, but they do need network access, and an auth or rate-limit problem surfaces as a clear tool error rather than a stack trace. `sample hf` is a survey: it lists an author's repos, keeps the ones that look like MLX models, validates a deterministic sample of them, and reports each as its own batch item — a per-model failure is recorded and the run continues.
 
+## Validate before uploading to Hugging Face
+
+For a model you build or convert locally, run the static checks before upload and treat warnings as release blockers unless you have reviewed them:
+
+```bash
+mlx-model-doctor check local ./dist/my-mlx-model --fail-on warn
+hf upload my-org/my-mlx-model ./dist/my-mlx-model --repo-type model
+mlx-model-doctor check hf my-org/my-mlx-model --fail-on warn
+```
+
+If your publisher is Python-based, keep the same order:
+
+```python
+from huggingface_hub import upload_folder
+
+# Run `mlx-model-doctor check local ./dist/my-mlx-model --fail-on warn` first.
+upload_folder(
+    repo_id="my-org/my-mlx-model",
+    folder_path="./dist/my-mlx-model",
+    repo_type="model",
+)
+```
+
+Use `--fail-on warn` before upload when you want a clean producer release gate. Use the default `--fail-on error` when warnings are acceptable but hard failures should still block. After upload, `check hf` verifies that the Hub repository exposes the same files and metadata the local directory did.
+
 ## Use it in CI
 
-Gate a pull request on a model repository with the GitHub Action. It runs the static checks (no weights downloaded, no GPU), writes the report to the job summary, and fails the job under your fail policy:
+Gate a pull request on a model repository with the [GitHub Marketplace Action](https://github.com/marketplace/actions/mlx-model-doctor). It runs the static checks (no weights downloaded, no GPU), writes the report to the job summary, and fails the job under your fail policy:
 
 ```yaml
 - uses: IonDen/mlx-model-doctor@v0
   with:
     source: hf
     target: mlx-community/Llama-3.2-3B-Instruct-4bit
+    plugin: text
     fail-on: warn
 ```
 
-Add `version: "==0.6.2"` to pin the tool to a release; without it the action installs the latest published version.
+For a vision-language model, opt into the VLM profile:
+
+```yaml
+- uses: IonDen/mlx-model-doctor@v0
+  with:
+    source: hf
+    target: mlx-community/InternVL3-2B-4bit
+    plugin: vlm
+```
+
+Add `version: "==0.7.0"` to pin the tool to a release; without it the action installs the latest published version.
 
 For a model directory you keep in git, validate it on every commit with the pre-commit hook:
 
 ```yaml
 repos:
   - repo: https://github.com/IonDen/mlx-model-doctor
-    rev: v0.6.2
+    rev: v0.7.0
     hooks:
       - id: mlx-model-doctor
         args: ["path/to/model"]
@@ -181,7 +222,7 @@ The `sample hf --format json` survey has its own published schema, at `mlx_model
 
 ## Status
 
-**Alpha (0.6.2).** The static `check local` path and the report/CLI surface are solid and well tested. The safetensors header (read without downloading weights) backs four tensor-level checks — offset corruption, weight-map parameter sanity, tied-embedding consistency, and MLX quantized-layer shape consistency — which run by default (`--skip-weights` opts out). A single `check` also reports whether a repository looks like an MLX model and why, and flags a vision-language repository that declares no way to resolve its image processor. The quantized-shape and quantization-mode checks read each layer's own `bits`/`group_size`/`mode`, so a mixed-precision model (4-bit experts with 8-bit dense and router layers) is validated per layer rather than reported as broken. The memory estimate handles mixed precision the same way: when a model mixes bit widths it takes the weight figure from the stored file sizes instead of the model-level setting. The Hugging Face path (`check hf`, `sample hf`) is implemented and tested offline against fakes; its live behavior is exercised by opt-in network tests. It also ships a GitHub Action and a pre-commit hook. The public API and JSON output now have a documented, versioned stability contract — see [Output contract](#output-contract) and [Stability policy](#stability-policy). Pin a version if you depend on the schema or the API.
+**Alpha (0.7.0).** The static `check local` path and the report/CLI surface are solid and well tested. v0.7.0 keeps `text` as the default profile and adds explicit `--plugin vlm` coverage for vision-language repositories, using non-runtime metadata and safetensors-header checks only. It also makes the integration path clearer with Marketplace visibility, release-decision metrics, and a producer pre-upload workflow. The safetensors header (read without downloading weights) backs four tensor-level checks — offset corruption, weight-map parameter sanity, tied-embedding consistency, and MLX quantized-layer shape consistency — which run by default (`--skip-weights` opts out). A single `check` reports whether a repository looks like an MLX model and why; the VLM profile adds image-processor and image-token wiring checks for vision-language repositories. The quantized-shape and quantization-mode checks read each layer's own `bits`/`group_size`/`mode`, so a mixed-precision model (4-bit experts with 8-bit dense and router layers) is validated per layer rather than reported as broken. The memory estimate handles mixed precision the same way: when a model mixes bit widths it takes the weight figure from the stored file sizes instead of the model-level setting. The Hugging Face path (`check hf`, `sample hf`) is implemented and tested offline against fakes; its live behavior is exercised by opt-in network tests. It also ships a GitHub Action and a pre-commit hook. The public API and JSON output now have a documented, versioned stability contract — see [Output contract](#output-contract) and [Stability policy](#stability-policy). Pin a version if you depend on the schema or the API.
 
 ## License
 

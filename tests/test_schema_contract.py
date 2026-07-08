@@ -68,6 +68,10 @@ def _report(
     return DoctorReport(target="x", source=source, plugin="text", results=results, **kw)
 
 
+def _vlm_report(results: list[CheckResult], source: Literal["local", "hf"] = "hf") -> DoctorReport:
+    return DoctorReport(target="x", source=source, plugin="vlm", results=results)
+
+
 # Representative reports covering every shape the schema must accept.
 REPORTS = {
     "pass": _report([_result("text/a.b", "pass", "info")]),
@@ -94,6 +98,12 @@ REPORTS = {
     "warn_low": _report([_result("text/a.b", "warn", "low")]),
     "fail_medium": _report([_result("text/a.b", "fail", "medium")]),
     "fail_low": _report([_result("text/a.b", "fail", "low")]),
+    "vlm_namespace": DoctorReport(
+        target="x",
+        source="local",
+        plugin="vlm",
+        results=[_result("vlm/image_token.wiring", "pass", "info")],
+    ),
 }
 
 
@@ -156,6 +166,12 @@ _CHECKED_ITEM = SampledModelResult(
     status="checked",
     report=_report([_result("text/a.b", "pass", "info")], source="hf"),
 )
+_VLM_CHECKED_ITEM = SampledModelResult(
+    repo_id="mlx-community/vlm",
+    signal="tag:mlx",
+    status="checked",
+    report=_vlm_report([_result("vlm/image_token.wiring", "pass", "info")], source="hf"),
+)
 _TOOL_ERROR_ITEM = SampledModelResult(
     repo_id="mlx-community/broken",
     signal="author:mlx-community",
@@ -168,6 +184,17 @@ BATCH_PAYLOADS = {
     "empty": _batch([], task="text-generation", limit=0),
     "checked_only": _batch([_CHECKED_ITEM]),
     "tool_error_only": _batch([_TOOL_ERROR_ITEM]),
+    "vlm_checked": json.loads(
+        render_sample_batch_json(
+            SampleBatchReport(
+                author="mlx-community",
+                task="image-text-to-text",
+                limit=1,
+                plugin="vlm",
+                items=[_VLM_CHECKED_ITEM],
+            )
+        )
+    ),
 }
 
 

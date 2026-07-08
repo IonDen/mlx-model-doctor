@@ -1,13 +1,21 @@
 """Tests for the VLM image-processor check."""
 
 import json
+from dataclasses import replace
 
 import pytest
 
-from mlx_model_doctor.checks.vlm import VlmImageProcessorCheck
-from tests.fakes import context_for_files
+from mlx_model_doctor.checks.vlm import (
+    VlmImageProcessorCheck,
+    VlmImageTokenWiringCheck,
+    VlmMemoryEstimateCheck,
+)
+from mlx_model_doctor.context import CheckContext
+from tests.fakes import FakeTarget, check_options, context_for_files
 
 CHECK = VlmImageProcessorCheck()
+TOKEN_CHECK = VlmImageTokenWiringCheck()
+MEMORY_CHECK = VlmMemoryEstimateCheck()
 
 
 def _files(config=None, preproc=None):
@@ -21,6 +29,19 @@ def _files(config=None, preproc=None):
 
 def _run(config=None, preproc=None, source="hf", name="org/m"):
     return CHECK.run(context_for_files(_files(config, preproc), source=source, name=name))
+
+
+def _run_token(
+    config=None, preproc=None, tokenizer_config=None, special_tokens=None, template=None
+):
+    files = _files(config, preproc)
+    if tokenizer_config is not None:
+        files["tokenizer_config.json"] = json.dumps(tokenizer_config).encode()
+    if special_tokens is not None:
+        files["special_tokens_map.json"] = json.dumps(special_tokens).encode()
+    if template is not None:
+        files["chat_template.jinja"] = template.encode()
+    return TOKEN_CHECK.run(context_for_files(files))
 
 
 def test_non_vlm_skips():
@@ -133,6 +154,11 @@ def test_audio_repo_with_feature_extractor_preprocessor_skips():
     assert r.status == "skip"
 
 
+def test_non_vlm_custom_processor_signal_skips_image_processor_check():
+    r = _run(config={"processor_class": "WhisperProcessor"})
+    assert r.status == "skip"
+
+
 @pytest.mark.parametrize("bad", [0, [], {}, None, ""])
 def test_empty_or_nonstring_type_fails(bad):
     r = _run(config={"vision_config": {}}, preproc={"image_processor_type": bad})
@@ -145,3 +171,242 @@ def test_unknown_future_type_string_passes():
         preproc={"image_processor_type": "SomeFuture2030ImageProcessor"},
     )
     assert r.status == "pass"
+
+
+def test_vlm_gate_detects_legacy_llava_structural_keys():
+    r = _run_token(
+        config={
+            "model_type": "llava",
+            "mm_vision_tower": "openai/clip",
+            "image_token_index": 32000,
+        },
+        tokenizer_config={"added_tokens_decoder": {"32000": {"content": "<image>"}}},
+        template="{{ '<image>' }}",
+    )
+
+    assert r.status == "pass"
+
+
+def test_image_token_numeric_id_maps_to_actual_placeholder():
+    r = _run_token(
+        config={"vision_config": {}, "image_token_id": 151655},
+        tokenizer_config={
+            "added_tokens_decoder": {"151655": {"content": "<|image_pad|>"}},
+            "extra_special_tokens": {"image_token": "<|image_pad|>"},
+        },
+        template="<|vision_start|><|image_pad|><|vision_end|>",
+    )
+
+    assert r.status == "pass"
+    assert r.details["image_token"] == "<|image_pad|>"
+
+
+def test_image_token_numeric_id_mapping_to_wrapper_warns():
+    r = _run_token(
+        config={"vision_config": {}, "image_token_id": 151652},
+        tokenizer_config={"added_tokens_decoder": {"151652": {"content": "<|vision_start|>"}}},
+        template="<|vision_start|><|image_pad|><|vision_end|>",
+    )
+
+    assert r.status == "warn"
+    assert "wrapper" in r.message
+
+
+def test_image_token_placeholder_without_config_warns_without_custom_processor():
+    r = _run_token(config={"vision_config": {}}, template="<image>")
+
+    assert r.status == "warn"
+    assert "config" in r.message
+
+
+def test_config_image_token_without_metadata_evidence_warns():
+    r = _run_token(config={"vision_config": {}, "image_token": "<image>"})
+
+    assert r.status == "warn"
+    assert "not visible" in r.message
+
+
+def test_custom_config_image_token_in_tokenizer_metadata_passes():
+    r = _run_token(
+        config={"vision_config": {}, "image_token": "<IMG_CONTEXT_CUSTOM>"},
+        tokenizer_config={"added_tokens_decoder": {"92547": {"content": "<IMG_CONTEXT_CUSTOM>"}}},
+    )
+
+    assert r.status == "pass"
+    assert r.details["image_token"] == "<IMG_CONTEXT_CUSTOM>"
+
+
+def test_numeric_id_maps_to_custom_config_image_token_passes():
+    r = _run_token(
+        config={
+            "vision_config": {},
+            "image_token_id": 92547,
+            "image_token": "<IMG_CONTEXT_CUSTOM>",
+        },
+        tokenizer_config={"added_tokens_decoder": {"92547": {"content": "<IMG_CONTEXT_CUSTOM>"}}},
+    )
+
+    assert r.status == "pass"
+    assert r.details["image_token_id"] == 92547
+    assert r.details["image_token"] == "<IMG_CONTEXT_CUSTOM>"
+
+
+def test_numeric_id_conflicts_with_config_image_token_warns():
+    r = _run_token(
+        config={
+            "vision_config": {},
+            "image_token_id": 32000,
+            "image_token": "<IMG_CONTEXT_CUSTOM>",
+        },
+        tokenizer_config={"added_tokens_decoder": {"32000": {"content": "<image>"}}},
+    )
+
+    assert r.status == "warn"
+    assert "image_token" in r.message
+    assert r.details["mapped_token"] == "<image>"
+    assert r.details["image_token"] == "<IMG_CONTEXT_CUSTOM>"
+
+
+def test_config_image_token_in_special_tokens_map_passes():
+    r = _run_token(
+        config={"vision_config": {}, "image_token": "<image>"},
+        special_tokens={"additional_special_tokens": ["<image>"]},
+    )
+
+    assert r.status == "pass"
+    assert r.details["image_token"] == "<image>"
+
+
+def test_deep_special_token_metadata_warns_instead_of_crashing():
+    nested_tokens = (
+        '{"additional_special_tokens":' + '{"x":' * 1200 + '"<image>"' + "}" * 1200 + "}"
+    )
+    files = {
+        "config.json": b'{"vision_config": {}, "image_token": "<image>"}',
+        "special_tokens_map.json": nested_tokens.encode(),
+    }
+
+    r = TOKEN_CHECK.run(context_for_files(files))
+
+    assert r.status == "warn"
+    assert "not visible" in r.message
+
+
+def test_custom_processor_with_runtime_image_token_passes_without_config_field():
+    r = _run_token(
+        config={"vision_config": {}, "processor_class": "InternVLChatProcessor"},
+        tokenizer_config={"added_tokens_decoder": {"92546": {"content": "<IMG_CONTEXT>"}}},
+        template="<IMG_CONTEXT>",
+    )
+
+    assert r.status == "pass"
+    assert r.details["resolution"] == "custom_processor"
+
+
+def test_malformed_image_token_id_fails():
+    r = _run_token(config={"vision_config": {}, "image_token_id": True}, template="<image>")
+
+    assert r.status == "fail"
+    assert "image_token_id" in r.message
+
+
+def test_conflicting_numeric_image_token_fields_warn():
+    r = _run_token(
+        config={"vision_config": {}, "image_token_id": 7, "image_token_index": 8},
+        tokenizer_config={"added_tokens_decoder": {"7": {"content": "<image>"}}},
+        template="<image>",
+    )
+
+    assert r.status == "warn"
+    assert "conflict" in r.message
+
+
+def test_vlm_memory_uses_file_sizes_not_text_config_estimate():
+    config = {
+        "vision_config": {},
+        "hidden_size": 4096,
+        "num_hidden_layers": 32,
+        "vocab_size": 32000,
+        "intermediate_size": 11008,
+        "quantization": {"bits": 4},
+    }
+    r = MEMORY_CHECK.run(
+        context_for_files(
+            {
+                "config.json": json.dumps(config).encode(),
+                "model.safetensors": b"x" * 123,
+            }
+        )
+    )
+
+    assert r.status == "pass"
+    assert r.check_id == "vlm/memory.estimate"
+    assert r.details["estimate_source"] == "file_sizes"
+    assert r.details["lower_bound_bytes"] == 123
+    assert r.details["kv_cache_lower_bound_bytes"] == 0
+    assert r.details["memory_lower_bound_kind"] == "model_runtime"
+
+
+def test_vlm_memory_fails_when_file_size_lower_bound_exceeds_budget():
+    r = MEMORY_CHECK.run(
+        context_for_files(
+            {
+                "config.json": b'{"vision_config":{}}',
+                "model.safetensors": b"x" * 10,
+            },
+            options=replace(check_options(), max_memory_bytes=9),
+        )
+    )
+
+    assert r.status == "fail"
+    assert r.details["max_memory_bytes"] == 9
+
+
+def test_vlm_memory_skips_without_weight_sizes():
+    r = MEMORY_CHECK.run(context_for_files({"config.json": b'{"vision_config":{}}'}))
+
+    assert r.status == "skip"
+    assert r.details["estimate_source"] == "unknown"
+
+
+def test_vlm_memory_unknown_estimate_uses_standard_details_without_gate_marker():
+    target = UnavailableNoneSizeTarget(
+        files={
+            "config.json": b'{"vision_config":{}}',
+            "model-00001-of-00002.safetensors": b"a" * 10,
+            "model-00002-of-00002.safetensors": b"b" * 20,
+        },
+        unavailable_paths=(
+            "model-00001-of-00002.safetensors",
+            "model-00002-of-00002.safetensors",
+        ),
+    )
+    options = replace(check_options(), max_memory_bytes=9)
+
+    r = MEMORY_CHECK.run(CheckContext(target=target, options=options))
+
+    assert r.status == "skip"
+    assert r.details["estimate_source"] == "unknown"
+    assert r.details["context_length"] == 4096
+    assert r.details["lower_bound_bytes"] == 0
+    assert r.details["weight_lower_bound_bytes"] == 0
+    assert r.details["kv_cache_lower_bound_bytes"] == 0
+    assert r.details["max_memory_bytes"] == 9
+    assert r.details["unavailable_weight_paths"] == (
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
+    )
+    assert "memory_lower_bound_kind" not in r.details
+
+
+class UnavailableNoneSizeTarget(FakeTarget):
+    unavailable_paths: tuple[str, ...]
+
+    def __init__(self, *, files: dict[str, bytes], unavailable_paths: tuple[str, ...]) -> None:
+        super().__init__(files=files)
+        self.unavailable_paths = unavailable_paths
+
+    def size(self, path: str) -> int | None:
+        if path in self.unavailable_paths:
+            return None
+        return super().size(path)

@@ -15,6 +15,7 @@ from mlx_model_doctor.environment import detect_venv, package_status
 from mlx_model_doctor.errors import ModelDoctorError
 from mlx_model_doctor.exit_codes import exit_code_for, exit_code_for_error
 from mlx_model_doctor.memory import parse_memory
+from mlx_model_doctor.plugins import BUILTIN_PLUGINS
 from mlx_model_doctor.report import (
     DoctorReport,
     github_output_lines,
@@ -82,7 +83,8 @@ def _cmd_man(_args: argparse.Namespace) -> int:
 
 
 def _cmd_plugins(_args: argparse.Namespace) -> int:
-    print("text")
+    for name in BUILTIN_PLUGINS:
+        print(name)
     return 0
 
 

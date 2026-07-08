@@ -23,6 +23,23 @@ def test_smoke_runner_skips_when_smoke_option_is_false() -> None:
     assert check.calls == 0
 
 
+def test_smoke_runner_returns_no_results_when_plugin_has_no_smoke_checks() -> None:
+    ctx = CheckContext(
+        target=FakeTarget(files={}),
+        options=replace(check_options(), smoke=True, max_memory_bytes=1),
+    )
+    prior = (
+        memory_estimate_result(
+            lower_bound_bytes=10**12,
+            check_id="vlm/memory.estimate",
+        ),
+    )
+
+    results = run_smoke_checks(ctx, (), prior)
+
+    assert results == []
+
+
 def test_smoke_runner_refuses_over_budget_estimate_without_calling_backend() -> None:
     check = RecordingCheck()
     ctx = CheckContext(

@@ -3,8 +3,18 @@
 A non-binding sketch of where the library is headed. Items move between sections
 as priorities change.
 
-## Released
+## Pending Release
 
+- **v0.7.0** — reach/readiness plus first explicit VLM breadth.
+  Keeps `text` defaults, schemas, exit codes, and runtime smoke/load behavior
+  unchanged while adding `--plugin vlm` for non-runtime VLM metadata and
+  safetensors-header validation. It also adds a producer pre-upload workflow for
+  Hugging Face publishing, verifies the GitHub Marketplace Action listing,
+  introduces an adoption-scorecard process for release decisions, records the
+  profile-routing decision, and removes the stale docs-site milestone from the
+  active 1.0 path.
+
+## Released
 - **v0.6.2** (2026-07-02) — a correctness and hardening patch. The memory estimate now
   passes a repository within budget and fails one that exceeds `--max-memory`, instead
   of always warning, so `--fail-on warn` works on a clean repo and `--max-memory` gates
@@ -90,15 +100,13 @@ Direction informed by a survey of how MLX / Hugging Face repos actually break
 (2026-06-04). The theme: catch more of the "loads fine, then fails or generates
 garbage" class of problems statically, before a load attempt.
 
-- **More check plugins beyond `text`** — vision-language, embedding, and other
-  model families, each with its own ordered check list (the plugin protocol is
-  already in place). The v0.4.0 vision-language image-processor check runs gated
-  inside the `text` plugin today; a dedicated `vlm` plugin would group it with
-  further vision-language checks.
+- **Post-VLM hardening** — VLM smoke through `mlx-vlm`, VLM-aware sampling, and
+  version-aware check policy as evidence demands.
 - **Richer Hugging Face surveying** — caching, broader candidate signals, and
   pagination so `sample hf` can cover more of an author's catalog.
-- **A docs site** — the `mkdocs-material` group is wired, but there's no
-  published site yet.
+- **Documentation expansion** — README and EXAMPLES remain the source of truth for
+  now. A separate docs site stays deferred until the adoption scorecard shows docs
+  discovery or reference depth is the release bottleneck.
 
 ## Out of scope (deliberate non-goals)
 

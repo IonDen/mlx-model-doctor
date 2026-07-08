@@ -250,6 +250,57 @@ def test_run_hf_sample_rejects_negative_limit_before_listing() -> None:
     assert lister.calls == []
 
 
+def test_run_hf_sample_rejects_vlm_plugin_without_vlm_task_before_listing() -> None:
+    lister = FakeLister((FakeModel(id="mlx-community/model", tags=("mlx",)),))
+
+    with pytest.raises(ModelDoctorError, match="--plugin vlm requires --task"):
+        run_hf_sample(plugin_name="vlm", lister=lister, check_model=unused_check)
+
+    assert lister.calls == []
+
+
+def test_run_hf_sample_rejects_vlm_plugin_with_non_vlm_task_before_listing() -> None:
+    lister = FakeLister((FakeModel(id="mlx-community/model", tags=("mlx",)),))
+
+    with pytest.raises(ModelDoctorError, match="image-text-to-text"):
+        run_hf_sample(
+            plugin_name="vlm",
+            task="text-generation",
+            lister=lister,
+            check_model=unused_check,
+        )
+
+    assert lister.calls == []
+
+
+def test_run_hf_sample_accepts_vlm_plugin_with_image_text_task() -> None:
+    lister = FakeLister((FakeModel(id="mlx-community/model", tags=("mlx",)),))
+    calls: list[tuple[str, CheckOptions | None, str]] = []
+
+    def fake_check(
+        repo_id: str,
+        *,
+        options: CheckOptions | None = None,
+        plugin_name: str = "text",
+    ) -> DoctorReport:
+        calls.append((repo_id, options, plugin_name))
+        return sample_report(repo_id, status="pass", plugin="vlm")
+
+    batch = run_hf_sample(
+        plugin_name="vlm",
+        task="image-text-to-text",
+        lister=lister,
+        check_model=fake_check,
+    )
+
+    assert batch.plugin == "vlm"
+    assert lister.calls[0]["pipeline_tag"] == "image-text-to-text"
+    assert calls[0][2] == "vlm"
+    assert calls[0][1] is not None
+    assert calls[0][1].include_weights is False
+    assert calls[0][1].smoke is False
+
+
 def test_run_hf_sample_overfetches_so_limit_counts_mlx_candidates() -> None:
     # Non-MLX repos ("aaa/plain-1", "aab/plain-2") sort before the two MLX ones.
     # With the old code (list limit=2), both listed repos are non-MLX, so 0 MLX
@@ -390,6 +441,7 @@ def sample_report(
     target: str,
     *,
     status: Literal["pass", "warn", "fail", "skip"],
+    plugin: str = "text",
 ) -> DoctorReport:
     severity: Literal["info", "low", "medium", "high"] = (
         "info" if status in {"pass", "skip"} else "high"
@@ -397,11 +449,11 @@ def sample_report(
     return DoctorReport(
         target=target,
         source="hf",
-        plugin="text",
+        plugin=plugin,
         results=(
             CheckResult(
-                check_id="text/files.required",
-                title="Required files",
+                check_id=f"{plugin}/files.required",
+                title="Required config file",
                 status=status,
                 severity=severity,
                 message=f"{target} {status}",

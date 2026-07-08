@@ -17,6 +17,9 @@ def test_action_yml_is_a_composite_action_running_github_format() -> None:
     # FIX A: injection-safe pattern — inputs are passed via env:, not interpolated into run:
     # the env: mapping must be present
     assert "INPUT_TARGET: ${{ inputs.target }}" in text
+    assert "plugin:" in text
+    assert "INPUT_PLUGIN: ${{ inputs.plugin }}" in text
+    assert '--plugin "$INPUT_PLUGIN"' in text
     # the run: script must consume the env var, not the raw expression
     assert '"$INPUT_TARGET"' in text
     # the old directly-interpolated forms (as they appeared in the run: script) must be gone

@@ -21,7 +21,7 @@ def run_smoke_checks(
     prior_results: Sequence[CheckResult],
 ) -> list[CheckResult]:
     """Run smoke checks when requested, isolating unexpected check crashes."""
-    if not ctx.options.smoke:
+    if not ctx.options.smoke or not checks:
         return []
 
     gate_result = _memory_gate_result(ctx, checks, prior_results)
