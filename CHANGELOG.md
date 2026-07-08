@@ -5,27 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.0] — 2026-07-06
+## [0.7.0] — Unreleased
 
-A reach/readiness minor release. It does not add checks, change runtime validation
-behavior, alter JSON schemas, rename check IDs, change CLI defaults, change public
-API exports, or change exit-code semantics.
+A reach/readiness minor release plus the first explicit non-text validation
+profile. It adds a non-runtime `vlm` plugin for vision-language repositories
+while keeping `text` as the default, preserving existing `text/...` check IDs,
+leaving JSON schemas unchanged, and not adding runtime smoke/load behavior.
 
 Release gate: after the `v0.7.0` semver release publishes successfully, move the
 moving `v0` Action tag to the release commit, confirm the remote `v0` SHA matches
 that commit, and confirm the release workflow did not run from the bare `v0` tag.
 
 ### Added
+- Explicit `vlm` plugin (`--plugin vlm`) for vision-language repositories. It
+  runs VLM-oriented metadata checks plus the existing no-download
+  safetensors-header checks for `check local` / `check hf`.
+- VLM image-token wiring check (`vlm/image_token.wiring`) for image placeholder
+  consistency between config, tokenizer metadata, and chat templates.
+- GitHub Action `plugin` input, defaulting to `text`, so CI can opt into `vlm`.
 - A producer pre-upload workflow for Hugging Face publishing: validate local output
   with `check local --fail-on warn`, upload with `hf upload` or
   `upload_folder()`, then optionally verify the remote repo with `check hf`.
 - An adoption scorecard process for release decisions, covering Action usage,
   pre-commit usage, generic mentions, PyPI downloads, repo metadata, and
   Marketplace discoverability.
-- A profile-routing decision for future VLM/embedding/diffusion work that
-  preserves current `text` defaults until a versioned routing change is designed.
+- A profile-routing decision that preserves current `text` defaults and makes
+  non-text validation profiles explicit opt-ins.
 
 ### Changed
+- `plugins` now lists both built-ins: `text` and `vlm`.
+- `sample hf --plugin vlm` requires an explicit VLM task filter such as
+  `--task image-text-to-text`; automatic profile-aware sampling remains future
+  work.
 - The public roadmap no longer claims a wired docs-site milestone. README and
   EXAMPLES remain the source of truth until adoption evidence justifies a separate
   site.
