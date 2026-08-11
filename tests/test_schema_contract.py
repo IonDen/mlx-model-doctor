@@ -149,6 +149,23 @@ def test_open_objects_allow_additional() -> None:
 EXPECTED_BATCH_TOP_LEVEL_KEYS = frozenset(
     {"schema_version", "source", "author", "task", "limit", "plugin", "summary", "items"}
 )
+# Schema properties are a superset of the payload anchor above: max_candidates and
+# signal_filter are optional (schema-level only) so a v1.0 payload that omits them
+# still validates and still matches EXPECTED_BATCH_TOP_LEVEL_KEYS unchanged.
+EXPECTED_BATCH_SCHEMA_PROPERTIES = frozenset(
+    {
+        "schema_version",
+        "source",
+        "author",
+        "task",
+        "limit",
+        "plugin",
+        "summary",
+        "items",
+        "max_candidates",
+        "signal_filter",
+    }
+)
 EXPECTED_BATCH_SUMMARY_KEYS = frozenset({"checked", "tool-error"})
 EXPECTED_BATCH_ITEM_KEYS = frozenset({"repo_id", "signal", "status", "error", "report"})
 
@@ -229,7 +246,7 @@ def test_batch_payload_keys_match_anchor() -> None:
 
 
 def test_batch_schema_properties_match_anchor() -> None:
-    assert set(BATCH_SCHEMA["properties"]) == EXPECTED_BATCH_TOP_LEVEL_KEYS
+    assert set(BATCH_SCHEMA["properties"]) == EXPECTED_BATCH_SCHEMA_PROPERTIES
     assert set(BATCH_SCHEMA["properties"]["summary"]["properties"]) == EXPECTED_BATCH_SUMMARY_KEYS
     assert set(BATCH_SCHEMA["$defs"]["item"]["properties"]) == EXPECTED_BATCH_ITEM_KEYS
 
@@ -248,3 +265,39 @@ def test_batch_embedded_report_is_validated_against_the_report_schema() -> None:
     payload["items"][0]["report"]["UNEXPECTED"] = 1
     errors = list(validator.iter_errors(payload))
     assert any("UNEXPECTED" in e.message for e in errors), errors
+
+
+def test_sample_batch_v10_payload_valid_under_v11_schema() -> None:
+    """A v1.0 payload (no max_candidates, no signal_filter) must validate under v1.1 schema."""
+    v10_payload = {
+        "schema_version": "sample-batch/1.0",
+        "source": "hf",
+        "author": "mlx-community",
+        "task": None,
+        "limit": 5,
+        "plugin": "text",
+        "summary": {"checked": 0, "tool-error": 0},
+        "items": [],
+    }
+    validator = Draft202012Validator(BATCH_SCHEMA, registry=BATCH_REGISTRY)
+    errors = list(validator.iter_errors(v10_payload))
+    assert not errors, f"v1.0 payload rejected by v1.1 schema: {[e.message for e in errors]}"
+
+
+def test_sample_batch_v11_includes_new_optional_fields() -> None:
+    """A v1.1 payload with max_candidates and signal_filter validates."""
+    batch = SampleBatchReport(
+        author="mlx-community",
+        task=None,
+        limit=5,
+        plugin="text",
+        items=(),
+        max_candidates=500,
+        signal_filter=("tag:mlx",),
+    )
+    output = json.loads(render_sample_batch_json(batch))
+    assert output["max_candidates"] == 500
+    assert output["signal_filter"] == ["tag:mlx"]
+    validator = Draft202012Validator(BATCH_SCHEMA, registry=BATCH_REGISTRY)
+    errors = list(validator.iter_errors(output))
+    assert not errors, f"v1.1 payload rejected: {[e.message for e in errors]}"
