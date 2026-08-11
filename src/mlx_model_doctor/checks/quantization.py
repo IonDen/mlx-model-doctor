@@ -139,8 +139,8 @@ def _classify_quant(mode: object, group_size: object, bits: object) -> _ModeVerd
 
 _PER_LAYER_FIELDS = frozenset({"mode", "bits", "group_size"})
 
-_FAIL_KINDS = frozenset({"unknown_mode"})
-_WARN_KINDS = frozenset({"non_string_mode", "off_table_affine", "fixed_mismatch"})
+_FAIL_KINDS: frozenset[str] = frozenset()
+_WARN_KINDS = frozenset({"unknown_mode", "non_string_mode", "off_table_affine", "fixed_mismatch"})
 
 
 def _is_per_layer_override(value: object) -> bool:
@@ -233,9 +233,9 @@ class MlxQuantizationModeCheck:
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,
-                status="fail",
-                severity="high",
-                message=f"Unknown MLX quantization mode {verdict.mode!r}; MLX rejects it at convert/load.",
+                status="warn",
+                severity="medium",
+                message=f"Quantization mode {verdict.mode!r} is not recognized as of MLX 0.31.x.",
                 remediation="Use one of: affine, mxfp4, mxfp8, nvfp4.",
                 details={"mode": verdict.mode},
             )
@@ -307,13 +307,15 @@ class MlxQuantizationModeCheck:
         if scalar.kind in _FAIL_KINDS or scalar.kind in _WARN_KINDS:
             details["scalar_default_invalid"] = True
 
-        if fail_layers or scalar.kind in _FAIL_KINDS:
+        # Policy extension point: currently no mode verdict is in _FAIL_KINDS,
+        # so this branch is unreachable. Kept for future structural-invalid modes.
+        if fail_layers or scalar.kind in _FAIL_KINDS:  # pragma: no cover
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,
                 status="fail",
                 severity="high",
-                message="Quantization mode is invalid for one or more layers; MLX rejects unknown modes at load.",
+                message="Quantization mode is structurally invalid for one or more layers.",
                 remediation="Use one of: affine, mxfp4, mxfp8, nvfp4 for every layer and the model default.",
                 details=details,
             )
@@ -323,7 +325,7 @@ class MlxQuantizationModeCheck:
                 title=self.title,
                 status="warn",
                 severity="medium",
-                message="Quantization mode has off-table or non-canonical values for one or more layers (valid as of MLX 0.31.x).",
+                message="Quantization mode has unrecognized, off-table, or non-canonical values for one or more layers (valid as of MLX 0.31.x).",
                 remediation="Use affine group_size in {32,64,128} and bits in {2,3,4,5,6,8}, or a fixed mode's canonical pair.",
                 details=details,
             )
