@@ -292,7 +292,7 @@ class MlxQuantizationModeCheck:
         warn_layers: list[str] = []
         for name, override in overrides:
             verdict = _classify_quant(*_effective_mode_params(override))
-            if verdict.kind in _FAIL_KINDS:
+            if verdict.kind in _FAIL_KINDS:  # pragma: no cover - policy extension point
                 fail_layers.append(name)
             elif verdict.kind in _WARN_KINDS:
                 warn_layers.append(name)
@@ -300,7 +300,7 @@ class MlxQuantizationModeCheck:
                 raise AssertionError(f"unhandled verdict kind: {verdict.kind!r}")
 
         details: dict[str, object] = {}
-        if fail_layers:
+        if fail_layers:  # pragma: no cover - policy extension point
             details["invalid_mode_layers"] = tuple(sorted(fail_layers))
         if warn_layers:
             details["off_table_layers"] = tuple(sorted(warn_layers))
