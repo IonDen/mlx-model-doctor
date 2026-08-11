@@ -5,6 +5,18 @@ as priorities change.
 
 ## Released
 
+- **v0.8.0** (2026-08-11) — trust and depth. Version-bound check tables (MLX
+  quantization modes, safetensors dtypes) now warn instead of failing on a
+  recognized-but-unlisted value, each annotated with the upstream version it
+  was verified against, and the project's development status moves from
+  Alpha to Beta. The VLM profile gets its first runtime check: `--smoke
+  --plugin vlm` loads a model through `mlx-vlm` and generates from a dummy
+  image under advisory memory caps, refusing remote code execution by
+  default. `sample hf` can now scan deeper into an author's catalog
+  (`--max-candidates`), filter by listing-visible MLX signal
+  (`--signal-filter`), and cache Hub listing responses locally (`--no-cache`
+  / `--cache-ttl`). The batch schema moves to `sample-batch/1.1` for the new
+  optional fields.
 - **v0.7.0** (2026-07-08) — reach/readiness plus first explicit VLM breadth.
   Keeps `text` defaults, schemas, exit codes, and runtime smoke/load behavior
   unchanged while adding `--plugin vlm` for non-runtime VLM metadata and
