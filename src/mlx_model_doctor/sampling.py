@@ -124,7 +124,9 @@ class SampleBatchReport:
     limit: int
     plugin: str
     items: Sequence[SampledModelResult]
-    schema_version: str = "sample-batch/1.0"
+    schema_version: str = "sample-batch/1.1"
+    max_candidates: int | None = None
+    signal_filter: tuple[str, ...] | None = None
 
     @property
     def summary(self) -> dict[ItemStatus, int]:
@@ -160,12 +162,17 @@ def deterministic_sample(
     models: Iterable[ModelCandidate],
     *,
     limit: int,
+    signal_filter: tuple[str, ...] | None = None,
 ) -> list[tuple[ModelCandidate, str]]:
     """Filter likely MLX candidates, sort by repo ID, and take a deterministic sample.
 
     Each returned pair is a candidate and its highest-priority MLX signal, so callers
     never have to recompute the signal (and the signal is known non-``None`` by
     construction — only candidates with a signal are kept).
+
+    ``signal_filter``, when given, keeps only candidates whose signal is one of the
+    listed values. Filtering happens before the limit slice, so the limit counts
+    matching candidates, not merely eligible ones.
     """
     if limit < 0:
         raise ModelDoctorError("sample limit must be non-negative")
@@ -174,6 +181,9 @@ def deterministic_sample(
     eligible = [
         (model, signal) for model in models if (signal := candidate_signal(model)) is not None
     ]
+    if signal_filter is not None:
+        filter_set = frozenset(signal_filter)
+        eligible = [(model, signal) for model, signal in eligible if signal in filter_set]
     return sorted(eligible, key=lambda pair: pair[0].id)[:limit]
 
 
@@ -193,14 +203,26 @@ def run_hf_sample(
     plugin_name: str = "text",
     lister: HfModelLister | None = None,
     check_model: HfCheckFunction | None = None,
+    max_candidates: int | None = None,
+    signal_filter: tuple[str, ...] | None = None,
 ) -> SampleBatchReport:
-    """List, sample, and statically check likely MLX Hugging Face models."""
+    """List, sample, and statically check likely MLX Hugging Face models.
+
+    ``max_candidates``, when given, overrides the listing fetch depth. When
+    omitted (``None``), the legacy overfetch formula
+    ``min(max(limit * _OVERFETCH_FACTOR, limit), _OVERFETCH_CEILING)`` is
+    preserved so existing callers see no behavior change.
+    """
     if limit < 0:
         raise ModelDoctorError("sample limit must be non-negative")
     _validate_sample_plugin_task(plugin_name, task)
 
     model_lister = lister if lister is not None else DefaultHfModelLister()
-    fetch_limit = min(max(limit * _OVERFETCH_FACTOR, limit), _OVERFETCH_CEILING)
+    fetch_limit = (
+        max_candidates
+        if max_candidates is not None
+        else min(max(limit * _OVERFETCH_FACTOR, limit), _OVERFETCH_CEILING)
+    )
     try:
         listed_models = tuple(
             model_lister.list_models(author=author, pipeline_tag=task, limit=fetch_limit)
@@ -210,7 +232,7 @@ def run_hf_sample(
     except Exception as exc:
         raise ModelDoctorError(f"Could not list Hugging Face models: {exc}") from exc
 
-    sampled_models = deterministic_sample(listed_models, limit=limit)
+    sampled_models = deterministic_sample(listed_models, limit=limit, signal_filter=signal_filter)
     checker = check_model if check_model is not None else check_hf_model
     options = CheckOptions(
         max_memory_bytes=None,
@@ -248,6 +270,8 @@ def run_hf_sample(
         limit=limit,
         plugin=plugin_name,
         items=tuple(items),
+        max_candidates=max_candidates,
+        signal_filter=signal_filter,
     )
 
 
@@ -279,10 +303,18 @@ def render_sample_batch_markdown(batch: SampleBatchReport) -> str:
         f"- Task: `{batch.task or 'any'}`",
         f"- Limit: `{batch.limit}`",
         f"- Plugin: `{batch.plugin}`",
-        "",
-        "| Repo | Signal | Status | Pass | Warn | Fail | Skip | Error |",
-        "|---|---|---|---:|---:|---:|---:|---|",
     ]
+    if batch.max_candidates is not None:
+        lines.append(f"- Max candidates: `{batch.max_candidates}`")
+    if batch.signal_filter is not None:
+        lines.append(f"- Signal filter: `{', '.join(batch.signal_filter)}`")
+    lines.extend(
+        [
+            "",
+            "| Repo | Signal | Status | Pass | Warn | Fail | Skip | Error |",
+            "|---|---|---|---:|---:|---:|---:|---|",
+        ]
+    )
     for item in batch.items:
         summary = _item_summary(item)
         lines.append(
@@ -302,10 +334,18 @@ def render_sample_batch_text(batch: SampleBatchReport) -> str:
         f"Task: {batch.task or 'any'}",
         f"Limit: {batch.limit}",
         f"Plugin: {batch.plugin}",
-        "",
-        "Summary:",
-        *(f"  {key}: {value}" for key, value in batch.summary.items()),
     ]
+    if batch.max_candidates is not None:
+        lines.append(f"Max candidates: {batch.max_candidates}")
+    if batch.signal_filter is not None:
+        lines.append(f"Signal filter: {', '.join(batch.signal_filter)}")
+    lines.extend(
+        [
+            "",
+            "Summary:",
+            *(f"  {key}: {value}" for key, value in batch.summary.items()),
+        ]
+    )
     for item in batch.items:
         summary = _item_summary(item)
         lines.extend(
@@ -326,7 +366,7 @@ def render_sample_batch_text(batch: SampleBatchReport) -> str:
 
 
 def _batch_to_dict(batch: SampleBatchReport) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "schema_version": batch.schema_version,
         "source": "hf",
         "author": batch.author,
@@ -336,6 +376,11 @@ def _batch_to_dict(batch: SampleBatchReport) -> dict[str, object]:
         "summary": dict(batch.summary),
         "items": [_item_to_dict(item) for item in batch.items],
     }
+    if batch.max_candidates is not None:
+        payload["max_candidates"] = batch.max_candidates
+    if batch.signal_filter is not None:
+        payload["signal_filter"] = list(batch.signal_filter)
+    return payload
 
 
 def _item_to_dict(item: SampledModelResult) -> dict[str, object]:
