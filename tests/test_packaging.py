@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import tarfile
+import tomllib
 import zipfile
 from pathlib import Path
 
@@ -136,3 +137,10 @@ def test_sdist_ships_the_sample_batch_schema(built_artifacts: tuple[Path, Path])
     assert "src/mlx_model_doctor/schema/sample-batch.v1.schema.json" in members, (
         f"sample-batch schema missing from sdist: {members}"
     )
+
+
+def test_development_status_is_beta() -> None:
+    data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    classifiers = data["project"]["classifiers"]
+    assert "Development Status :: 4 - Beta" in classifiers
+    assert "Development Status :: 3 - Alpha" not in classifiers
