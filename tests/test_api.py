@@ -165,8 +165,12 @@ def test_check_local_model_vlm_skip_weights_excludes_only_weight_checks(
     assert "vlm/quantization.shape" not in ids
 
 
-def test_check_local_model_vlm_smoke_has_no_smoke_results(tmp_path: Path) -> None:
+def test_check_local_model_vlm_smoke_gate_blocks_on_tiny_budget(tmp_path: Path) -> None:
     model = write_vlm_local_model(tmp_path)
+    # A measurable weight file lets the memory pre-flight gate compute a lower
+    # bound; without one, VlmMemoryEstimateCheck has nothing to estimate from
+    # and the gate can never engage.
+    (model / "model.safetensors").write_bytes(b"\x00" * 4096)
     options = CheckOptions(
         max_memory_bytes=1,
         context_length=4096,
@@ -177,7 +181,7 @@ def test_check_local_model_vlm_smoke_has_no_smoke_results(tmp_path: Path) -> Non
 
     report = check_local_model(model, plugin_name="vlm", options=options)
 
-    assert all("/smoke." not in result.check_id for result in report.results)
+    assert result_by_id(report.results, "vlm/smoke.memory_budget").status == "fail"
 
 
 def test_check_hf_model_runs_vlm_plugin_for_fake_repo() -> None:

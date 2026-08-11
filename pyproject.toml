@@ -44,6 +44,7 @@ dependencies = [
 
 [project.optional-dependencies]
 mlx-lm = ["mlx-lm>=0.31.3"]
+mlx-vlm = ["mlx-vlm>=0.6.12,<0.7"]
 
 [project.urls]
 Homepage = "https://github.com/IonDen/mlx-model-doctor"
@@ -65,6 +66,7 @@ test = [
     "hatch-vcs>=0.4",
     "jsonschema>=4.18",
     "referencing>=0.30",
+    "pillow>=10.0",
 ]
 typecheck = ["mypy>=1.13"]
 lint = ["ruff>=0.7"]

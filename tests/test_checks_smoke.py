@@ -228,3 +228,198 @@ class LoadForbiddenMlxLm:
         verbose: bool,
     ) -> str:
         raise AssertionError("mlx_lm.generate() must not be called without MLX memory caps")
+
+
+# --- VLM smoke fakes (pure Python, no real MLX) ---
+#
+# apply_chat_template's `config` parameter was added after verifying the real
+# mlx-vlm==0.6.12 signature (inspect.signature); apply_chat_template requires
+# a model-config argument (`processor, config, prompt, ...`), unlike the
+# text-only mlx_lm.load()/generate() surface above.
+
+
+@dataclass
+class FakeVlmGenerationResult:
+    text: str
+
+
+@dataclass
+class FakeVlmModule:
+    """Fake mlx-vlm for offline testing."""
+
+    _text: str = "A blue image"
+    _raise_on_load: Exception | None = None
+    _raise_on_generate: Exception | None = None
+    load_calls: int = 0
+    load_saw_trust_remote_code: bool | None = None
+    generate_kwargs: dict[str, object] | None = None
+
+    def load(self, path: str, *, trust_remote_code: bool = False) -> tuple[object, object]:
+        self.load_calls += 1
+        self.load_saw_trust_remote_code = trust_remote_code
+        if self._raise_on_load is not None:
+            raise self._raise_on_load
+        return ("fake_model", "fake_processor")
+
+    def apply_chat_template(
+        self, processor: object, config: object, prompt: str, *, num_images: int = 1
+    ) -> str:
+        return f"<image>{prompt}"
+
+    def generate(
+        self,
+        model: object,
+        processor: object,
+        prompt: str,
+        image: object,
+        *,
+        max_tokens: int = 8,
+        verbose: bool = False,
+    ) -> FakeVlmGenerationResult:
+        self.generate_kwargs = {
+            "formatted_prompt": prompt,
+            "max_tokens": max_tokens,
+            "verbose": verbose,
+        }
+        if self._raise_on_generate is not None:
+            raise self._raise_on_generate
+        return FakeVlmGenerationResult(text=self._text)
+
+
+class LoadForbiddenVlmModule:
+    load_calls = 0
+
+    def load(self, path: str, *, trust_remote_code: bool = False) -> tuple[object, object]:
+        self.load_calls += 1
+        raise AssertionError("mlx_vlm.load() must not be called without MLX memory caps")
+
+    def apply_chat_template(
+        self, processor: object, config: object, prompt: str, *, num_images: int = 1
+    ) -> str:
+        raise AssertionError("not expected")
+
+    def generate(self, *a, **kw) -> object:
+        raise AssertionError("not expected")
+
+
+# --- VLM smoke check-level tests (FakeSmokeBackend boundary) ---
+
+
+def test_vlm_smoke_passes_on_nonempty_output() -> None:
+    from mlx_model_doctor.checks.smoke import MlxVlmSmokeCheck
+
+    check = MlxVlmSmokeCheck(
+        backend=FakeSmokeBackend(generation=SmokeGeneration(text="A blue image"))
+    )
+    result = check.run(CheckContext(target=FakeTarget(files={}), options=check_options()))
+    assert result.status == "pass"
+    assert result.check_id == "vlm/smoke.mlx_vlm"
+    assert result.details["generated_text_chars"] > 0
+
+
+def test_vlm_smoke_fails_on_empty_output() -> None:
+    from mlx_model_doctor.checks.smoke import MlxVlmSmokeCheck
+
+    check = MlxVlmSmokeCheck(backend=FakeSmokeBackend(generation=SmokeGeneration(text="")))
+    result = check.run(CheckContext(target=FakeTarget(files={}), options=check_options()))
+    assert result.status == "fail"
+
+
+def test_vlm_smoke_fails_on_generate_exception() -> None:
+    from mlx_model_doctor.checks.smoke import MlxVlmSmokeCheck
+
+    check = MlxVlmSmokeCheck(backend=FakeSmokeBackend(error=RuntimeError("generate failed")))
+    result = check.run(CheckContext(target=FakeTarget(files={}), options=check_options()))
+    assert result.status == "fail"
+    assert "generate failed" in result.message
+
+
+def test_vlm_smoke_propagates_memory_safety_error() -> None:
+    from mlx_model_doctor.checks.smoke import MlxVlmSmokeCheck
+
+    check = MlxVlmSmokeCheck(backend=FakeSmokeBackend(error=MemorySafetyError("caps unavailable")))
+    with pytest.raises(MemorySafetyError, match="caps"):
+        check.run(CheckContext(target=FakeTarget(files={}), options=check_options()))
+
+
+# --- VLM backend-level tests (FakeVlmModule + FakeMx, monkeypatched imports) ---
+
+
+def test_vlm_backend_installs_caps_loads_and_reinstalls_caps(monkeypatch) -> None:
+    mx = FakeMx()
+    vlm = FakeVlmModule()
+
+    def import_module(name: str) -> object:
+        if name == "mlx.core":
+            return mx
+        if name == "mlx_vlm":
+            return vlm
+        raise ImportError(name)
+
+    monkeypatch.setattr(smoke_module.importlib, "import_module", import_module)
+
+    from mlx_model_doctor.checks.smoke import MlxVlmBackend
+
+    generation = MlxVlmBackend(vlm_module=vlm, mx_module=mx).generate(
+        CheckContext(target=FakeTarget(files={}, name="test-vlm"), options=check_options())
+    )
+
+    assert generation.text.strip()
+    assert generation.peak_memory_bytes == 1234
+    assert generation.memory_caps_gib == (20, 22)
+    # Caps installed before load
+    assert mx.wired_limit == 20 * GIB
+    assert mx.memory_limit == 22 * GIB
+    # Load was called with trust_remote_code=False
+    assert vlm.load_saw_trust_remote_code is False
+    # Generate was called with bounded tokens
+    assert vlm.generate_kwargs is not None
+    assert vlm.generate_kwargs["max_tokens"] == 8
+    assert vlm.generate_kwargs["verbose"] is False
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["device_info", "set_wired_limit", "set_memory_limit"],
+)
+def test_vlm_backend_refuses_to_load_when_memory_caps_unavailable(
+    monkeypatch, failure: str
+) -> None:
+    mx = FakeMx(cap_failure=failure)
+    vlm = LoadForbiddenVlmModule()
+
+    from mlx_model_doctor.checks.smoke import MlxVlmBackend
+
+    with pytest.raises(MemorySafetyError, match="memory caps"):
+        MlxVlmBackend(vlm_module=vlm, mx_module=mx).generate(
+            CheckContext(target=FakeTarget(files={}), options=check_options())
+        )
+    assert vlm.load_calls == 0
+
+
+def test_vlm_backend_missing_dependencies_raise_install_hint(monkeypatch) -> None:
+    def import_module(_name: str) -> object:
+        raise ImportError("missing")
+
+    monkeypatch.setattr(smoke_module.importlib, "import_module", import_module)
+
+    from mlx_model_doctor.checks.smoke import MlxVlmBackend
+
+    with pytest.raises(DependencyError, match="Install it with") as exc_info:
+        MlxVlmBackend().generate(CheckContext(target=FakeTarget(files={}), options=check_options()))
+    assert exc_info.value.extra_name == "mlx-vlm"
+
+
+def test_vlm_backend_generate_failure_returns_fail_result() -> None:
+    """Test that a generate-time (not load-time) exception becomes a fail result."""
+    from mlx_model_doctor.checks.smoke import MlxVlmBackend, MlxVlmSmokeCheck
+
+    mx = FakeMx()
+    vlm = FakeVlmModule(_raise_on_generate=RuntimeError("vision encoder crash"))
+    backend = MlxVlmBackend(vlm_module=vlm, mx_module=mx)
+    check = MlxVlmSmokeCheck(backend=backend)
+    result = check.run(
+        CheckContext(target=FakeTarget(files={}, name="test"), options=check_options())
+    )
+    assert result.status == "fail"
+    assert "vision encoder crash" in result.message
