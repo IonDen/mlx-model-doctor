@@ -29,6 +29,7 @@ _MAX_SPECIAL_TOKEN_SCAN_DEPTH = 256
 _MAX_SPECIAL_TOKEN_SCAN_NODES = 4096
 
 
+# Image-processor resolution heuristic verified against mlx-vlm 0.6.x and transformers v4.x.
 @dataclass(frozen=True, slots=True)
 class VlmImageProcessorCheck:
     """Report whether a vision-language repo can resolve an image processor at load."""

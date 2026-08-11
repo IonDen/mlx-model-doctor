@@ -89,6 +89,7 @@ def _positive_number(value: object) -> float | None:
     return None
 
 
+# Verified against MLX 0.31.x (ml-explore/mlx, quantize.cpp).
 _AFFINE_GROUP_SIZES = frozenset({32, 64, 128})
 _AFFINE_BITS = frozenset({2, 3, 4, 5, 6, 8})
 _FIXED_MODES: dict[str, tuple[int, int]] = {"mxfp4": (32, 4), "mxfp8": (32, 8), "nvfp4": (16, 4)}

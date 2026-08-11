@@ -220,6 +220,15 @@ The top-level object, `summary`, and each entry in `results[]` are closed (`addi
 
 The `sample hf --format json` survey has its own published schema, at `mlx_model_doctor/schema/sample-batch.v1.schema.json` and validated against real output in CI. It carries a `schema_version` of `sample-batch/MAJOR.MINOR` (same bump rules as above), and each checked item embeds a full single-`check` report that conforms to `report.v1.schema.json`.
 
+## Version sensitivity
+
+The checks encode behavior from specific upstream versions (MLX, transformers,
+safetensors). When a value falls outside the known set — a quantization mode
+added in a newer MLX, an unfamiliar safetensors dtype — the check **warns**
+rather than failing. Only structurally invalid metadata (wrong type, missing
+required fields) produces a failure. Each version-bound table carries a comment
+naming the upstream version it was verified against.
+
 ## Status
 
 **Alpha (0.7.0).** The static `check local` path and the report/CLI surface are solid and well tested. v0.7.0 keeps `text` as the default profile and adds explicit `--plugin vlm` coverage for vision-language repositories, using non-runtime metadata and safetensors-header checks only. It also makes the integration path clearer with Marketplace visibility, release-decision metrics, and a producer pre-upload workflow. The safetensors header (read without downloading weights) backs four tensor-level checks — offset corruption, weight-map parameter sanity, tied-embedding consistency, and MLX quantized-layer shape consistency — which run by default (`--skip-weights` opts out). A single `check` reports whether a repository looks like an MLX model and why; the VLM profile adds image-processor and image-token wiring checks for vision-language repositories. The quantized-shape and quantization-mode checks read each layer's own `bits`/`group_size`/`mode`, so a mixed-precision model (4-bit experts with 8-bit dense and router layers) is validated per layer rather than reported as broken. The memory estimate handles mixed precision the same way: when a model mixes bit widths it takes the weight figure from the stored file sizes instead of the model-level setting. The Hugging Face path (`check hf`, `sample hf`) is implemented and tested offline against fakes; its live behavior is exercised by opt-in network tests. It also ships a GitHub Action and a pre-commit hook. The public API and JSON output now have a documented, versioned stability contract — see [Output contract](#output-contract) and [Stability policy](#stability-policy). Pin a version if you depend on the schema or the API.
