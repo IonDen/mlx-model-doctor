@@ -423,3 +423,33 @@ def test_vlm_backend_generate_failure_returns_fail_result() -> None:
     )
     assert result.status == "fail"
     assert "vision encoder crash" in result.message
+
+
+# --- VLM live smoke canary (real mlx-vlm runtime, opt-in via --run-smoke) ---
+
+
+@pytest.mark.smoke
+def test_vlm_smoke_canary_on_real_model() -> None:
+    """Live: load a small VLM model through mlx-vlm and verify non-empty output + cap persistence."""
+    from mlx_model_doctor.checks.smoke import MlxVlmBackend, MlxVlmSmokeCheck
+    from mlx_model_doctor.memory import install_mlx_memory_caps
+
+    caps_before = install_mlx_memory_caps()
+    assert caps_before[0] > 0, "Memory caps must be available for the canary"
+
+    # Small, known-good VLM model pinned for the canary (mlx-community, 4-bit quantized).
+    backend = MlxVlmBackend()
+    check = MlxVlmSmokeCheck(backend=backend)
+    ctx = CheckContext(
+        target=FakeTarget(files={}, name="mlx-community/nanoLLaVA-1.5-4bit", _source="hf"),
+        options=check_options(),
+    )
+    result = check.run(ctx)
+    assert result.status == "pass", f"VLM canary failed: {result.message}"
+    assert result.details["generated_text_chars"] > 0
+
+    # Verify caps are still installed after generation.
+    caps_after = install_mlx_memory_caps()
+    assert caps_after == caps_before, (
+        f"Memory caps drifted: before={caps_before}, after={caps_after}"
+    )
