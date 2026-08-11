@@ -81,6 +81,6 @@ class ListingCache:
 
     def _path_for(self, key: CacheKey) -> Path:
         author, task, max_candidates = key
-        raw = f"{author}:{task}:{max_candidates}"
+        raw = f"{author}:{json.dumps(task)}:{max_candidates}"
         digest = hashlib.sha256(raw.encode()).hexdigest()[:16]
         return self._cache_dir / f"{digest}.json"

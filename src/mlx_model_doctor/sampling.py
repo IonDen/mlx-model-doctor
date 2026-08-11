@@ -260,6 +260,8 @@ def run_hf_sample(
     """
     if limit < 0:
         raise ModelDoctorError("sample limit must be non-negative")
+    if max_candidates is not None and max_candidates < 1:
+        raise ModelDoctorError("max-candidates must be at least 1")
     _validate_sample_plugin_task(plugin_name, task)
 
     model_lister = lister if lister is not None else DefaultHfModelLister()

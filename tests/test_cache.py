@@ -51,3 +51,13 @@ def test_cache_survives_corrupt_file(tmp_path: Path) -> None:
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     cache_file.write_text("not json", encoding="utf-8")
     assert cache.get(key) is None
+
+
+def test_cache_none_task_and_string_none_have_different_keys(tmp_path: Path) -> None:
+    cache = ListingCache(cache_dir=tmp_path, ttl_seconds=3600)
+    data_none: list[dict[str, object]] = [{"repo_id": "a", "tags": [], "library_name": None}]
+    data_str: list[dict[str, object]] = [{"repo_id": "b", "tags": [], "library_name": None}]
+    cache.put(("author", None, 200), data_none)
+    cache.put(("author", "None", 200), data_str)
+    assert cache.get(("author", None, 200)) == data_none
+    assert cache.get(("author", "None", 200)) == data_str

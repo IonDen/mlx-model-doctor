@@ -317,6 +317,11 @@ def test_run_hf_sample_listing_failure_is_tool_error() -> None:
         run_hf_sample(lister=lister, check_model=unused_check)
 
 
+def test_run_hf_sample_rejects_zero_max_candidates() -> None:
+    with pytest.raises(ModelDoctorError, match="max-candidates must be at least 1"):
+        run_hf_sample(author="x", limit=1, max_candidates=0, lister=FakeLister([]))
+
+
 def test_run_hf_sample_rejects_negative_limit_before_listing() -> None:
     # The limit guard must fire before any listing call, so a negative limit
     # never reaches the (possibly networked) lister.
