@@ -110,10 +110,10 @@ Direction informed by a survey of how MLX / Hugging Face repos actually break
 (2026-06-04). The theme: catch more of the "loads fine, then fails or generates
 garbage" class of problems statically, before a load attempt.
 
-- **Post-VLM hardening** — VLM smoke through `mlx-vlm`, VLM-aware sampling, and
-  version-aware check policy as evidence demands.
-- **Richer Hugging Face surveying** — caching, broader candidate signals, and
-  pagination so `sample hf` can cover more of an author's catalog.
+- **Post-VLM hardening** — VLM-aware sampling and further VLM-specific
+  checks as evidence demands.
+- **Richer Hugging Face surveying** — broader candidate signals and
+  survey-level diagnostics beyond the v0.8.0 caching and signal filter.
 - **Documentation expansion** — README and EXAMPLES remain the source of truth for
   now. A separate docs site stays deferred until the adoption scorecard shows docs
   discovery or reference depth is the release bottleneck.
