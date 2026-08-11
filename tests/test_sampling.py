@@ -6,10 +6,12 @@ Live, networked sampling/check behavior is exercised in ``test_live_models.py``
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 import pytest
 
+from mlx_model_doctor.cache import ListingCache
 from mlx_model_doctor.compat import LISTING_VISIBLE_SIGNALS
 from mlx_model_doctor.context import CheckOptions
 from mlx_model_doctor.errors import ModelDoctorError
@@ -205,6 +207,36 @@ def test_default_hf_model_lister_maps_task_to_pipeline_tag_and_requests_metadata
             "expand": ["tags", "library_name"],
         }
     ]
+
+
+def test_default_hf_model_lister_uses_cache(tmp_path: Path) -> None:
+    """Cache hit skips the API; cache miss fetches then writes."""
+    models = (FakeModel("mlx-community/a", tags=("mlx",)),)
+    api = FakeApi(models)
+    cache = ListingCache(cache_dir=tmp_path, ttl_seconds=3600)
+    lister = DefaultHfModelLister(api_factory=lambda: api, cache=cache)
+
+    # First call: cache miss -> API called, cache written
+    result1 = list(lister.list_models(author="mlx-community", pipeline_tag=None, limit=200))
+    assert len(api.calls) == 1
+    assert len(result1) == 1
+
+    # Second call: cache hit -> API NOT called
+    result2 = list(lister.list_models(author="mlx-community", pipeline_tag=None, limit=200))
+    assert len(api.calls) == 1  # still 1 -- cache hit
+    assert len(result2) == 1
+    assert result2[0].id == "mlx-community/a"
+
+
+def test_default_hf_model_lister_without_cache_always_fetches(tmp_path: Path) -> None:
+    """Without a cache, every call hits the API."""
+    models = (FakeModel("mlx-community/a", tags=("mlx",)),)
+    api = FakeApi(models)
+    lister = DefaultHfModelLister(api_factory=lambda: api)
+
+    list(lister.list_models(author="mlx-community", pipeline_tag=None, limit=200))
+    list(lister.list_models(author="mlx-community", pipeline_tag=None, limit=200))
+    assert len(api.calls) == 2
 
 
 def test_run_hf_sample_checks_only_sampled_repos_with_static_options() -> None:

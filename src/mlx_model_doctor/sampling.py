@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol, cast
 
 from mlx_model_doctor.api import check_hf_model
+from mlx_model_doctor.cache import CacheKey, ListingCache
 from mlx_model_doctor.compat import mlx_signals
 from mlx_model_doctor.context import CheckOptions
 from mlx_model_doctor.errors import ModelDoctorError
@@ -68,9 +69,14 @@ class HfCheckFunction(Protocol):
 class DefaultHfModelLister:
     """Hugging Face model lister backed by huggingface_hub.HfApi."""
 
-    def __init__(self, api_factory: Callable[[], _HfApiProtocol] | None = None) -> None:
-        """Initialize the lister with an optional fakeable API factory."""
+    def __init__(
+        self,
+        api_factory: Callable[[], _HfApiProtocol] | None = None,
+        cache: ListingCache | None = None,
+    ) -> None:
+        """Initialize the lister with an optional fakeable API factory and listing cache."""
         self._api_factory = api_factory
+        self._cache = cache
 
     def list_models(
         self,
@@ -79,13 +85,28 @@ class DefaultHfModelLister:
         pipeline_tag: str | None,
         limit: int,
     ) -> Iterable[ModelCandidate]:
-        """List models and request the metadata needed for MLX candidate signals."""
-        return self._api().list_models(
-            author=author,
-            pipeline_tag=pipeline_tag,
-            limit=limit,
-            expand=list(_MODEL_METADATA_EXPAND),
+        """List models and request the metadata needed for MLX candidate signals.
+
+        When a listing cache is configured, a cache hit returns the cached
+        candidates without calling the Hugging Face API; a cache miss fetches
+        from the API and writes the result back to the cache.
+        """
+        key: CacheKey = (author, pipeline_tag, limit)
+        if self._cache is not None:
+            cached = self._cache.get(key)
+            if cached is not None:
+                return [_dict_to_candidate(d) for d in cached]
+        models = list(
+            self._api().list_models(
+                author=author,
+                pipeline_tag=pipeline_tag,
+                limit=limit,
+                expand=list(_MODEL_METADATA_EXPAND),
+            )
         )
+        if self._cache is not None:
+            self._cache.put(key, [_candidate_to_dict(m) for m in models])
+        return models
 
     def _api(self) -> _HfApiProtocol:
         if self._api_factory is not None:
@@ -95,6 +116,30 @@ class DefaultHfModelLister:
         except ImportError as exc:
             raise ModelDoctorError("huggingface-hub is required for `sample hf`") from exc
         return cast("_HfApiProtocol", HfApi())
+
+
+def _candidate_to_dict(m: ModelCandidate) -> dict[str, object]:
+    return {"repo_id": m.id, "tags": list(m.tags), "library_name": m.library_name}
+
+
+@dataclass(frozen=True, slots=True)
+class _CachedCandidate:
+    """A ``ModelCandidate`` reconstructed from cached listing data."""
+
+    id: str
+    tags: Sequence[str]
+    library_name: str | None
+
+
+def _dict_to_candidate(d: dict[str, object]) -> ModelCandidate:
+    return cast(
+        "ModelCandidate",
+        _CachedCandidate(
+            id=cast("str", d["repo_id"]),
+            tags=cast("Sequence[str]", d.get("tags", [])),
+            library_name=cast("str | None", d.get("library_name")),
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

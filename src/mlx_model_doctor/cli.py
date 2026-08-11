@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Literal, cast
 
 from mlx_model_doctor.api import check_hf_model, check_local_model
+from mlx_model_doctor.cache import ListingCache
+from mlx_model_doctor.compat import LISTING_VISIBLE_SIGNALS
 from mlx_model_doctor.context import CheckOptions
 from mlx_model_doctor.environment import detect_venv, package_status
 from mlx_model_doctor.errors import ModelDoctorError
@@ -25,6 +27,7 @@ from mlx_model_doctor.report import (
     render_text,
 )
 from mlx_model_doctor.sampling import (
+    DefaultHfModelLister,
     SampleBatchReport,
     render_sample_batch_json,
     render_sample_batch_markdown,
@@ -136,14 +139,38 @@ def _append_github_file(path: Path, content: str) -> None:
 
 
 def _cmd_sample_hf(args: argparse.Namespace) -> int:
+    signal_filter = _parse_signal_filter(args.signal_filter)
+    lister = _build_sample_lister(args)
     batch = run_hf_sample(
         author=args.author,
         task=args.task,
         limit=args.limit,
         plugin_name=args.plugin,
+        max_candidates=args.max_candidates,
+        signal_filter=signal_filter,
+        lister=lister,
     )
     print(_render_sample_batch(batch, args.format))
     return sample_batch_exit_code(batch)
+
+
+def _parse_signal_filter(raw: str | None) -> tuple[str, ...] | None:
+    if raw is None:
+        return None
+    signals = tuple(s.strip() for s in raw.split(",") if s.strip())
+    invalid = [s for s in signals if s not in LISTING_VISIBLE_SIGNALS]
+    if invalid:
+        raise ModelDoctorError(
+            f"Invalid signal filter values: {invalid}. Allowed: {sorted(LISTING_VISIBLE_SIGNALS)}"
+        )
+    return signals
+
+
+def _build_sample_lister(args: argparse.Namespace) -> DefaultHfModelLister | None:
+    if args.no_cache:
+        return None
+    cache = ListingCache(ttl_seconds=args.cache_ttl)
+    return DefaultHfModelLister(cache=cache)
 
 
 def _options_from_args(args: argparse.Namespace) -> CheckOptions:
@@ -244,7 +271,32 @@ def build_parser() -> argparse.ArgumentParser:
         "--limit",
         type=int,
         default=10,
-        help="number of MLX candidates to check (best-effort within a capped listing window)",
+        help="number of MLX candidates to check (use --max-candidates to control scan depth)",
+    )
+    sample_hf.add_argument(
+        "--max-candidates",
+        type=int,
+        default=None,
+        help="maximum models to scan from the Hub before filtering; overrides the default depth",
+    )
+    sample_hf.add_argument(
+        "--signal-filter",
+        default=None,
+        help=(
+            "comma-separated MLX signal names to keep; filters on the highest-priority "
+            "signal per candidate (e.g. tag:mlx,library:mlx-lm)"
+        ),
+    )
+    sample_hf.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="bypass the local listing cache and always fetch from the Hub",
+    )
+    sample_hf.add_argument(
+        "--cache-ttl",
+        type=int,
+        default=3600,
+        help="listing cache TTL in seconds (default: 3600)",
     )
     sample_hf.add_argument("--plugin", default="text", help="plugin name to run")
     sample_hf.add_argument(
