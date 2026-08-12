@@ -628,6 +628,12 @@ def test_sample_hf_wires_max_candidates_and_signal_filter_to_run_hf_sample(
     assert captured["signal_filter"] == ("tag:mlx", "library:mlx-lm")
 
 
+def test_parse_signal_filter_empty_string_returns_none() -> None:
+    from mlx_model_doctor.cli import _parse_signal_filter
+
+    assert _parse_signal_filter("") is None
+
+
 def test_sample_hf_invalid_signal_filter_value_is_a_tool_error(capsys) -> None:
     code = cli.main(["sample", "hf", "--signal-filter", "bogus-signal"])
     captured = capsys.readouterr()

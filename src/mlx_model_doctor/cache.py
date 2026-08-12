@@ -42,9 +42,9 @@ class ListingCache:
             The cached data if found and not expired, None otherwise.
         """
         path = self._path_for(key)
-        if not path.exists():
-            return None
         try:
+            if not path.exists():
+                return None
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return None
@@ -58,6 +58,8 @@ class ListingCache:
         data = raw.get("data")
         if not isinstance(data, list):
             return None
+        if not all(isinstance(item, dict) and "repo_id" in item for item in data):
+            return None
         return data
 
     def put(self, key: CacheKey, data: list[dict[str, object]]) -> None:
@@ -68,9 +70,12 @@ class ListingCache:
             data: The listing data to cache.
         """
         path = self._path_for(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"timestamp": time.time(), "data": data}
-        path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"timestamp": time.time(), "data": data}
+            path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        except OSError:
+            pass
 
     def clear(self) -> None:
         """Clear all cached entries."""

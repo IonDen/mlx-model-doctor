@@ -254,7 +254,7 @@ class FakeVlmModule:
     load_saw_trust_remote_code: bool | None = None
     generate_kwargs: dict[str, object] | None = None
 
-    def load(self, path: str, *, trust_remote_code: bool = False) -> tuple[object, object]:
+    def load(self, path: str, *, trust_remote_code: bool = True) -> tuple[object, object]:
         self.load_calls += 1
         self.load_saw_trust_remote_code = trust_remote_code
         if self._raise_on_load is not None:
@@ -423,6 +423,72 @@ def test_vlm_backend_generate_failure_returns_fail_result() -> None:
     )
     assert result.status == "fail"
     assert "vision encoder crash" in result.message
+
+
+def _vlm_smoke_context() -> CheckContext:
+    return CheckContext(target=FakeTarget(files={}, name="test-vlm"), options=check_options())
+
+
+def test_vlm_backend_refuses_when_caps_fail_after_load() -> None:
+    """Post-load cap reinstall failure must raise MemorySafetyError."""
+    from mlx_model_doctor.checks.smoke import MlxVlmBackend
+
+    # Create a FakeMx that succeeds on first install_mlx_memory_caps but fails on second
+    class CapsFailAfterLoadMx:
+        def __init__(self) -> None:
+            self.install_count = 0
+
+        def device_info(self) -> dict[str, object]:
+            self.install_count += 1
+            if self.install_count <= 1:
+                return {"max_recommended_working_set_size": 34_359_738_368}
+            return {"max_recommended_working_set_size": 0}  # Too small -> (0,0) caps
+
+        def set_wired_limit(self, value: int) -> None:
+            pass
+
+        def set_memory_limit(self, value: int) -> None:
+            pass
+
+        def reset_peak_memory(self) -> None:
+            pass
+
+        def get_peak_memory(self) -> int:
+            return 0
+
+    mx = CapsFailAfterLoadMx()
+    backend = MlxVlmBackend(vlm_module=FakeVlmModule(), mx_module=mx)
+    ctx = _vlm_smoke_context()
+    with pytest.raises(MemorySafetyError, match="reinstalled after VLM load"):
+        backend.generate(ctx)
+
+
+def test_vlm_smoke_fails_when_text_attribute_is_none() -> None:
+    """A GenerationResult with .text=None must fail, not false-pass via str()."""
+    from mlx_model_doctor.checks.smoke import MlxVlmBackend, MlxVlmSmokeCheck
+
+    class NoneTextResult:
+        text = None
+
+    class NoneTextVlm(FakeVlmModule):
+        def generate(
+            self,
+            model: object,
+            processor: object,
+            formatted_prompt: str,
+            image: object,
+            *,
+            max_tokens: int = 8,
+            verbose: bool = False,
+        ) -> NoneTextResult:
+            return NoneTextResult()
+
+    backend = MlxVlmBackend(vlm_module=NoneTextVlm(), mx_module=FakeMx())
+    check = MlxVlmSmokeCheck(backend=backend)
+    ctx = _vlm_smoke_context()
+    result = check.run(ctx)
+    assert result.status == "fail"
+    assert "empty" in result.message.lower()
 
 
 # --- VLM live smoke canary (real mlx-vlm runtime, opt-in via --run-smoke) ---

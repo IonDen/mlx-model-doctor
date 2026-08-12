@@ -1,5 +1,6 @@
 """Tests for the HF listing cache."""
 
+import json
 import time
 from pathlib import Path
 
@@ -61,3 +62,27 @@ def test_cache_none_task_and_string_none_have_different_keys(tmp_path: Path) -> 
     cache.put(("author", "None", 200), data_str)
     assert cache.get(("author", None, 200)) == data_none
     assert cache.get(("author", "None", 200)) == data_str
+
+
+def test_cache_put_survives_readonly_directory(tmp_path: Path) -> None:
+    readonly_dir = tmp_path / "readonly"
+    readonly_dir.mkdir()
+    readonly_dir.chmod(0o444)
+    cache = ListingCache(cache_dir=readonly_dir / "subdir", ttl_seconds=3600)
+    # Should not raise
+    cache.put(("author", None, 200), [{"repo_id": "a", "tags": [], "library_name": None}])
+    assert cache.get(("author", None, 200)) is None
+    readonly_dir.chmod(0o755)  # Restore for cleanup
+
+
+def test_cache_treats_malformed_entries_as_miss(tmp_path: Path) -> None:
+    cache = ListingCache(cache_dir=tmp_path, ttl_seconds=3600)
+    key: CacheKey = ("author", None, 200)
+    # Write valid envelope but malformed data (missing repo_id)
+    path = cache._path_for(key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    import time as t
+
+    payload = {"timestamp": t.time(), "data": [{"tags": [], "library_name": None}]}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    assert cache.get(key) is None

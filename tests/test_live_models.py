@@ -175,6 +175,7 @@ def test_sample_hf_signal_filter_filters_candidates() -> None:
         limit=5,
         signal_filter=("tag:mlx",),
     )
+    assert len(batch.items) > 0, "Expected at least one candidate matching signal filter"
     for item in batch.items:
         assert item.signal == "tag:mlx"
 

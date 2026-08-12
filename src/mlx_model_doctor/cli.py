@@ -38,7 +38,7 @@ from mlx_model_doctor.sampling import (
 
 Command = Callable[[argparse.Namespace], int]
 Verbosity = Literal["quiet", "normal", "verbose"]
-DEPENDENCIES: tuple[str, ...] = ("huggingface-hub", "safetensors", "mlx", "mlx-lm")
+DEPENDENCIES: tuple[str, ...] = ("huggingface-hub", "safetensors", "mlx", "mlx-lm", "mlx-vlm")
 
 
 def _package_version() -> str:
@@ -158,6 +158,8 @@ def _parse_signal_filter(raw: str | None) -> tuple[str, ...] | None:
     if raw is None:
         return None
     signals = tuple(s.strip() for s in raw.split(",") if s.strip())
+    if not signals:
+        return None
     invalid = [s for s in signals if s not in LISTING_VISIBLE_SIGNALS]
     if invalid:
         raise ModelDoctorError(

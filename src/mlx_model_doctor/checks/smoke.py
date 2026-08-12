@@ -198,7 +198,11 @@ class MlxVlmBackend:
         mx.reset_peak_memory()
         model, processor = vlm.load(ctx.target.name, trust_remote_code=False)
         # Re-install caps after load (mlx-vlm may override wired limit during load).
-        install_mlx_memory_caps(mx)
+        caps_gib = install_mlx_memory_caps(mx)
+        if caps_gib[0] <= 0 or caps_gib[1] <= 0:
+            raise MemorySafetyError(
+                "MLX memory caps could not be reinstalled after VLM load; refusing to generate uncapped."
+            )
         config = getattr(model, "config", None)
         formatted_prompt = vlm.apply_chat_template(processor, config, self.prompt, num_images=1)
         image = _dummy_image()
@@ -211,7 +215,12 @@ class MlxVlmBackend:
             verbose=False,
         )
         raw_text = getattr(result, "text", None)
-        text = raw_text if isinstance(raw_text, str) else str(result)
+        if isinstance(raw_text, str):
+            text = raw_text
+        elif isinstance(result, str):
+            text = result
+        else:
+            text = ""
         return SmokeGeneration(
             text=text,
             peak_memory_bytes=mx.get_peak_memory(),
