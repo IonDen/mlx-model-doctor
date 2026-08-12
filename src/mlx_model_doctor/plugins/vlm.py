@@ -19,6 +19,7 @@ from mlx_model_doctor.checks.quantization import (
     QuantizationMetadataCheck,
 )
 from mlx_model_doctor.checks.safetensors import SafetensorsIndexCheck, SafetensorsOffsetScanCheck
+from mlx_model_doctor.checks.smoke import MlxVlmSmokeCheck
 from mlx_model_doctor.checks.tokenizer import SpecialTokensCheck, TokenizerFilesCheck
 from mlx_model_doctor.checks.vlm import (
     VlmImageProcessorCheck,
@@ -71,4 +72,4 @@ class VlmModelPlugin:
 
     def smoke_checks(self) -> Sequence[ModelCheck]:
         """Return runtime smoke checks for this plugin."""
-        return ()
+        return cast("Sequence[ModelCheck]", (MlxVlmSmokeCheck(),))

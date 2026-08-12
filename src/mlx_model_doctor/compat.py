@@ -8,6 +8,20 @@ MLX_NAME_TOKENS: tuple[str, ...] = ("mlx", "4bit", "8bit")
 MLX_COMMUNITY_PREFIX = "mlx-community/"
 WEAK_SIGNALS: frozenset[str] = frozenset({"repo-name"})
 
+# Signals `candidate_signal` can produce from Hub *listing* metadata alone (repo id,
+# tags, library_name) — no config.json or weight bytes. `config:quantization` and
+# `weights:mlx-quant` require reading those and never appear during a listing scan,
+# so a `sample hf --signal-filter` value is validated against this narrower set.
+LISTING_VISIBLE_SIGNALS: frozenset[str] = frozenset(
+    {
+        "tag:mlx",
+        "library:mlx",
+        "library:mlx-lm",
+        "author:mlx-community",
+        "repo-name",
+    }
+)
+
 
 def mlx_signals(
     *,

@@ -219,6 +219,7 @@ def _validate_index(
     )
 
 
+# Verified against safetensors 0.4.x (huggingface/safetensors, dtype.rs).
 _KNOWN_ST_DTYPES = frozenset(
     {
         "BOOL",

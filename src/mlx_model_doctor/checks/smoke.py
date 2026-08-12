@@ -144,6 +144,145 @@ class MlxLmSmokeCheck:
         )
 
 
+class MlxVlmModule(Protocol):
+    """mlx-vlm API surface used by the VLM smoke backend.
+
+    Signatures verified against mlx-vlm==0.6.12 (via ``inspect.signature``
+    against the installed package): ``load`` and ``generate`` accept many
+    more parameters via ``**kwargs`` than declared here; only the ones this
+    backend passes are part of this Protocol. Notably ``apply_chat_template``
+    requires a model-config argument (``processor, config, prompt, ...``),
+    unlike the plan's initial assumption of a two-argument call.
+    """
+
+    def load(
+        self, path_or_hf_repo: str, *, trust_remote_code: bool = False
+    ) -> tuple[object, object]:
+        """Load a VLM model and processor."""
+
+    def apply_chat_template(
+        self, processor: object, config: object, prompt: str, *, num_images: int = 1
+    ) -> str:
+        """Format a prompt with image tokens via the model's chat template."""
+
+    def generate(
+        self,
+        model: object,
+        processor: object,
+        prompt: str,
+        image: object,
+        *,
+        max_tokens: int = 8,
+        verbose: bool = False,
+    ) -> object:
+        """Generate text from a VLM. Returns an object with a .text attribute."""
+
+
+@dataclass(frozen=True, slots=True)
+class MlxVlmBackend:
+    """Smoke backend backed by optional mlx-vlm runtime dependencies."""
+
+    prompt: str = "Describe this image."
+    vlm_module: MlxVlmModule | None = None
+    mx_module: MlxCoreSmokeModule | None = None
+
+    def generate(self, ctx: CheckContext) -> SmokeGeneration:
+        """Load a VLM target and generate a tiny completion from a dummy image."""
+        vlm = self.vlm_module if self.vlm_module is not None else _import_vlm_module()
+        mx = self.mx_module if self.mx_module is not None else _import_mlx_for_vlm()
+        caps_gib = install_mlx_memory_caps(mx)
+        if caps_gib[0] <= 0 or caps_gib[1] <= 0:
+            raise MemorySafetyError(
+                "MLX memory caps could not be installed; refusing to load VLM uncapped."
+            )
+        mx.reset_peak_memory()
+        model, processor = vlm.load(ctx.target.name, trust_remote_code=False)
+        # Re-install caps after load (mlx-vlm may override wired limit during load).
+        caps_gib = install_mlx_memory_caps(mx)
+        if caps_gib[0] <= 0 or caps_gib[1] <= 0:
+            raise MemorySafetyError(
+                "MLX memory caps could not be reinstalled after VLM load; refusing to generate uncapped."
+            )
+        config = getattr(model, "config", None)
+        formatted_prompt = vlm.apply_chat_template(processor, config, self.prompt, num_images=1)
+        image = _dummy_image()
+        result = vlm.generate(
+            model,
+            processor,
+            formatted_prompt,
+            image,
+            max_tokens=8,
+            verbose=False,
+        )
+        raw_text = getattr(result, "text", None)
+        if isinstance(raw_text, str):
+            text = raw_text
+        elif isinstance(result, str):
+            text = result
+        else:
+            text = ""
+        return SmokeGeneration(
+            text=text,
+            peak_memory_bytes=mx.get_peak_memory(),
+            memory_caps_gib=caps_gib,
+        )
+
+
+def _dummy_image() -> object:
+    """Create a 64x64 solid-color PIL Image for smoke testing."""
+    try:
+        from PIL import Image
+    except ImportError as exc:
+        raise _dependency_error_vlm("Pillow") from exc
+    return Image.new("RGB", (64, 64), color=(128, 128, 128))
+
+
+@dataclass(frozen=True, slots=True)
+class MlxVlmSmokeCheck:
+    """Smoke check that asserts mlx-vlm can produce non-empty text from a dummy image."""
+
+    check_id: str = "vlm/smoke.mlx_vlm"
+    title: str = "MLX-VLM smoke check"
+    backend: SmokeBackend = field(default_factory=MlxVlmBackend)
+
+    def run(self, ctx: CheckContext) -> CheckResult:
+        """Run a tiny VLM generation through the configured backend."""
+        try:
+            generation = self.backend.generate(ctx)
+        except ModelDoctorError:
+            raise
+        except Exception as exc:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="fail",
+                severity="high",
+                message=f"VLM smoke generation failed: {exc}",
+                remediation="Inspect the model with mlx-vlm directly before using it.",
+            )
+
+        details = _generation_details(generation)
+        if not generation.text.strip():
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="fail",
+                severity="high",
+                message="VLM smoke generation returned empty text.",
+                remediation="Verify the VLM model and processor can produce text from an image.",
+                details=details,
+            )
+
+        return CheckResult(
+            check_id=self.check_id,
+            title=self.title,
+            status="pass",
+            severity="info",
+            message="VLM smoke generation produced non-empty text.",
+            details=details,
+        )
+
+
 def _generation_details(generation: SmokeGeneration) -> dict[str, object]:
     details: dict[str, object] = {
         "generated_text_chars": len(generation.text),
@@ -194,3 +333,37 @@ def _cwd_file_names() -> set[str]:
         return {path.name for path in Path.cwd().iterdir()}
     except OSError:
         return set()
+
+
+def _import_vlm_module() -> MlxVlmModule:
+    try:
+        vlm = importlib.import_module("mlx_vlm")
+    except ImportError as exc:
+        raise _dependency_error_vlm("mlx-vlm") from exc
+    return cast("MlxVlmModule", vlm)
+
+
+def _import_mlx_for_vlm() -> MlxCoreSmokeModule:
+    try:
+        mx = importlib.import_module("mlx.core")
+    except ImportError as exc:
+        raise _dependency_error_vlm("mlx") from exc
+    return cast("MlxCoreSmokeModule", mx)
+
+
+def _dependency_error_vlm(missing_package: str) -> DependencyError:
+    hint = format_install_hint(
+        missing_package=missing_package,
+        extra_name="mlx-vlm",
+        executable=sys.executable,
+        has_uv_context=has_uv_context(
+            cwd_files=_cwd_file_names(),
+            environ=os.environ,
+        ),
+    )
+    return DependencyError(
+        missing_package=missing_package,
+        extra_name="mlx-vlm",
+        executable=sys.executable,
+        message=hint,
+    )

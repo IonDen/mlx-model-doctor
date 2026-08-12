@@ -24,7 +24,12 @@
         "tool-error": { "type": "integer", "minimum": 0 }
       }
     },
-    "items": { "type": "array", "items": { "$ref": "#/$defs/item" } }
+    "items": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "max_candidates": { "type": "integer", "minimum": 1 },
+    "signal_filter": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
   },
   "$defs": {
     "item": {

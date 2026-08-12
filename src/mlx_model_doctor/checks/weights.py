@@ -70,6 +70,7 @@ _OUTPUT_HEAD_NAMES = (
 )
 
 
+# tie_word_embeddings interpretation verified against transformers v4.x-v5.x.
 @dataclass(frozen=True, slots=True)
 class TiedEmbeddingCheck:
     """Cross-check tie_word_embeddings against stored embedding/head tensors."""

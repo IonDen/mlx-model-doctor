@@ -106,15 +106,13 @@ def test_quant_mode_passes_for_valid_fixed_mode() -> None:
     assert result.status == "pass"
 
 
-def test_quant_mode_fails_for_unknown_mode() -> None:
+def test_quant_mode_warns_for_unknown_mode() -> None:
     result = MlxQuantizationModeCheck().run(
         _context_for_config({"quantization": {"mode": "int8", "bits": 8, "group_size": 64}})
     )
-    assert result.status == "fail"
-    assert result.severity == "high"
-    assert "mode" in result.message.lower()
-    # The scalar path's details carry the offending mode (published contract). The
-    # per-layer path pins its details; without this the scalar path could return {}.
+    assert result.status == "warn"
+    assert result.severity == "medium"
+    assert "not recognized as of MLX" in result.message
     assert result.details == {"mode": "int8"}
 
 
@@ -478,13 +476,12 @@ def test_quant_mode_scalar_explicit_null_fields_classify_as_absent() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_quant_mode_per_layer_unknown_mode_fails() -> None:
-    # RED->GREEN: today the override is ignored -> pass. After the fix -> fail naming the layer.
+def test_quant_mode_per_layer_unknown_mode_warns() -> None:
     quant = {"mode": "mxfp4", "bits": 4, "group_size": 32, "model.layers.0": {"mode": "int3"}}
     result = MlxQuantizationModeCheck().run(_context_for_config({"quantization": quant}))
-    assert result.status == "fail"
-    assert result.severity == "high"
-    assert result.details == {"invalid_mode_layers": ("model.layers.0",)}
+    assert result.status == "warn"
+    assert result.severity == "medium"
+    assert result.details == {"off_table_layers": ("model.layers.0",)}
 
 
 def test_quant_mode_per_layer_off_table_bits_warns() -> None:
@@ -515,13 +512,14 @@ def test_quant_mode_per_layer_unhashable_value_warns_not_crashes() -> None:
     assert result.details == {"off_table_layers": ("l",)}
 
 
-def test_quant_mode_fail_beats_warn_across_scalar_and_layers() -> None:
-    # Scalar off-table (warn) + a per-layer unknown mode (fail) -> overall fail, both reflected.
+def test_quant_mode_warns_across_scalar_and_layers() -> None:
+    # Scalar off-table (warn) + a per-layer unknown mode (also warn now) -> overall warn.
     quant = {"bits": 7, "group_size": 64, "model.layers.0": {"mode": "int3"}}
     result = MlxQuantizationModeCheck().run(_context_for_config({"quantization": quant}))
-    assert result.status == "fail"
+    assert result.status == "warn"
+    assert result.severity == "medium"
     assert result.details == {
-        "invalid_mode_layers": ("model.layers.0",),
+        "off_table_layers": ("model.layers.0",),
         "scalar_default_invalid": True,
     }
 
@@ -544,8 +542,8 @@ def test_quant_mode_multiple_offending_layers_are_sorted() -> None:
         "model.layers.0": {"mode": "int3"},
     }
     result = MlxQuantizationModeCheck().run(_context_for_config({"quantization": quant}))
-    assert result.status == "fail"
-    assert result.details == {"invalid_mode_layers": ("model.layers.0", "model.layers.1")}
+    assert result.status == "warn"
+    assert result.details == {"off_table_layers": ("model.layers.0", "model.layers.1")}
 
 
 def test_quant_mode_passes_for_valid_mixed_precision() -> None:
@@ -581,13 +579,12 @@ def test_quant_mode_stray_foreign_mapping_preserves_scalar_fast_path() -> None:
     assert result.details == {"mode": "affine", "group_size": 64, "bits": 4}
 
 
-def test_quant_mode_scalar_fail_with_valid_overrides() -> None:
-    # Scalar unknown mode (fail) + all per-layer overrides valid -> overall fail; details carry
-    # only the scalar flag (fail_layers empty, so no invalid_mode_layers tuple).
+def test_quant_mode_scalar_unknown_with_valid_overrides_warns() -> None:
+    # Scalar unknown mode (warn now) + all per-layer overrides valid -> overall warn.
     quant = {"mode": "int3", "bits": 4, "group_size": 32, "l": {"bits": 8, "group_size": 64}}
     result = MlxQuantizationModeCheck().run(_context_for_config({"quantization": quant}))
-    assert result.status == "fail"
-    assert result.severity == "high"
+    assert result.status == "warn"
+    assert result.severity == "medium"
     assert result.details == {"scalar_default_invalid": True}
 
 

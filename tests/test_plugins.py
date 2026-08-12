@@ -33,4 +33,4 @@ def test_vlm_plugin_check_inventory_is_ordered() -> None:
         "vlm/weights.tied_embedding",
         "vlm/quantization.shape",
     ]
-    assert plugin.smoke_checks() == ()
+    assert [check.check_id for check in plugin.smoke_checks()] == ["vlm/smoke.mlx_vlm"]

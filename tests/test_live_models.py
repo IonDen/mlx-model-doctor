@@ -149,3 +149,51 @@ def test_nvfp4_mixed_precision_repo_quant_mode_passes() -> None:
 
     report = check_hf_model("mlx-community/Qwen3.6-35B-A3B-nvfp4")
     assert _quant_mode_result(report).status == "pass"
+
+
+@pytest.mark.network
+def test_sample_hf_max_candidates_returns_results() -> None:
+    """Live: --max-candidates 50 scans deeper and returns results."""
+    from mlx_model_doctor.sampling import run_hf_sample
+
+    batch = run_hf_sample(
+        author="mlx-community",
+        limit=3,
+        max_candidates=50,
+    )
+    assert len(batch.items) > 0
+    assert batch.max_candidates == 50
+
+
+@pytest.mark.network
+def test_sample_hf_signal_filter_filters_candidates() -> None:
+    """Live: --signal-filter tag:mlx returns only tag:mlx candidates."""
+    from mlx_model_doctor.sampling import run_hf_sample
+
+    batch = run_hf_sample(
+        author="mlx-community",
+        limit=5,
+        signal_filter=("tag:mlx",),
+    )
+    assert len(batch.items) > 0, "Expected at least one candidate matching signal filter"
+    for item in batch.items:
+        assert item.signal == "tag:mlx"
+
+
+@pytest.mark.network
+def test_sample_hf_cache_round_trip(tmp_path: Path) -> None:
+    """Live: cache write -> cache read returns same result; a fresh lister bypasses it."""
+    from mlx_model_doctor.cache import ListingCache
+    from mlx_model_doctor.sampling import DefaultHfModelLister, run_hf_sample
+
+    cache = ListingCache(cache_dir=tmp_path, ttl_seconds=3600)
+    lister = DefaultHfModelLister(cache=cache)
+
+    batch1 = run_hf_sample(author="mlx-community", limit=3, lister=lister)
+    batch2 = run_hf_sample(author="mlx-community", limit=3, lister=lister)
+    assert [i.repo_id for i in batch1.items] == [i.repo_id for i in batch2.items]
+
+    # A fresh lister with no cache still returns results (cache is not required).
+    lister_no_cache = DefaultHfModelLister()
+    batch3 = run_hf_sample(author="mlx-community", limit=3, lister=lister_no_cache)
+    assert len(batch3.items) > 0

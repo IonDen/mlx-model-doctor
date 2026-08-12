@@ -334,6 +334,39 @@ def test_sample_hf_command_parser_has_author_limit_and_format() -> None:
     assert args.format == "markdown"
 
 
+def test_sample_hf_max_candidates_flag() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["sample", "hf", "--max-candidates", "500"])
+    assert args.max_candidates == 500
+
+
+def test_sample_hf_signal_filter_flag() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["sample", "hf", "--signal-filter", "tag:mlx,library:mlx-lm"])
+    assert args.signal_filter == "tag:mlx,library:mlx-lm"
+
+
+def test_sample_hf_no_cache_flag() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["sample", "hf", "--no-cache"])
+    assert args.no_cache is True
+
+
+def test_sample_hf_cache_ttl_flag() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["sample", "hf", "--cache-ttl", "7200"])
+    assert args.cache_ttl == 7200
+
+
+def test_sample_hf_flags_default_to_cache_enabled_and_unfiltered() -> None:
+    parser = cli.build_parser()
+    args = parser.parse_args(["sample", "hf"])
+    assert args.max_candidates is None
+    assert args.signal_filter is None
+    assert args.no_cache is False
+    assert args.cache_ttl == 3600
+
+
 def test_sample_without_leaf_subcommand_is_argparse_error(capsys) -> None:
     with pytest.raises(SystemExit) as exc_info:
         cli.main(["sample"])
@@ -353,6 +386,9 @@ def test_sample_hf_dispatches_fake_batch_runner_without_network(monkeypatch, cap
         task: str | None = None,
         limit: int = 10,
         plugin_name: str = "text",
+        max_candidates: int | None = None,
+        signal_filter: tuple[str, ...] | None = None,
+        lister: object | None = None,
     ) -> SampleBatchReport:
         captured.update(
             {
@@ -419,6 +455,9 @@ def test_sample_hf_vlm_json_dispatches_plugin_and_task(monkeypatch, capsys) -> N
         task: str | None = None,
         limit: int = 10,
         plugin_name: str = "text",
+        max_candidates: int | None = None,
+        signal_filter: tuple[str, ...] | None = None,
+        lister: object | None = None,
     ) -> SampleBatchReport:
         captured.update(
             {"author": author, "task": task, "limit": limit, "plugin_name": plugin_name}
@@ -483,6 +522,9 @@ def test_sample_hf_exits_two_when_no_models_could_be_checked(monkeypatch, capsys
         task: str | None = None,
         limit: int = 10,
         plugin_name: str = "text",
+        max_candidates: int | None = None,
+        signal_filter: tuple[str, ...] | None = None,
+        lister: object | None = None,
     ) -> SampleBatchReport:
         return SampleBatchReport(
             author=author,
@@ -519,6 +561,9 @@ def test_sample_hf_empty_batch_exits_zero(monkeypatch, capsys) -> None:
         task: str | None = None,
         limit: int = 10,
         plugin_name: str = "text",
+        max_candidates: int | None = None,
+        signal_filter: tuple[str, ...] | None = None,
+        lister: object | None = None,
     ) -> SampleBatchReport:
         return SampleBatchReport(
             author=author,
@@ -538,6 +583,122 @@ def test_sample_hf_empty_batch_exits_zero(monkeypatch, capsys) -> None:
     # would make this empty batch return 2 — the all-errors test cannot catch that.
     assert code == 0
     assert json.loads(captured.out)["items"] == []
+
+
+def test_sample_hf_wires_max_candidates_and_signal_filter_to_run_hf_sample(
+    monkeypatch, capsys
+) -> None:
+    from mlx_model_doctor.sampling import SampleBatchReport
+
+    captured: dict[str, object] = {}
+
+    def fake_run_hf_sample(
+        *,
+        author: str = "mlx-community",
+        task: str | None = None,
+        limit: int = 10,
+        plugin_name: str = "text",
+        max_candidates: int | None = None,
+        signal_filter: tuple[str, ...] | None = None,
+        lister: object | None = None,
+    ) -> SampleBatchReport:
+        captured["max_candidates"] = max_candidates
+        captured["signal_filter"] = signal_filter
+        return SampleBatchReport(
+            author=author, task=task, limit=limit, plugin=plugin_name, items=()
+        )
+
+    monkeypatch.setattr(cli, "run_hf_sample", fake_run_hf_sample)
+
+    code = cli.main(
+        [
+            "sample",
+            "hf",
+            "--max-candidates",
+            "50",
+            "--signal-filter",
+            "tag:mlx,library:mlx-lm",
+            "--format",
+            "json",
+        ]
+    )
+
+    assert code == 0
+    assert captured["max_candidates"] == 50
+    assert captured["signal_filter"] == ("tag:mlx", "library:mlx-lm")
+
+
+def test_parse_signal_filter_empty_string_returns_none() -> None:
+    from mlx_model_doctor.cli import _parse_signal_filter
+
+    assert _parse_signal_filter("") is None
+
+
+def test_sample_hf_invalid_signal_filter_value_is_a_tool_error(capsys) -> None:
+    code = cli.main(["sample", "hf", "--signal-filter", "bogus-signal"])
+    captured = capsys.readouterr()
+
+    assert code == 2
+    assert "Invalid signal filter" in captured.err
+
+
+def test_sample_hf_default_run_wires_a_cache_backed_lister(monkeypatch, capsys) -> None:
+    from mlx_model_doctor.sampling import DefaultHfModelLister, SampleBatchReport
+
+    captured: dict[str, object] = {}
+
+    def fake_run_hf_sample(
+        *,
+        author: str = "mlx-community",
+        task: str | None = None,
+        limit: int = 10,
+        plugin_name: str = "text",
+        max_candidates: int | None = None,
+        signal_filter: tuple[str, ...] | None = None,
+        lister: object | None = None,
+    ) -> SampleBatchReport:
+        captured["lister"] = lister
+        return SampleBatchReport(
+            author=author, task=task, limit=limit, plugin=plugin_name, items=()
+        )
+
+    monkeypatch.setattr(cli, "run_hf_sample", fake_run_hf_sample)
+
+    code = cli.main(["sample", "hf", "--cache-ttl", "7200", "--format", "json"])
+
+    assert code == 0
+    lister = captured["lister"]
+    assert isinstance(lister, DefaultHfModelLister)
+    assert lister._cache is not None
+    assert lister._cache._ttl_seconds == 7200
+
+
+def test_sample_hf_no_cache_flag_disables_the_lister(monkeypatch, capsys) -> None:
+    from mlx_model_doctor.sampling import SampleBatchReport
+
+    captured: dict[str, object] = {}
+
+    def fake_run_hf_sample(
+        *,
+        author: str = "mlx-community",
+        task: str | None = None,
+        limit: int = 10,
+        plugin_name: str = "text",
+        max_candidates: int | None = None,
+        signal_filter: tuple[str, ...] | None = None,
+        lister: object | None = None,
+    ) -> SampleBatchReport:
+        captured["lister"] = lister
+        return SampleBatchReport(
+            author=author, task=task, limit=limit, plugin=plugin_name, items=()
+        )
+
+    monkeypatch.setattr(cli, "run_hf_sample", fake_run_hf_sample)
+
+    code = cli.main(["sample", "hf", "--no-cache", "--format", "json"])
+
+    assert code == 0
+    assert captured["lister"] is None
 
 
 def test_check_hf_markdown_output_and_fail_on_warn(monkeypatch, tmp_path: Path, capsys) -> None:

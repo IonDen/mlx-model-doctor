@@ -6,10 +6,13 @@ Live, networked sampling/check behavior is exercised in ``test_live_models.py``
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 import pytest
 
+from mlx_model_doctor.cache import ListingCache
+from mlx_model_doctor.compat import LISTING_VISIBLE_SIGNALS
 from mlx_model_doctor.context import CheckOptions
 from mlx_model_doctor.errors import ModelDoctorError
 from mlx_model_doctor.report import CheckResult, DoctorReport
@@ -142,6 +145,51 @@ def test_deterministic_sample_rejects_negative_limit() -> None:
         deterministic_sample((FakeModel(id="a/model", tags=("mlx",)),), limit=-1)
 
 
+def test_deterministic_sample_with_signal_filter() -> None:
+    models = [
+        FakeModel("mlx-community/a", tags=("mlx",), library_name="mlx"),
+        FakeModel("mlx-community/b", tags=(), library_name="mlx-lm"),
+        FakeModel("mlx-community/c", tags=("mlx",)),
+    ]
+    result = deterministic_sample(models, limit=10, signal_filter=("library:mlx-lm",))
+    assert len(result) == 1
+    assert result[0][0].id == "mlx-community/b"
+    assert result[0][1] == "library:mlx-lm"
+
+
+def test_deterministic_sample_no_filter_keeps_all() -> None:
+    models = [
+        FakeModel("mlx-community/a", tags=("mlx",), library_name="mlx"),
+        FakeModel("mlx-community/b", tags=(), library_name="mlx-lm"),
+    ]
+    result = deterministic_sample(models, limit=10, signal_filter=None)
+    assert len(result) == 2
+
+
+def test_signal_filter_applied_before_limit_slice() -> None:
+    models = [
+        FakeModel("mlx-community/b", tags=("mlx",)),
+        FakeModel("mlx-community/a", tags=("mlx",)),
+        FakeModel("mlx-community/c", tags=(), library_name="mlx-lm"),
+    ]
+    result = deterministic_sample(models, limit=1, signal_filter=("tag:mlx",))
+    assert len(result) == 1
+    assert result[0][0].id == "mlx-community/a"
+
+
+def test_listing_visible_signals_is_correct_set() -> None:
+    expected = frozenset(
+        {
+            "tag:mlx",
+            "library:mlx",
+            "library:mlx-lm",
+            "author:mlx-community",
+            "repo-name",
+        }
+    )
+    assert expected == LISTING_VISIBLE_SIGNALS
+
+
 def test_default_hf_model_lister_maps_task_to_pipeline_tag_and_requests_metadata() -> None:
     api = FakeApi((FakeModel(id="a/model", tags=("mlx",)),))
     lister = DefaultHfModelLister(api_factory=lambda: api)
@@ -159,6 +207,36 @@ def test_default_hf_model_lister_maps_task_to_pipeline_tag_and_requests_metadata
             "expand": ["tags", "library_name"],
         }
     ]
+
+
+def test_default_hf_model_lister_uses_cache(tmp_path: Path) -> None:
+    """Cache hit skips the API; cache miss fetches then writes."""
+    models = (FakeModel("mlx-community/a", tags=("mlx",)),)
+    api = FakeApi(models)
+    cache = ListingCache(cache_dir=tmp_path, ttl_seconds=3600)
+    lister = DefaultHfModelLister(api_factory=lambda: api, cache=cache)
+
+    # First call: cache miss -> API called, cache written
+    result1 = list(lister.list_models(author="mlx-community", pipeline_tag=None, limit=200))
+    assert len(api.calls) == 1
+    assert len(result1) == 1
+
+    # Second call: cache hit -> API NOT called
+    result2 = list(lister.list_models(author="mlx-community", pipeline_tag=None, limit=200))
+    assert len(api.calls) == 1  # still 1 -- cache hit
+    assert len(result2) == 1
+    assert result2[0].id == "mlx-community/a"
+
+
+def test_default_hf_model_lister_without_cache_always_fetches(tmp_path: Path) -> None:
+    """Without a cache, every call hits the API."""
+    models = (FakeModel("mlx-community/a", tags=("mlx",)),)
+    api = FakeApi(models)
+    lister = DefaultHfModelLister(api_factory=lambda: api)
+
+    list(lister.list_models(author="mlx-community", pipeline_tag=None, limit=200))
+    list(lister.list_models(author="mlx-community", pipeline_tag=None, limit=200))
+    assert len(api.calls) == 2
 
 
 def test_run_hf_sample_checks_only_sampled_repos_with_static_options() -> None:
@@ -237,6 +315,11 @@ def test_run_hf_sample_listing_failure_is_tool_error() -> None:
 
     with pytest.raises(ModelDoctorError, match="Could not list Hugging Face models"):
         run_hf_sample(lister=lister, check_model=unused_check)
+
+
+def test_run_hf_sample_rejects_zero_max_candidates() -> None:
+    with pytest.raises(ModelDoctorError, match="max-candidates must be at least 1"):
+        run_hf_sample(author="x", limit=1, max_candidates=0, lister=FakeLister([]))
 
 
 def test_run_hf_sample_rejects_negative_limit_before_listing() -> None:
@@ -328,6 +411,65 @@ def test_run_hf_sample_overfetches_so_limit_counts_mlx_candidates() -> None:
     assert lister.calls[0]["limit"] > 2  # over-fetched beyond the user limit
 
 
+def test_run_hf_sample_preserves_legacy_fetch_depth_when_max_candidates_is_none() -> None:
+    """When max_candidates is None (default), the legacy overfetch formula is used."""
+    models = tuple(FakeModel(f"mlx-community/m{i}", tags=("mlx",)) for i in range(50))
+    lister = FakeLister(models)
+    run_hf_sample(author="mlx-community", limit=5, lister=lister)
+    # Legacy: min(max(5 * 5, 5), 200) = 25 — NOT 200
+    assert lister.calls[0]["limit"] == 25
+
+
+def test_run_hf_sample_uses_explicit_max_candidates_as_fetch_depth() -> None:
+    models = tuple(FakeModel(f"mlx-community/m{i}", tags=("mlx",)) for i in range(3))
+    lister = FakeLister(models)
+    run_hf_sample(author="mlx-community", limit=5, lister=lister, max_candidates=500)
+    assert lister.calls[0]["limit"] == 500
+
+
+def test_run_hf_sample_passes_signal_filter_through_to_deterministic_sample() -> None:
+    lister = FakeLister(
+        (
+            FakeModel(id="a/lib", library_name="mlx-lm"),
+            FakeModel(id="b/tag", tags=("mlx",)),
+        )
+    )
+
+    def ok_check(
+        repo_id: str,
+        *,
+        options: CheckOptions | None = None,
+        plugin_name: str = "text",
+    ) -> DoctorReport:
+        return sample_report(repo_id, status="pass")
+
+    batch = run_hf_sample(lister=lister, check_model=ok_check, signal_filter=("library:mlx-lm",))
+
+    assert [item.repo_id for item in batch.items] == ["a/lib"]
+
+
+def test_batch_report_has_optional_fields() -> None:
+    batch = run_hf_sample(
+        author="mlx-community",
+        limit=0,
+        lister=FakeLister(()),
+        max_candidates=500,
+        signal_filter=("tag:mlx",),
+    )
+    assert batch.max_candidates == 500
+    assert batch.signal_filter == ("tag:mlx",)
+
+
+def test_batch_report_omits_optional_fields_when_none() -> None:
+    batch = run_hf_sample(
+        author="mlx-community",
+        limit=0,
+        lister=FakeLister(()),
+    )
+    assert batch.max_candidates is None
+    assert batch.signal_filter is None
+
+
 def test_sampled_model_result_requires_report_when_checked() -> None:
     with pytest.raises(ValueError, match="checked sample results must include a report"):
         SampledModelResult(repo_id="a/x", signal="tag:mlx", status="checked", report=None)
@@ -388,6 +530,60 @@ def test_sample_batch_renderers_include_repo_signals_statuses_reports_and_errors
     assert "  Error: not found" in text_lines
     assert "  checked: 1" in text_lines
     assert "  tool-error: 1" in text_lines
+
+
+def test_render_sample_batch_shows_max_candidates_and_signal_filter_when_present() -> None:
+    batch = SampleBatchReport(
+        author="mlx-community",
+        task=None,
+        limit=5,
+        plugin="text",
+        items=(),
+        max_candidates=500,
+        signal_filter=("tag:mlx", "library:mlx-lm"),
+    )
+
+    text = render_sample_batch_text(batch)
+    markdown = render_sample_batch_markdown(batch)
+
+    assert "Max candidates: 500" in text.splitlines()
+    assert "Signal filter: tag:mlx, library:mlx-lm" in text.splitlines()
+    assert "- Max candidates: `500`" in markdown.splitlines()
+    assert "- Signal filter: `tag:mlx, library:mlx-lm`" in markdown.splitlines()
+
+
+def test_render_sample_batch_omits_max_candidates_and_signal_filter_when_none() -> None:
+    batch = SampleBatchReport(author="mlx-community", task=None, limit=5, plugin="text", items=())
+
+    text = render_sample_batch_text(batch)
+    markdown = render_sample_batch_markdown(batch)
+
+    assert "Max candidates" not in text
+    assert "Signal filter" not in text
+    assert "Max candidates" not in markdown
+    assert "Signal filter" not in markdown
+
+
+def test_render_sample_batch_json_includes_new_fields_when_present() -> None:
+    batch = SampleBatchReport(
+        author="mlx-community",
+        task=None,
+        limit=5,
+        plugin="text",
+        items=(),
+        max_candidates=500,
+        signal_filter=("tag:mlx",),
+    )
+    data = json.loads(render_sample_batch_json(batch))
+    assert data["max_candidates"] == 500
+    assert data["signal_filter"] == ["tag:mlx"]
+
+
+def test_render_sample_batch_json_omits_new_fields_when_none() -> None:
+    batch = SampleBatchReport(author="mlx-community", task=None, limit=5, plugin="text", items=())
+    data = json.loads(render_sample_batch_json(batch))
+    assert "max_candidates" not in data
+    assert "signal_filter" not in data
 
 
 def test_sample_batch_exit_code_is_two_when_no_models_could_be_checked() -> None:

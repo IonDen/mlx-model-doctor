@@ -41,6 +41,7 @@ def _has_template(ctx: CheckContext) -> bool:
     return False
 
 
+# Chat-template convention (tokenizer_config.json / .jinja) verified against transformers v4.x.
 @dataclass(frozen=True, slots=True)
 class ChatTemplatePresenceCheck:
     """Check that a chat template is present in either supported location."""

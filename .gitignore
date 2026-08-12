@@ -21,3 +21,4 @@ build/
 dist/
 *.egg-info/
 src/mlx_model_doctor/_version.py
+.worktrees/
