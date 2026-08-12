@@ -507,7 +507,7 @@ def test_vlm_smoke_canary_on_real_model() -> None:
     backend = MlxVlmBackend()
     check = MlxVlmSmokeCheck(backend=backend)
     ctx = CheckContext(
-        target=FakeTarget(files={}, name="mlx-community/nanoLLaVA-1.5-4bit", _source="hf"),
+        target=FakeTarget(files={}, name="mlx-community/Qwen2.5-VL-3B-Instruct-4bit", _source="hf"),
         options=check_options(),
     )
     result = check.run(ctx)
