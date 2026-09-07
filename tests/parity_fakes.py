@@ -3,6 +3,7 @@
 import json
 import math
 import struct
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -264,10 +265,20 @@ class LoadForbiddenMlxLmModule:
 
 
 class TrackingLauncher:
-    """Fake ``Launcher`` recording call order + in-flight count (proves F2 strict-serial run)."""
+    """Fake ``Launcher`` recording call order + in-flight count (proves F2 strict-serial run).
 
-    def __init__(self, outcomes: Sequence[object]) -> None:
+    Sleeps ``delay_s`` between recording entry and exit so an overlapping call
+    would actually be observed as ``active > 1``. Without that delay, CPython's
+    GIL makes the increment/decrement window too narrow to ever catch a
+    concurrency regression: a mutant ``run_parity_workers`` that ran specs via a
+    4-worker ``ThreadPoolExecutor`` scored ``max_concurrent == 1`` in 200/200
+    trials against the undelayed fake (confirmed by review), and only the
+    delayed version can fail on that mutant.
+    """
+
+    def __init__(self, outcomes: Sequence[object], *, delay_s: float = 0.01) -> None:
         self._outcomes = list(outcomes)
+        self._delay_s = delay_s
         self.calls: list[object] = []
         self.active = 0
         self.max_concurrent = 0
@@ -277,6 +288,7 @@ class TrackingLauncher:
         self.active += 1
         self.max_concurrent = max(self.max_concurrent, self.active)
         try:
+            time.sleep(self._delay_s)
             return self._outcomes[len(self.calls) - 1]
         finally:
             self.active -= 1

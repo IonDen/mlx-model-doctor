@@ -93,7 +93,13 @@ def test_run_parity_workers_calls_launcher_once_per_spec_in_order() -> None:
 
 
 def test_run_parity_workers_runs_strictly_serially() -> None:
-    """A mutant that ran specs concurrently (e.g. a thread pool) must fail this test."""
+    """A mutant that ran specs concurrently (e.g. a thread pool) must fail this test.
+
+    ``TrackingLauncher`` sleeps briefly inside ``run_one`` (see ``tests/parity_fakes.py``)
+    so an overlapping call is actually observable as ``active > 1`` — without that delay
+    the GIL makes the increment/decrement window too narrow for a thread-pool mutant to
+    ever be caught here.
+    """
     specs = [_spec(role=f"role-{i}") for i in range(4)]
     outcomes = [_outcome(role=s.role) for s in specs]  # type: ignore[attr-defined]
     launcher = TrackingLauncher(outcomes)
