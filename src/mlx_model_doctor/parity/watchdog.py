@@ -112,11 +112,14 @@ def run_watchdog(
                     on_abort(f"deadline exceeded: {elapsed}s >= {deadline_s}s")
                     return
 
-            # Check stop signal
-            if stop is not None and hasattr(stop, "is_set") and stop.is_set():
-                return
-
-            time.sleep(poll_s)
+            # Wait for poll interval or graceful stop signal
+            # stop.wait(poll_s) returns True if stop is set within the timeout,
+            # False if timeout expires. Graceful exit if stop signal is set.
+            if stop is not None and hasattr(stop, "wait"):
+                if stop.wait(poll_s):
+                    return
+            else:
+                time.sleep(poll_s)
 
     thread = Thread(target=_run, daemon=True)
     thread.start()

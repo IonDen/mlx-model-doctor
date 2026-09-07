@@ -197,7 +197,7 @@ class TestRunWatchdogGracefulStop:
     """Test run_watchdog with graceful stop signal."""
 
     def test_watchdog_stops_gracefully_without_abort(self) -> None:
-        """run_watchdog returns gracefully when stop signal is set, without calling on_abort."""
+        """run_watchdog honors stop signal: exits promptly and doesn't call on_abort."""
         from mlx_model_doctor.parity.watchdog import run_watchdog
 
         class ConstantProbe:
@@ -210,7 +210,7 @@ class TestRunWatchdogGracefulStop:
         probe = ConstantProbe()
         ceiling = 1000  # Very high ceiling (never exceeded)
         stop = Event()
-        stop.set()  # Set immediately to trigger graceful stop
+        stop.set()  # Set stop signal immediately
         abort_called: list[str] = []
 
         def on_abort(reason: str) -> None:
@@ -220,7 +220,10 @@ class TestRunWatchdogGracefulStop:
         thread = run_watchdog(
             probe, ceiling, on_abort=on_abort, poll_s=0.01, deadline_s=10.0, stop=stop
         )
-        thread.join(timeout=1.0)
 
-        # Should exit gracefully without calling on_abort (not memory, not deadline)
+        # Thread should exit promptly (within 0.5s) when stop is set
+        thread.join(timeout=0.5)
+        assert not thread.is_alive(), "thread should have exited when stop was set"
+
+        # Should not have called abort (graceful stop, not a failure condition)
         assert len(abort_called) == 0
