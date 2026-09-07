@@ -36,6 +36,45 @@ class TestLengthGuard:
             flip_count([], [])
 
 
+class TestOracleFunctionsPositivePath:
+    """Test oracle functions with real diverging data (catches loop mutations)."""
+
+    def test_argmax_agreement_full_match(self) -> None:
+        assert argmax_agreement([1, 0, 1], [1, 0, 1]) == 1.0
+
+    def test_argmax_agreement_partial_match(self) -> None:
+        # 2 out of 3 match; catches wrong operator or denominator logic
+        assert argmax_agreement([1, 0, 1], [1, 1, 1]) == 2 / 3
+
+    def test_argmax_agreement_no_match(self) -> None:
+        # 0 out of 3 match
+        assert argmax_agreement([1, 0, 1], [0, 1, 0]) == 0.0
+
+    def test_first_divergence_at_middle(self) -> None:
+        # Divergence at position 1; catches off-by-one or dropped return
+        assert first_divergence([1, 0, 1], [1, 1, 1]) == 1
+
+    def test_first_divergence_at_start(self) -> None:
+        # Divergence at position 0
+        assert first_divergence([0, 0, 0], [1, 0, 0]) == 0
+
+    def test_first_divergence_identical(self) -> None:
+        # No divergence; catches missing final return None
+        assert first_divergence([1, 1], [1, 1]) is None
+
+    def test_flip_count_single_diff(self) -> None:
+        # 1 position differs; catches wrong operator or loop logic
+        assert flip_count([1, 0, 1], [1, 1, 1]) == 1
+
+    def test_flip_count_all_diff(self) -> None:
+        # All 3 positions differ
+        assert flip_count([1, 0, 1], [0, 1, 0]) == 3
+
+    def test_flip_count_identical(self) -> None:
+        # No differences
+        assert flip_count([1, 0, 1], [1, 0, 1]) == 0
+
+
 class TestVerdictMatrix:
     """Binary-exact test matrix with k=0.5, floor=0.75; agreements are eighths (exact in float)."""
 
