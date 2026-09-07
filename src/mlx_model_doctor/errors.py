@@ -9,6 +9,10 @@ class MemorySafetyError(ModelDoctorError):
     """A requested runtime operation could not be bounded by memory caps."""
 
 
+class WorkerArtifactError(ModelDoctorError):
+    """A parity worker's JSON result artifact failed validation before it was trusted."""
+
+
 class TargetError(ModelDoctorError, ValueError):
     """A target could not be resolved or read."""
 
