@@ -258,3 +258,186 @@ class LoadForbiddenMlxLmModule:
     def load(self, path_or_repo: str, *, adapter_path: str | None = None) -> tuple[object, object]:
         self.load_calls += 1
         raise AssertionError("mlx_lm.load() must not be called without MLX memory caps")
+
+
+# --- Orchestrator fakes (offline, pure Python) --------------------------------------
+
+
+class TrackingLauncher:
+    """Fake ``Launcher`` recording call order + in-flight count (proves F2 strict-serial run)."""
+
+    def __init__(self, outcomes: Sequence[object]) -> None:
+        self._outcomes = list(outcomes)
+        self.calls: list[object] = []
+        self.active = 0
+        self.max_concurrent = 0
+
+    def run_one(self, spec: object) -> object:
+        self.calls.append(spec)
+        self.active += 1
+        self.max_concurrent = max(self.max_concurrent, self.active)
+        try:
+            return self._outcomes[len(self.calls) - 1]
+        finally:
+            self.active -= 1
+
+
+class RaisingLauncher:
+    """Fake ``Launcher`` whose ``run_one`` raises for specs with a role in ``raising_roles``."""
+
+    def __init__(self, outcomes_by_role: dict[str, object], raising_roles: Sequence[str]) -> None:
+        self._outcomes_by_role = outcomes_by_role
+        self._raising_roles = set(raising_roles)
+        self.calls: list[str] = []
+
+    def run_one(self, spec: object) -> object:
+        role = spec.role  # type: ignore[attr-defined]
+        self.calls.append(role)
+        if role in self._raising_roles:
+            raise RuntimeError(f"boom for role {role}")
+        return self._outcomes_by_role[role]
+
+
+# --- SubprocessLauncher stub scripts (offline, no mlx) ------------------------------
+#
+# Each stub is a trivial standalone Python script spawned as a real subprocess by
+# ``SubprocessLauncher`` tests, so they intentionally do their own minimal argv
+# parsing rather than importing anything from this package.
+
+_STUB_SUCCESS_SOURCE = """
+import json
+import sys
+
+
+def _arg(flag):
+    return sys.argv[sys.argv.index(flag) + 1]
+
+
+out_path = _arg("--out")
+fixture_id = _arg("--fixture-id")
+role = _arg("--role")
+token_ids = [t for t in _arg("--token-ids").split(",") if t]
+payload = {
+    "fixture_id": fixture_id,
+    "role": role,
+    "argmax": [0] * len(token_ids),
+    "peak_bytes": 123,
+    "adapter_applied": None,
+}
+with open(out_path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle)
+print(f"::PARITY_WORKER::ok role={role} fixture={fixture_id}")
+sys.exit(0)
+"""
+
+_STUB_WRONG_LENGTH_SOURCE = """
+import json
+import sys
+
+
+def _arg(flag):
+    return sys.argv[sys.argv.index(flag) + 1]
+
+
+out_path = _arg("--out")
+fixture_id = _arg("--fixture-id")
+role = _arg("--role")
+payload = {
+    "fixture_id": fixture_id,
+    "role": role,
+    "argmax": [0],
+    "peak_bytes": 123,
+    "adapter_applied": None,
+}
+with open(out_path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle)
+print(f"::PARITY_WORKER::ok role={role} fixture={fixture_id}")
+sys.exit(0)
+"""
+
+_STUB_EXIT_NONZERO_SOURCE = """
+import sys
+
+sys.exit(7)
+"""
+
+_STUB_MISSING_OUTPUT_SOURCE = """
+import sys
+
+fixture_id = sys.argv[sys.argv.index("--fixture-id") + 1]
+role = sys.argv[sys.argv.index("--role") + 1]
+print(f"::PARITY_WORKER::ok role={role} fixture={fixture_id}")
+sys.exit(0)
+"""
+
+_STUB_MALFORMED_OUTPUT_SOURCE = """
+import sys
+
+
+def _arg(flag):
+    return sys.argv[sys.argv.index(flag) + 1]
+
+
+out_path = _arg("--out")
+fixture_id = _arg("--fixture-id")
+role = _arg("--role")
+with open(out_path, "w", encoding="utf-8") as handle:
+    handle.write("{not valid json")
+print(f"::PARITY_WORKER::ok role={role} fixture={fixture_id}")
+sys.exit(0)
+"""
+
+_STUB_NONRESPONSIVE_SOURCE = """
+import signal
+import time
+
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+time.sleep(30)
+"""
+
+_STUB_SLOW_COOPERATIVE_SOURCE = """
+import time
+
+time.sleep(30)
+"""
+
+
+def write_stub_script(path: Path, source: str) -> Path:
+    """Write a trivial worker-stub script (no mlx) for offline ``SubprocessLauncher`` tests."""
+    path.write_text(source, encoding="utf-8")
+    return path
+
+
+def write_success_stub(path: Path) -> Path:
+    """Stub that writes a valid worker artifact and prints the success sentinel."""
+    return write_stub_script(path, _STUB_SUCCESS_SOURCE)
+
+
+def write_wrong_length_stub(path: Path) -> Path:
+    """Stub that writes a valid-shaped but always length-1 ``argmax`` artifact."""
+    return write_stub_script(path, _STUB_WRONG_LENGTH_SOURCE)
+
+
+def write_exit_nonzero_stub(path: Path) -> Path:
+    """Stub that exits nonzero without writing an artifact."""
+    return write_stub_script(path, _STUB_EXIT_NONZERO_SOURCE)
+
+
+def write_missing_output_stub(path: Path) -> Path:
+    """Stub that claims success (sentinel + exit 0) but never writes its output file."""
+    return write_stub_script(path, _STUB_MISSING_OUTPUT_SOURCE)
+
+
+def write_malformed_output_stub(path: Path) -> Path:
+    """Stub that claims success but writes an invalid-JSON output file."""
+    return write_stub_script(path, _STUB_MALFORMED_OUTPUT_SOURCE)
+
+
+def write_nonresponsive_stub(path: Path) -> Path:
+    """Stub that ignores SIGTERM and sleeps, to exercise the parent's TERM->KILL escalation."""
+    return write_stub_script(path, _STUB_NONRESPONSIVE_SOURCE)
+
+
+def write_slow_cooperative_stub(path: Path) -> Path:
+    """Stub that sleeps past ``timeout_s`` but honors default SIGTERM handling (no KILL needed)."""
+    return write_stub_script(path, _STUB_SLOW_COOPERATIVE_SOURCE)
