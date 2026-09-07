@@ -1,5 +1,7 @@
 """Tests for memory watchdog and flush-safe abort."""
 
+from pathlib import Path
+from threading import Event
 from unittest import mock
 
 from mlx_model_doctor.parity.watchdog import (
@@ -46,7 +48,7 @@ class TestDefaultCeilingBytes:
 class TestFlushSafeAbort:
     """Test that _do_abort unconditionally calls os._exit even if flush raises."""
 
-    def test_abort_calls_os_exit_unconditionally(self, tmp_path: any) -> None:
+    def test_abort_calls_os_exit_unconditionally(self, tmp_path: Path) -> None:
         """_do_abort must call os._exit(3) even if marker write or flush raises."""
         out_dir = str(tmp_path)
         reason = "test abort"
@@ -60,7 +62,7 @@ class TestFlushSafeAbort:
             # Must have called os._exit(3) even though flush raised
             mock_exit.assert_called_once_with(3)
 
-    def test_abort_writes_marker_on_success(self, tmp_path: any) -> None:
+    def test_abort_writes_marker_on_success(self, tmp_path: Path) -> None:
         """_do_abort should write marker file if no exception occurs."""
         out_dir = str(tmp_path)
         reason = "test reason"
@@ -72,7 +74,7 @@ class TestFlushSafeAbort:
         assert marker_file.exists()
         assert marker_file.read_text(encoding="utf-8") == reason
 
-    def test_abort_survives_marker_write_error(self, tmp_path: any) -> None:
+    def test_abort_survives_marker_write_error(self, tmp_path: Path) -> None:
         """_do_abort must call os._exit(3) even if marker write fails."""
         out_dir = "/dev/null/no/such/path"  # Will fail to write
 
@@ -189,3 +191,36 @@ class TestRunWatchdogDeadlineTriggered:
         # Should have called abort due to deadline
         assert len(abort_called) > 0
         assert "deadline" in abort_called[0].lower() or "time" in abort_called[0].lower()
+
+
+class TestRunWatchdogGracefulStop:
+    """Test run_watchdog with graceful stop signal."""
+
+    def test_watchdog_stops_gracefully_without_abort(self) -> None:
+        """run_watchdog returns gracefully when stop signal is set, without calling on_abort."""
+        from mlx_model_doctor.parity.watchdog import run_watchdog
+
+        class ConstantProbe:
+            def active_bytes(self) -> int:
+                return 10
+
+            def cache_bytes(self) -> int:
+                return 10
+
+        probe = ConstantProbe()
+        ceiling = 1000  # Very high ceiling (never exceeded)
+        stop = Event()
+        stop.set()  # Set immediately to trigger graceful stop
+        abort_called: list[str] = []
+
+        def on_abort(reason: str) -> None:
+            abort_called.append(reason)
+
+        # Run watchdog with stop signal already set
+        thread = run_watchdog(
+            probe, ceiling, on_abort=on_abort, poll_s=0.01, deadline_s=10.0, stop=stop
+        )
+        thread.join(timeout=1.0)
+
+        # Should exit gracefully without calling on_abort (not memory, not deadline)
+        assert len(abort_called) == 0

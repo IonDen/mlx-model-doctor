@@ -2,7 +2,9 @@
 
 import os
 import sys
+import time
 from collections.abc import Callable
+from pathlib import Path
 from threading import Thread
 from typing import Protocol
 
@@ -57,9 +59,7 @@ def _do_abort(out_dir: str, reason: str) -> None:
         out_dir: Directory for the abort marker file.
         reason: Reason for the abort.
     """
-    try:
-        from pathlib import Path
-
+    try:  # noqa: SIM105
         Path(out_dir, "parity_worker_abort.txt").write_text(reason, encoding="utf-8")
     except Exception:
         # Abort must not depend on the marker write succeeding
@@ -94,7 +94,6 @@ def run_watchdog(
     Returns:
         The watchdog thread.
     """
-    import time
 
     def _run() -> None:
         start_time = time.time()
