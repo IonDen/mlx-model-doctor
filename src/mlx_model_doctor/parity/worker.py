@@ -167,10 +167,17 @@ def validate_adapter_manifest(
     lora_parameters = config.get("lora_parameters", {})
     scale = _DEFAULT_LORA_SCALE
     if isinstance(lora_parameters, dict) and "scale" in lora_parameters:
+        raw_scale = lora_parameters["scale"]
         try:
-            scale = float(lora_parameters["scale"])
+            scale = float(raw_scale)
         except (TypeError, ValueError):
-            scale = _DEFAULT_LORA_SCALE
+            # An absent scale falls back to mlx-lm's own default (below); a
+            # *present but garbled* scale is a manifest we can't trust (F3).
+            return AdapterValidation(
+                status="incomplete",
+                missing=list(resolver_targets),
+                reason=f"lora_parameters.scale is not numeric: {raw_scale!r}",
+            )
     if scale == 0:
         return AdapterValidation(
             status="incomplete",
@@ -209,14 +216,40 @@ def validate_adapter_manifest(
                 f"({a_entry.shape} vs {b_entry.shape})"
             )
             continue
-        if requires_magnitude and header.tensors.get(f"{target}.m") is None:
-            missing.append(target)
-            reason = reason or f"target {target!r} is missing its DoRA magnitude tensor"
-            continue
+        if requires_magnitude:
+            m_entry = header.tensors.get(f"{target}.m")
+            if m_entry is None:
+                missing.append(target)
+                reason = reason or f"target {target!r} is missing its DoRA magnitude tensor"
+                continue
+            if not _dora_magnitude_shape_matches(m_entry.shape, a_entry.shape, b_entry.shape):
+                missing.append(target)
+                reason = reason or (
+                    f"target {target!r} has a DoRA magnitude tensor with an unexpected "
+                    f"shape {m_entry.shape} (expected rank-1, matching lora_a.shape[0] "
+                    f"or lora_b.shape[-1])"
+                )
+                continue
 
     if missing:
         return AdapterValidation(status="incomplete", missing=missing, reason=reason)
     return AdapterValidation(status="ok")
+
+
+def _dora_magnitude_shape_matches(
+    m_shape: tuple[int, ...], a_shape: tuple[int, ...], b_shape: tuple[int, ...]
+) -> bool:
+    """Check a DoRA magnitude tensor's shape against both legitimate conventions.
+
+    The safetensors header alone can't disambiguate ``DoRALinear`` (``m.shape ==
+    (output_dims,)``, matching ``lora_b.shape[-1]``) from ``DoRAEmbedding``
+    (``m.shape == (num_embeddings,)``, matching ``lora_a.shape[0]``) — see
+    ``mlx_lm/tuner/dora.py`` — so either convention is accepted.
+    """
+    if len(m_shape) != 1:
+        return False
+    dim = m_shape[0]
+    return dim == a_shape[0] or dim == b_shape[-1]
 
 
 def _read_local_safetensors_header(path: Path) -> FileHeader:
@@ -582,6 +615,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         role=args.role,
     )
     out_path = Path(args.out)
+    # Create the output directory before the watchdog can possibly fire, so an
+    # early abort's marker write (best-effort, F2) doesn't silently fail on a
+    # not-yet-created directory.
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_dir = str(out_path.parent)
 
     mx = _import_mlx_core()

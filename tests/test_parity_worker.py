@@ -1,5 +1,6 @@
 """Tests for the memory-safe parity worker (spec/result, adapter validation, JSON IPC)."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -228,6 +229,71 @@ def test_validate_adapter_manifest_dora_missing_magnitude_is_incomplete(tmp_path
         tensors={
             "target.lora_a": lora_tensor((32, 8)),
             "target.lora_b": lora_tensor((8, 32)),
+        },
+    )
+
+    validation = validate_adapter_manifest(adapter_dir, ["target"])
+
+    assert validation.status == "incomplete"
+    assert validation.missing == ["target"]
+
+
+def test_validate_adapter_manifest_dora_wrong_shape_magnitude_is_incomplete(
+    tmp_path: Path,
+) -> None:
+    """A magnitude tensor that matches neither DoRA convention must be rejected.
+
+    lora_a is (64, 8) [input_dims=64] and lora_b is (8, 16) [output_dims=16], so
+    the only two legitimate magnitude dims are 64 (DoRAEmbedding convention,
+    lora_a.shape[0]) or 16 (DoRALinear convention, lora_b.shape[-1]). A magnitude
+    of shape (99,) matches neither.
+    """
+    adapter_dir = write_adapter_dir(
+        tmp_path / "adapter",
+        fine_tune_type="dora",
+        tensors={
+            "target.lora_a": lora_tensor((64, 8)),
+            "target.lora_b": lora_tensor((8, 16)),
+            "target.m": lora_tensor((99,)),
+        },
+    )
+
+    validation = validate_adapter_manifest(adapter_dir, ["target"])
+
+    assert validation.status == "incomplete"
+    assert validation.missing == ["target"]
+    assert validation.reason is not None
+    assert "shape" in validation.reason.lower()
+
+
+def test_validate_adapter_manifest_dora_accepts_embedding_magnitude_convention(
+    tmp_path: Path,
+) -> None:
+    """A magnitude matching lora_a.shape[0] (the DoRAEmbedding convention) is valid."""
+    adapter_dir = write_adapter_dir(
+        tmp_path / "adapter",
+        fine_tune_type="dora",
+        tensors={
+            "target.lora_a": lora_tensor((64, 8)),
+            "target.lora_b": lora_tensor((8, 16)),
+            "target.m": lora_tensor((64,)),  # matches lora_a.shape[0], not lora_b.shape[-1]
+        },
+    )
+
+    validation = validate_adapter_manifest(adapter_dir, ["target"])
+
+    assert validation == AdapterValidation(status="ok")
+
+
+def test_validate_adapter_manifest_dora_rejects_rank2_magnitude(tmp_path: Path) -> None:
+    """A magnitude tensor must be rank-1, even if a dimension coincidentally matches."""
+    adapter_dir = write_adapter_dir(
+        tmp_path / "adapter",
+        fine_tune_type="dora",
+        tensors={
+            "target.lora_a": lora_tensor((32, 8)),
+            "target.lora_b": lora_tensor((8, 32)),
+            "target.m": lora_tensor((32, 1)),  # rank-2, not rank-1
         },
     )
 
@@ -678,6 +744,65 @@ def test_main_wires_watchdog_abort_to_do_abort(monkeypatch, tmp_path) -> None:
     assert "memory" in reason.lower()
 
 
+def test_main_creates_output_directory_before_watchdog_can_abort(monkeypatch, tmp_path) -> None:
+    """The output directory must exist before the watchdog can fire.
+
+    ``_do_abort``'s marker write is wrapped in a bare ``except Exception: pass``
+    (by design, F2 — a failing marker write must never block termination), so a
+    missing directory silently swallows the marker instead of raising. Exercise
+    the REAL ``_do_abort`` (only ``os._exit`` is mocked) so this test actually
+    proves the directory got created early enough, not just that some abort
+    callback ran.
+    """
+    logits = [[0.1, 5.0, 0.2]]
+
+    class SlowModel(FakeMlxLmModel):
+        def __call__(self, ids: object) -> list[list[list[float]]]:
+            import time
+
+            time.sleep(0.2)
+            return super().__call__(ids)
+
+    model = SlowModel(logits)
+    mlx_lm = FakeMlxLmModule(model)
+    mx = FakeMxCore(logits=logits, active_memory=10**12, cache_memory=0)
+
+    monkeypatch.setattr(
+        worker_module.importlib,
+        "import_module",
+        make_import_module({"mlx.core": mx, "mlx_lm": mlx_lm}),
+    )
+    exit_calls: list[int] = []
+    monkeypatch.setattr(os, "_exit", exit_calls.append)
+
+    out_path = tmp_path / "nested" / "does" / "not" / "exist" / "result.json"
+    assert not out_path.parent.exists()
+
+    main(
+        [
+            "--model-path",
+            "/models/base",
+            "--token-ids",
+            "1",
+            "--fixture-id",
+            "fx-1",
+            "--role",
+            "base",
+            "--out",
+            str(out_path),
+            "--wall-deadline-s",
+            "5",
+            "--poll-s",
+            "0.01",
+        ]
+    )
+
+    assert exit_calls, "the watchdog never fired; the test setup is broken"
+    marker = out_path.parent / "parity_worker_abort.txt"
+    assert marker.exists(), "abort marker was silently dropped (output dir missing)"
+    assert "memory" in marker.read_text(encoding="utf-8").lower()
+
+
 # --- Additional edge cases (malformed config, dependency errors, helpers) -------
 
 
@@ -706,9 +831,11 @@ def test_validate_adapter_manifest_non_object_config_json(tmp_path: Path) -> Non
     assert validation.reason == "adapter_config.json must be a JSON object"
 
 
-def test_validate_adapter_manifest_non_numeric_scale_falls_back_to_default(
+def test_validate_adapter_manifest_non_numeric_scale_is_incomplete(
     tmp_path: Path,
 ) -> None:
+    """A *present but garbled* scale is untrustworthy (F3) — unlike an absent one,
+    which falls back to mlx-lm's own default (see the missing-scale-key test)."""
     adapter_dir = write_adapter_dir(
         tmp_path / "adapter",
         config_overrides={"lora_parameters": {"rank": 8, "scale": "not-a-number"}},
@@ -720,7 +847,11 @@ def test_validate_adapter_manifest_non_numeric_scale_falls_back_to_default(
 
     validation = validate_adapter_manifest(adapter_dir, ["target"])
 
-    assert validation == AdapterValidation(status="ok")
+    assert validation.status == "incomplete"
+    assert validation.missing == ["target"]
+    assert validation.reason is not None
+    assert "scale" in validation.reason.lower()
+    assert "not-a-number" in validation.reason
 
 
 def test_validate_adapter_manifest_missing_scale_key_uses_default(tmp_path: Path) -> None:
