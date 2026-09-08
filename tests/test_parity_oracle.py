@@ -3,7 +3,12 @@ import pytest
 from mlx_model_doctor.parity.oracle import (
     PARITY_FLOOR,
     PARITY_K,
+    ROLE_BASE,
+    ROLE_FUSED,
+    ROLE_NOISE,
+    ROLE_REFERENCE,
     argmax_agreement,
+    assemble_verdict_inputs,
     decide_verdict,
     first_divergence,
     flip_count,
@@ -11,6 +16,19 @@ from mlx_model_doctor.parity.oracle import (
 from mlx_model_doctor.parity.oracle import (
     ParityVerdict as V,
 )
+from mlx_model_doctor.parity.orchestrator import WorkerOutcome
+
+
+def _ok_outcome(role: str, argmax: list[int]) -> WorkerOutcome:
+    """Build an ``ok`` worker outcome carrying a hand-chosen argmax vector."""
+    return WorkerOutcome(
+        role=role,
+        argmax=argmax,
+        adapter_applied=None,
+        peak_bytes=1,
+        status="ok",
+        error=None,
+    )
 
 
 class TestLengthGuard:
@@ -151,6 +169,68 @@ class TestVerdictMatrix:
             decide_verdict(agree_fa=0.875, agree_fb=0.5, gap=0.25, noise=0.125, k=0.5, floor=0.75)
             is V.INCONCLUSIVE
         )
+
+
+class TestAssembleVerdictInputs:
+    """Reduce four worker outcomes to (agree_fa, agree_fb, gap, noise) with exact eighths."""
+
+    def test_reduces_four_outcomes_to_the_four_oracle_metrics(self) -> None:
+        # base all-1s; reference differs from base at the first 4 of 8 positions
+        # (agree=4/8=0.5 -> gap=0.5); base_repeat differs from base at 1 of 8
+        # (agree=7/8 -> noise=0.125); fused == reference (agree_fa=1.0) and
+        # differs from base at 4/8 (agree_fb=0.5). Wrong role mapping,
+        # a `1 - agree` sign flip on gap, or the wrong noise pair each move a value.
+        outcomes = [
+            _ok_outcome(ROLE_BASE, [1, 1, 1, 1, 1, 1, 1, 1]),
+            _ok_outcome(ROLE_REFERENCE, [2, 2, 2, 2, 1, 1, 1, 1]),
+            _ok_outcome(ROLE_NOISE, [1, 1, 1, 1, 1, 1, 1, 0]),
+            _ok_outcome(ROLE_FUSED, [2, 2, 2, 2, 1, 1, 1, 1]),
+        ]
+        vi = assemble_verdict_inputs(outcomes)
+        assert vi.gap == 0.5
+        assert vi.noise == 0.125
+        assert vi.agree_fa == 1.0
+        assert vi.agree_fb == 0.5
+
+    def test_agree_fa_is_fused_vs_reference_not_fused_vs_base(self) -> None:
+        # fused tracks base exactly, diverges from reference at 4/8:
+        # agree_fa (fused vs reference) = 0.5, agree_fb (fused vs base) = 1.0.
+        # A swapped agree_fa/agree_fb assignment flips these two values.
+        outcomes = [
+            _ok_outcome(ROLE_BASE, [1, 1, 1, 1, 1, 1, 1, 1]),
+            _ok_outcome(ROLE_REFERENCE, [2, 2, 2, 2, 1, 1, 1, 1]),
+            _ok_outcome(ROLE_NOISE, [1, 1, 1, 1, 1, 1, 1, 1]),
+            _ok_outcome(ROLE_FUSED, [1, 1, 1, 1, 1, 1, 1, 1]),
+        ]
+        vi = assemble_verdict_inputs(outcomes)
+        assert vi.agree_fa == 0.5
+        assert vi.agree_fb == 1.0
+
+    def test_missing_reference_role_raises(self) -> None:
+        outcomes = [
+            _ok_outcome(ROLE_BASE, [1, 1]),
+            _ok_outcome(ROLE_NOISE, [1, 1]),
+            _ok_outcome(ROLE_FUSED, [1, 1]),
+        ]
+        with pytest.raises(ValueError, match="reference"):
+            assemble_verdict_inputs(outcomes)
+
+    def test_none_argmax_on_a_required_role_raises(self) -> None:
+        outcomes = [
+            _ok_outcome(ROLE_BASE, [1, 1]),
+            _ok_outcome(ROLE_NOISE, [1, 1]),
+            _ok_outcome(ROLE_FUSED, [1, 1]),
+            WorkerOutcome(
+                role=ROLE_REFERENCE,
+                argmax=None,
+                adapter_applied=None,
+                peak_bytes=None,
+                status="error",
+                error="boom",
+            ),
+        ]
+        with pytest.raises(ValueError, match="reference"):
+            assemble_verdict_inputs(outcomes)
 
 
 class TestConstants:

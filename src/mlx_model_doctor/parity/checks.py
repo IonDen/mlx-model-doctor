@@ -156,6 +156,16 @@ def _resolve_against_base(pctx: ParityContext) -> ResolvedTargets | str:
     return resolve_targets(pctx.adapter_config, base_module_names, arch=arch)
 
 
+def resolve_targets_against_base(pctx: ParityContext) -> ResolvedTargets | str:
+    """Public wrapper over :func:`_resolve_against_base` for reuse by the API layer.
+
+    Returns the resolver's :class:`ResolvedTargets` (whose ``covered`` set the
+    delta map consumes as its expected-change targets), or a human-readable
+    reason string when resolution could not be attempted at all.
+    """
+    return _resolve_against_base(pctx)
+
+
 def _adapter_config_shape_problems(config: Mapping[str, object]) -> list[str]:
     """Return human-readable shape problems in a parsed adapter_config, if any."""
     problems: list[str] = []
