@@ -33,6 +33,9 @@ _TENSOR_PAYLOAD_SUFFIXES = (".weight", ".scales", ".biases")
 # Standalone LoRA/DoRA factor tensor suffixes a genuinely fused checkpoint
 # must no longer carry for a target it has baked in (mlx_lm.tuner writes
 # these under `{target}.lora_a` / `{target}.lora_b` / DoRA's `{target}.m`).
+# Mirrors mlx-lm's current naming (pinned mlx-lm==0.31.3, same version the
+# resolver and worker modules verify against); a future mlx-lm rename of
+# these attributes would need a matching update here.
 _LORA_FACTOR_SUFFIXES = (".lora_a", ".lora_b", ".m")
 
 

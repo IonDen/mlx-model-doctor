@@ -335,6 +335,41 @@ def _header(names: Sequence[str]) -> SafetensorsHeader:
     )
 
 
+def _header_from_entries(entries: dict[str, TensorEntry]) -> SafetensorsHeader:
+    """Build a SafetensorsHeader from explicit per-tensor entries (dtype/shape control)."""
+    file_header = FileHeader(
+        filename="model.safetensors",
+        tensors=entries,
+        metadata={},
+        header_length=10,
+        file_size=None,
+    )
+    return SafetensorsHeader(
+        files=(file_header,), weight_map={}, sharded=False, stored_count_by_dtype={}
+    )
+
+
+def _quantized_target_entries(target: str) -> dict[str, TensorEntry]:
+    """Build the header entries a quantized nn.QuantizedLinear target module has.
+
+    Verified against installed mlx 0.32.0: nn.QuantizedLinear's parameters are
+    ``{weight (uint32, packed), scales, biases, bias}`` -- a quantized module
+    HAS a (packed) ``.weight`` tensor alongside ``.scales``/``.biases``, not
+    ``.scales``/``.biases`` "instead of" one.
+    """
+    return {
+        f"{target}.weight": TensorEntry(
+            dtype="U32", shape=(4, 1), data_offsets=(0, 16), stored_element_count=4
+        ),
+        f"{target}.scales": TensorEntry(
+            dtype="F16", shape=(4, 1), data_offsets=(16, 24), stored_element_count=4
+        ),
+        f"{target}.biases": TensorEntry(
+            dtype="F16", shape=(4, 1), data_offsets=(24, 32), stored_element_count=4
+        ),
+    }
+
+
 def _adapter_config_bytes(**overrides: object) -> bytes:
     config: dict[str, object] = {
         "num_layers": -1,
@@ -579,6 +614,29 @@ class TestFusedTargetConsistencyCheck:
         )
         result = FusedTargetConsistencyCheck().run(pctx)
         assert result.status == "skip"
+
+    def test_quantized_target_present_in_both_headers_is_not_omitted(self) -> None:
+        # A reviewer worried this check would false-positive on quantized
+        # models by assuming a quantized target has .scales/.biases "instead
+        # of" .weight. That premise is wrong (see _quantized_target_entries):
+        # this proves a quantized target with its packed .weight present in
+        # both headers is correctly NOT reported omitted.
+        target = "model.layers.0.self_attn.q_proj"
+        base_entries = {
+            "model.embed_tokens.weight": _entry(),
+            **_quantized_target_entries(target),
+            "model.norm.weight": _entry(),
+            "lm_head.weight": _entry(),
+        }
+        fused_entries = dict(base_entries)
+        pctx = _pctx(
+            base=_base_target(header=_header_from_entries(base_entries)),
+            adapter=_adapter_target(_adapter_config_bytes()),
+            fused=_fused_target(header=_header_from_entries(fused_entries)),
+        )
+        result = FusedTargetConsistencyCheck().run(pctx)
+        assert result.status == "pass"
+        assert "exposes all 1 targeted weight" in result.message
 
 
 class TestTokenizerIdentityCheck:
