@@ -4,7 +4,7 @@ import json
 import math
 import struct
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 
@@ -12,6 +12,30 @@ def safetensors_header_bytes(tensors: dict[str, dict[str, object]]) -> bytes:
     """Build the 8-byte-length + JSON header of a safetensors file, with no tensor data."""
     raw = json.dumps(tensors).encode("utf-8")
     return struct.pack("<Q", len(raw)) + raw
+
+
+def write_safetensors_file(
+    path: Path, tensors: Mapping[str, tuple[str, Sequence[int], bytes]]
+) -> Path:
+    """Write a REAL single-shard safetensors file: header + concatenated tensor payloads.
+
+    ``tensors`` maps a tensor name to ``(dtype, shape, raw_bytes)``. Unlike
+    ``safetensors_header_bytes``/``lora_tensor`` (header-only, zero-length
+    dummy data — fine for config-shaped checks), this writes actual tensor
+    bytes at their real ``data_offsets`` so a genuine byte-compare (e.g. the
+    parity delta map) has real payload to read.
+    """
+    header: dict[str, dict[str, object]] = {}
+    offset = 0
+    payload = bytearray()
+    for name, (dtype, shape, raw) in tensors.items():
+        end = offset + len(raw)
+        header[name] = {"dtype": dtype, "shape": list(shape), "data_offsets": [offset, end]}
+        payload.extend(raw)
+        offset = end
+    header_bytes = safetensors_header_bytes(header)
+    path.write_bytes(header_bytes + bytes(payload))
+    return path
 
 
 def lora_tensor(shape: Sequence[int], *, dtype: str = "F32") -> dict[str, object]:

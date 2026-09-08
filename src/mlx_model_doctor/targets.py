@@ -210,10 +210,34 @@ class LocalTarget:
             return None
         return file_stat.st_size
 
-    def read_bytes(self, path: str, *, max_bytes: int | None = None) -> bytes:
-        """Read bytes from a model-relative path."""
+    def read_bytes(
+        self,
+        path: str,
+        *,
+        max_bytes: int | None = None,
+        offset: int = 0,
+        length: int | None = None,
+    ) -> bytes:
+        """Read bytes from a model-relative path.
+
+        With ``length`` given, this is a bounded ranged read: seek to
+        ``offset`` and read at most ``length`` bytes (fewer at EOF). This is
+        the primitive the parity delta map uses to byte-compare large tensor
+        payloads in bounded chunks, without ever materializing a whole
+        tensor's bytes in memory at once. With ``length`` omitted (the
+        default), behavior is unchanged from before ``offset``/``length``
+        existed: the whole file is read, or a leading ``max_bytes`` prefix
+        when given; ``offset`` is not consulted in that case.
+        """
         file_path = self._path(path)
         try:
+            if length is not None:
+                if offset < 0 or length < 0:
+                    msg = f"offset and length must be non-negative, got {offset=}, {length=}"
+                    raise ValueError(msg)
+                with file_path.open("rb") as file:
+                    file.seek(offset)
+                    return file.read(length)
             if max_bytes is None:
                 return file_path.read_bytes()
             with file_path.open("rb") as file:
