@@ -10,19 +10,28 @@ input. :func:`tokenizer_fingerprint` adds a digest of the ordinary
 token-ID mapping and a digest of the effective chat template on top of the
 vocab-size/special-token summary, so :func:`tokenizers_match` catches both.
 
-Pure and offline: every input is already-parsed tokenizer data (the
+The fingerprinting core above (:class:`TokenizerFingerprint`,
+:func:`tokenizer_fingerprint`, :func:`tokenizers_match`) is pure and
+offline: every input is already-parsed tokenizer data (the
 ``tokenizer_config.json`` mapping, the ``tokenizer.json`` mapping, and the
-resolved chat-template text) -- this module never loads a tokenizer or reads
-a :class:`~mlx_model_doctor.targets.ModelTarget` itself. That is what makes
-it exercisable with synthetic data in tests. A later task adds
-``ParityContext`` (which resolves those inputs from real repositories) to
-this module.
+resolved chat-template text), so it is exercisable with synthetic data in
+tests without ever loading a tokenizer or reading a
+:class:`~mlx_model_doctor.targets.ModelTarget`. :class:`ParityContext` below
+is the part of this module that reads real repositories: it composes one
+:class:`~mlx_model_doctor.context.CheckContext` per target (base, adapter,
+fused), parses the adapter's ``adapter_config.json``, and computes a
+target's tokenizer fingerprint from its actual repository files on demand.
 """
 
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from mlx_model_doctor.checks.chat_template import _template_string
+from mlx_model_doctor.context import _MAX_METADATA_BYTES, CheckContext, CheckOptions
+from mlx_model_doctor.errors import TargetError, raise_for_hf_target_error
+from mlx_model_doctor.targets import ModelTarget
 
 _SPECIAL_TOKEN_KEYS = (
     "bos_token",
@@ -160,3 +169,187 @@ def tokenizers_match(a: TokenizerFingerprint, b: TokenizerFingerprint) -> MatchR
         return MatchResult(matched=False, reason="chat_template_differs")
 
     return MatchResult(matched=True, reason=None)
+
+
+# --- Cross-target parity context (reads real repositories) ------------------
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ParityTargets:
+    """The three model targets an adapter-parity check compares.
+
+    ``base`` is the unmodified base model, ``adapter`` is the standalone
+    LoRA/DoRA adapter repository (``adapter_config.json`` plus
+    ``adapters.safetensors``), and ``fused`` is the base model with the
+    adapter merged into its weights (what an ``mlx_lm.fuse`` run produces).
+    """
+
+    base: ModelTarget
+    adapter: ModelTarget
+    fused: ModelTarget
+
+
+def _read_adapter_config(target: ModelTarget) -> Mapping[str, object] | None:
+    """Read and parse adapter_config.json from a target, or None if absent/unusable.
+
+    A raw target read: :class:`~mlx_model_doctor.context.CheckContext` has no
+    ``adapter_config.json`` accessor of its own, so this mirrors its own
+    guarded-read pattern directly -- check existence and size before reading,
+    and never let a local-target read failure masquerade as a genuine
+    Hugging Face one (:func:`~mlx_model_doctor.errors.raise_for_hf_target_error`
+    still propagates a real Hub error).
+    """
+    try:
+        if not target.exists("adapter_config.json"):
+            return None
+        size = target.size("adapter_config.json")
+        if size is None or size > _MAX_METADATA_BYTES:
+            return None
+        text = target.read_text("adapter_config.json", max_bytes=_MAX_METADATA_BYTES)
+    except TargetError as exc:
+        raise_for_hf_target_error(exc)
+        return None
+    except (FileNotFoundError, UnicodeError):
+        return None
+    try:
+        parsed: object = json.loads(text)
+    except (json.JSONDecodeError, RecursionError, UnicodeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _read_tokenizer_json(target: ModelTarget) -> Mapping[str, object] | None:
+    """Read and parse tokenizer.json from a target, or None if absent/unusable.
+
+    Also a raw target read, for the same reason as :func:`_read_adapter_config`:
+    :class:`~mlx_model_doctor.context.CheckContext` reads
+    ``tokenizer_config.json`` but never the separate ``tokenizer.json`` vocab
+    file :func:`tokenizer_fingerprint` needs.
+    """
+    try:
+        if not target.exists("tokenizer.json"):
+            return None
+        size = target.size("tokenizer.json")
+        if size is None or size > _MAX_METADATA_BYTES:
+            return None
+        text = target.read_text("tokenizer.json", max_bytes=_MAX_METADATA_BYTES)
+    except TargetError as exc:
+        raise_for_hf_target_error(exc)
+        return None
+    except (FileNotFoundError, UnicodeError):
+        return None
+    try:
+        parsed: object = json.loads(text)
+    except (json.JSONDecodeError, RecursionError, UnicodeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _adapter_config_str_field(config: Mapping[str, object] | None, key: str) -> str | None:
+    """Return a top-level string field from a parsed adapter_config, or None."""
+    if config is None:
+        return None
+    value = config.get(key)
+    return value if isinstance(value, str) else None
+
+
+def _adapter_config_int_field(config: Mapping[str, object] | None, key: str) -> int | None:
+    """Return a top-level int field from a parsed adapter_config, or None.
+
+    Excludes ``bool`` (a subclass of ``int``), matching the resolver's own
+    ``isinstance(x, int) and not isinstance(x, bool)`` convention.
+    """
+    if config is None:
+        return None
+    value = config.get(key)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
+
+
+def _adapter_config_lora_keys(config: Mapping[str, object] | None) -> tuple[str, ...] | None:
+    """Return the explicit ``lora_parameters.keys`` list, or None when absent/malformed.
+
+    ``None`` covers "no lora_parameters" and "keys is JSON null" (both
+    trigger the resolver's own default-key discovery) as well as a
+    structurally malformed value (not a list of strings), which
+    ``AdapterConfigCheck`` flags separately as a config-shape problem.
+    """
+    if config is None:
+        return None
+    lora_parameters = config.get("lora_parameters")
+    if not isinstance(lora_parameters, Mapping):
+        return None
+    raw_keys = lora_parameters.get("keys")
+    if raw_keys is None:
+        return None
+    if not isinstance(raw_keys, list) or not all(isinstance(item, str) for item in raw_keys):
+        return None
+    return tuple(raw_keys)
+
+
+def _tokenizer_fingerprint_for(target: ModelTarget, ctx: CheckContext) -> TokenizerFingerprint:
+    """Compute a tokenizer fingerprint for one target from its repository files."""
+    return tokenizer_fingerprint(
+        tokenizer_config=ctx.tokenizer_config_json(),
+        tokenizer_json=_read_tokenizer_json(target),
+        chat_template=_template_string(ctx),
+    )
+
+
+@dataclass(slots=True, kw_only=True)
+class ParityContext:
+    """Shared state for cross-target adapter-parity checks.
+
+    Composes one :class:`~mlx_model_doctor.context.CheckContext` per target
+    (``base``/``adapter``/``fused``) so parity checks reuse the same cached,
+    guarded-read machinery single-target checks use, and eagerly parses the
+    adapter's ``adapter_config.json`` once (:attr:`adapter_config`, plus the
+    :attr:`num_layers`/:attr:`fine_tune_type`/:attr:`lora_parameter_keys`
+    convenience properties over its parity-relevant top-level fields).
+    """
+
+    targets: ParityTargets
+    options: CheckOptions
+    base: CheckContext = field(init=False)
+    adapter: CheckContext = field(init=False)
+    fused: CheckContext = field(init=False)
+    adapter_config: Mapping[str, object] | None = field(init=False)
+
+    def __post_init__(self) -> None:
+        """Build the per-target check contexts and parse adapter_config.json once."""
+        self.base = CheckContext(target=self.targets.base, options=self.options)
+        self.adapter = CheckContext(target=self.targets.adapter, options=self.options)
+        self.fused = CheckContext(target=self.targets.fused, options=self.options)
+        self.adapter_config = _read_adapter_config(self.targets.adapter)
+
+    @property
+    def num_layers(self) -> int | None:
+        """Return adapter_config's top-level num_layers, or None when absent/malformed."""
+        return _adapter_config_int_field(self.adapter_config, "num_layers")
+
+    @property
+    def fine_tune_type(self) -> str | None:
+        """Return adapter_config's top-level fine_tune_type, or None when absent/malformed."""
+        return _adapter_config_str_field(self.adapter_config, "fine_tune_type")
+
+    @property
+    def lora_parameter_keys(self) -> tuple[str, ...] | None:
+        """Return adapter_config's explicit lora_parameters.keys, or None."""
+        return _adapter_config_lora_keys(self.adapter_config)
+
+    def base_model_type(self) -> str | None:
+        """Return the base target's config.json model_type, or None when absent/malformed."""
+        config = self.base.config_json()
+        if config is None:
+            return None
+        value = config.get("model_type")
+        return value if isinstance(value, str) else None
+
+    def base_tokenizer_fingerprint(self) -> TokenizerFingerprint:
+        """Compute the base target's tokenizer fingerprint from its repository files."""
+        return _tokenizer_fingerprint_for(self.targets.base, self.base)
+
+    def fused_tokenizer_fingerprint(self) -> TokenizerFingerprint:
+        """Compute the fused target's tokenizer fingerprint from its repository files."""
+        return _tokenizer_fingerprint_for(self.targets.fused, self.fused)

@@ -1,16 +1,38 @@
-"""Tests for the tokenizer-identity fingerprint (F6).
+"""Tests for the tokenizer-identity fingerprint (F6) and the parity checks.
 
-This is the "tokenizer part" of ``test_parity_checks.py`` named by the task
-plan: pure tests of :mod:`mlx_model_doctor.parity.context`'s
-``tokenizer_fingerprint``/``tokenizers_match``. A later task adds
-``ParityCheck``/``ParityContext`` tests to this same file.
+The first part of this file is the "tokenizer part" named by the task plan:
+pure tests of :mod:`mlx_model_doctor.parity.context`'s
+``tokenizer_fingerprint``/``tokenizers_match``. The rest exercises
+``ParityContext``/``ParityCheck``/``run_parity_checks`` and the four
+cross-target static checks in :mod:`mlx_model_doctor.parity.checks` (F3/F4/
+F5/F6), built entirely on in-memory ``FakeTarget`` repositories so it stays
+offline and MLX/numpy-free.
 """
 
+import json
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+import pytest
+
+from mlx_model_doctor.errors import ModelDoctorError, TargetError
+from mlx_model_doctor.parity.checks import (
+    AdapterConfigCheck,
+    FusedTargetConsistencyCheck,
+    TargetCoverageCheck,
+    TokenizerIdentityCheck,
+    run_parity_checks,
+)
 from mlx_model_doctor.parity.context import (
     MatchResult,
+    ParityContext,
+    ParityTargets,
     tokenizer_fingerprint,
     tokenizers_match,
 )
+from mlx_model_doctor.report import CheckResult
+from mlx_model_doctor.safetensors_header import FileHeader, SafetensorsHeader, TensorEntry
+from tests.fakes import FakeTarget, check_options
 
 _BASE_TOKENIZER_CONFIG: dict[str, object] = {
     "bos_token": "<s>",
@@ -265,3 +287,406 @@ class TestUnavailableRepresentationNeverFalseMatches:
         result = tokenizers_match(fp_a, fp_b)
         assert result.matched is False
         assert result.reason == "special_tokens_unavailable"
+
+
+# --- ParityContext / ParityCheck / run_parity_checks (F3/F4/F5/F6) ----------
+
+_BLOCK_LINEAR_SUFFIXES = (
+    "self_attn.q_proj",
+    "self_attn.k_proj",
+    "self_attn.v_proj",
+    "self_attn.o_proj",
+    "mlp.gate_proj",
+    "mlp.up_proj",
+    "mlp.down_proj",
+)
+
+_PARITY_VOCAB: dict[str, int] = {"<s>": 0, "</s>": 1, "hello": 2, "world": 3}
+
+
+def _base_tensor_names(num_blocks: int = 2) -> tuple[str, ...]:
+    """Build a tiny 2-block llama-family base model's safetensors tensor names."""
+    names = ["model.embed_tokens.weight"]
+    for i in range(num_blocks):
+        names.extend(f"model.layers.{i}.{suffix}.weight" for suffix in _BLOCK_LINEAR_SUFFIXES)
+    names.append("model.norm.weight")
+    names.append("lm_head.weight")
+    return tuple(names)
+
+
+def _entry() -> TensorEntry:
+    return TensorEntry(dtype="F32", shape=(1,), data_offsets=(0, 4), stored_element_count=1)
+
+
+def _header(names: Sequence[str]) -> SafetensorsHeader:
+    tensors = {name: _entry() for name in names}
+    file_header = FileHeader(
+        filename="model.safetensors",
+        tensors=tensors,
+        metadata={},
+        header_length=10,
+        file_size=None,
+    )
+    return SafetensorsHeader(
+        files=(file_header,),
+        weight_map={},
+        sharded=False,
+        stored_count_by_dtype={"F32": len(tensors)},
+    )
+
+
+def _adapter_config_bytes(**overrides: object) -> bytes:
+    config: dict[str, object] = {
+        "num_layers": -1,
+        "fine_tune_type": "lora",
+        "lora_parameters": {"keys": ["self_attn.q_proj"]},
+    }
+    config.update(overrides)
+    return json.dumps(config).encode("utf-8")
+
+
+def _tokenizer_files(
+    vocab: dict[str, int], *, chat_template: str = "a template"
+) -> dict[str, bytes]:
+    tokenizer_config = {"bos_token": "<s>", "eos_token": "</s>", "chat_template": chat_template}
+    tokenizer_json = {"model": {"type": "BPE", "vocab": vocab}}
+    return {
+        "tokenizer_config.json": json.dumps(tokenizer_config).encode("utf-8"),
+        "tokenizer.json": json.dumps(tokenizer_json).encode("utf-8"),
+    }
+
+
+def _base_target(
+    *, model_type: str = "llama", header: SafetensorsHeader | None = None
+) -> FakeTarget:
+    return FakeTarget(
+        files={"config.json": json.dumps({"model_type": model_type}).encode("utf-8")},
+        name="base",
+        _safetensors_header=header if header is not None else _header(_base_tensor_names()),
+    )
+
+
+def _adapter_target(config_bytes: bytes | None) -> FakeTarget:
+    files = {} if config_bytes is None else {"adapter_config.json": config_bytes}
+    return FakeTarget(files=files, name="adapter")
+
+
+def _fused_target(
+    *, header: SafetensorsHeader | None = None, tokenizer_files: dict[str, bytes] | None = None
+) -> FakeTarget:
+    return FakeTarget(files=dict(tokenizer_files or {}), name="fused", _safetensors_header=header)
+
+
+def _pctx(*, base: FakeTarget, adapter: FakeTarget, fused: FakeTarget) -> ParityContext:
+    return ParityContext(
+        targets=ParityTargets(base=base, adapter=adapter, fused=fused),
+        options=check_options(),
+    )
+
+
+class _TargetErrorTarget(FakeTarget):
+    """FakeTarget whose reads always raise TargetError (source configurable)."""
+
+    def exists(self, path: str) -> bool:
+        return True
+
+    def size(self, path: str) -> int | None:
+        return 0
+
+    def read_text(self, path: str, *, max_bytes: int | None = None) -> str:
+        raise TargetError("read failed", target=path, source=self.source)
+
+
+class TestParityContextAdapterConfigParsing:
+    """ParityContext parses adapter_config.json once and exposes its fields."""
+
+    def test_convenience_properties_reflect_the_parsed_config(self) -> None:
+        pctx = _pctx(
+            base=_base_target(),
+            adapter=_adapter_target(_adapter_config_bytes()),
+            fused=_fused_target(),
+        )
+        assert pctx.num_layers == -1
+        assert pctx.fine_tune_type == "lora"
+        assert pctx.lora_parameter_keys == ("self_attn.q_proj",)
+
+    def test_convenience_properties_are_none_without_a_config(self) -> None:
+        pctx = _pctx(base=_base_target(), adapter=_adapter_target(None), fused=_fused_target())
+        assert pctx.num_layers is None
+        assert pctx.fine_tune_type is None
+        assert pctx.lora_parameter_keys is None
+
+    def test_non_json_adapter_config_is_treated_as_malformed(self) -> None:
+        pctx = _pctx(
+            base=_base_target(), adapter=_adapter_target(b"not-json-at-all"), fused=_fused_target()
+        )
+        assert pctx.adapter_config is None
+
+    def test_base_model_type_is_none_without_a_base_config(self) -> None:
+        pctx = _pctx(
+            base=FakeTarget(files={}, name="base"),
+            adapter=_adapter_target(_adapter_config_bytes()),
+            fused=_fused_target(),
+        )
+        assert pctx.base_model_type() is None
+
+    def test_hf_adapter_config_read_error_propagates(self) -> None:
+        with pytest.raises(TargetError):
+            _pctx(
+                base=_base_target(),
+                adapter=_TargetErrorTarget(files={}, name="adapter", _source="hf"),
+                fused=_fused_target(),
+            )
+
+    def test_local_adapter_config_read_error_is_swallowed(self) -> None:
+        pctx = _pctx(
+            base=_base_target(),
+            adapter=_TargetErrorTarget(files={}, name="adapter", _source="local"),
+            fused=_fused_target(),
+        )
+        assert pctx.adapter_config is None
+
+
+class TestAdapterConfigCheck:
+    """AdapterConfigCheck validates presence and shape of adapter_config.json."""
+
+    def test_well_formed_config_passes(self) -> None:
+        pctx = _pctx(
+            base=_base_target(),
+            adapter=_adapter_target(_adapter_config_bytes()),
+            fused=_fused_target(),
+        )
+        result = AdapterConfigCheck().run(pctx)
+        assert result.status == "pass"
+
+    def test_missing_adapter_config_fails(self) -> None:
+        pctx = _pctx(base=_base_target(), adapter=_adapter_target(None), fused=_fused_target())
+        result = AdapterConfigCheck().run(pctx)
+        assert result.status == "fail"
+        assert "Missing" in result.message
+
+    def test_malformed_num_layers_fails_and_names_the_field(self) -> None:
+        pctx = _pctx(
+            base=_base_target(),
+            adapter=_adapter_target(_adapter_config_bytes(num_layers="oops")),
+            fused=_fused_target(),
+        )
+        result = AdapterConfigCheck().run(pctx)
+        assert result.status == "fail"
+        assert "num_layers" in result.message
+        problems = result.details["problems"]
+        assert any("num_layers" in problem for problem in problems)
+
+    def test_malformed_lora_keys_fails_and_names_the_field(self) -> None:
+        pctx = _pctx(
+            base=_base_target(),
+            adapter=_adapter_target(_adapter_config_bytes(lora_parameters={"keys": "not-a-list"})),
+            fused=_fused_target(),
+        )
+        result = AdapterConfigCheck().run(pctx)
+        assert result.status == "fail"
+        assert "lora_parameters.keys" in result.message
+
+
+class TestTargetCoverageCheck:
+    """TargetCoverageCheck resolves LoRA target keys against the base model's tensors."""
+
+    def test_uncovered_key_fails_and_names_it(self) -> None:
+        pctx = _pctx(
+            base=_base_target(),
+            adapter=_adapter_target(
+                _adapter_config_bytes(lora_parameters={"keys": ["self_attn.typo_proj"]})
+            ),
+            fused=_fused_target(),
+        )
+        result = TargetCoverageCheck().run(pctx)
+        assert result.status == "fail"
+        assert "self_attn.typo_proj" in result.message
+        assert result.details["uncovered_keys"] == ("self_attn.typo_proj",)
+
+    def test_covered_targets_pass(self) -> None:
+        pctx = _pctx(
+            base=_base_target(),
+            adapter=_adapter_target(_adapter_config_bytes()),
+            fused=_fused_target(),
+        )
+        result = TargetCoverageCheck().run(pctx)
+        assert result.status == "pass"
+
+    def test_full_fine_tune_is_skipped_not_failed(self) -> None:
+        pctx = _pctx(
+            base=_base_target(),
+            adapter=_adapter_target(_adapter_config_bytes(fine_tune_type="full")),
+            fused=_fused_target(),
+        )
+        result = TargetCoverageCheck().run(pctx)
+        assert result.status == "skip"
+
+    def test_unverified_architecture_is_skipped_not_failed(self) -> None:
+        pctx = _pctx(
+            base=_base_target(model_type="made-up-arch"),
+            adapter=_adapter_target(_adapter_config_bytes()),
+            fused=_fused_target(),
+        )
+        result = TargetCoverageCheck().run(pctx)
+        assert result.status == "skip"
+
+    def test_missing_adapter_config_is_skipped_not_failed(self) -> None:
+        pctx = _pctx(base=_base_target(), adapter=_adapter_target(None), fused=_fused_target())
+        result = TargetCoverageCheck().run(pctx)
+        assert result.status == "skip"
+
+
+class TestFusedTargetConsistencyCheck:
+    """FusedTargetConsistencyCheck checks the fused header against resolved targets."""
+
+    def test_omitted_target_and_leftover_lora_factor_both_fail_and_are_named(self) -> None:
+        fused_names = [
+            name
+            for name in _base_tensor_names()
+            if name != "model.layers.0.self_attn.q_proj.weight"
+        ]
+        fused_names.append("model.layers.0.self_attn.o_proj.lora_a")
+        fused_names.append("model.layers.0.self_attn.o_proj.lora_b")
+        pctx = _pctx(
+            base=_base_target(),
+            adapter=_adapter_target(
+                _adapter_config_bytes(
+                    lora_parameters={"keys": ["self_attn.q_proj", "self_attn.o_proj"]}
+                )
+            ),
+            fused=_fused_target(header=_header(fused_names)),
+        )
+        result = FusedTargetConsistencyCheck().run(pctx)
+        assert result.status == "fail"
+        assert "model.layers.0.self_attn.q_proj" in result.details["omitted_targets"]
+        assert "model.layers.0.self_attn.o_proj.lora_a" in result.details["leftover_lora_factors"]
+
+    def test_consistent_fused_header_passes(self) -> None:
+        pctx = _pctx(
+            base=_base_target(),
+            adapter=_adapter_target(_adapter_config_bytes()),
+            fused=_fused_target(header=_header(_base_tensor_names())),
+        )
+        result = FusedTargetConsistencyCheck().run(pctx)
+        assert result.status == "pass"
+
+    def test_missing_fused_header_is_skipped_not_failed(self) -> None:
+        pctx = _pctx(
+            base=_base_target(),
+            adapter=_adapter_target(_adapter_config_bytes()),
+            fused=_fused_target(),
+        )
+        result = FusedTargetConsistencyCheck().run(pctx)
+        assert result.status == "skip"
+
+
+class TestTokenizerIdentityCheck:
+    """TokenizerIdentityCheck compares base vs fused tokenizer fingerprints."""
+
+    def test_matching_tokenizers_pass(self) -> None:
+        pctx = _pctx(
+            base=FakeTarget(files={**_tokenizer_files(_PARITY_VOCAB)}, name="base"),
+            adapter=_adapter_target(_adapter_config_bytes()),
+            fused=FakeTarget(files={**_tokenizer_files(_PARITY_VOCAB)}, name="fused"),
+        )
+        result = TokenizerIdentityCheck().run(pctx)
+        assert result.status == "pass"
+
+    def test_mismatched_tokenizers_fail_and_flag_the_oracle_void(self) -> None:
+        permuted_vocab = {"<s>": 0, "</s>": 1, "hello": 3, "world": 2}
+        pctx = _pctx(
+            base=FakeTarget(files={**_tokenizer_files(_PARITY_VOCAB)}, name="base"),
+            adapter=_adapter_target(_adapter_config_bytes()),
+            fused=FakeTarget(files={**_tokenizer_files(permuted_vocab)}, name="fused"),
+        )
+        result = TokenizerIdentityCheck().run(pctx)
+        assert result.status == "fail"
+        assert result.details["void_oracle"] is True
+        assert result.details["match_reason"] == "token_id_map_differs"
+
+
+@dataclass(frozen=True, slots=True)
+class _CrashingParityCheck:
+    check_id: str = "parity/boom"
+    title: str = "Crashes"
+
+    def run(self, pctx: ParityContext) -> CheckResult:
+        raise RuntimeError("boom")
+
+
+@dataclass(frozen=True, slots=True)
+class _ToolErrorParityCheck:
+    check_id: str = "parity/tool-error"
+    title: str = "Tool-level failure"
+
+    def run(self, pctx: ParityContext) -> CheckResult:
+        raise ModelDoctorError("tool-level failure")
+
+
+class TestRunParityChecks:
+    """run_parity_checks isolates crashes and flags them distinctly from an ordinary fail."""
+
+    def test_crashing_check_sets_crash_flag_and_is_isolated_as_fail(self) -> None:
+        pctx = _pctx(
+            base=_base_target(),
+            adapter=_adapter_target(_adapter_config_bytes()),
+            fused=_fused_target(),
+        )
+        results, crashed = run_parity_checks(pctx, [_CrashingParityCheck()])
+        assert crashed is True
+        assert len(results) == 1
+        assert results[0].status == "fail"
+        assert results[0].severity == "high"
+        assert results[0].check_id == "parity/boom"
+        assert "boom" in results[0].message
+
+    def test_ordinary_fail_does_not_set_the_crash_flag(self) -> None:
+        pctx = _pctx(
+            base=_base_target(),
+            adapter=_adapter_target(
+                _adapter_config_bytes(lora_parameters={"keys": ["self_attn.typo_proj"]})
+            ),
+            fused=_fused_target(),
+        )
+        results, crashed = run_parity_checks(pctx, [TargetCoverageCheck()])
+        assert crashed is False
+        assert results[0].status == "fail"
+
+    def test_model_doctor_error_propagates_instead_of_being_isolated(self) -> None:
+        pctx = _pctx(
+            base=_base_target(),
+            adapter=_adapter_target(_adapter_config_bytes()),
+            fused=_fused_target(),
+        )
+        with pytest.raises(ModelDoctorError):
+            run_parity_checks(pctx, [_ToolErrorParityCheck()])
+
+    def test_clean_repositories_pass_every_check(self) -> None:
+        base = FakeTarget(
+            files={
+                "config.json": json.dumps({"model_type": "llama"}).encode("utf-8"),
+                **_tokenizer_files(_PARITY_VOCAB),
+            },
+            name="base",
+            _safetensors_header=_header(_base_tensor_names()),
+        )
+        fused = FakeTarget(
+            files={**_tokenizer_files(_PARITY_VOCAB)},
+            name="fused",
+            _safetensors_header=_header(_base_tensor_names()),
+        )
+        pctx = _pctx(base=base, adapter=_adapter_target(_adapter_config_bytes()), fused=fused)
+
+        results, crashed = run_parity_checks(
+            pctx,
+            [
+                AdapterConfigCheck(),
+                TargetCoverageCheck(),
+                FusedTargetConsistencyCheck(),
+                TokenizerIdentityCheck(),
+            ],
+        )
+
+        assert crashed is False
+        assert [r.status for r in results] == ["pass", "pass", "pass", "pass"]
