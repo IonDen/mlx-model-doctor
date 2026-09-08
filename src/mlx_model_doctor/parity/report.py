@@ -225,3 +225,127 @@ def parity_report_to_dict(report: ParityReport) -> dict[str, object]:
 def render_parity_json(report: ParityReport) -> str:
     """Render a ParityReport as stable JSON."""
     return json.dumps(parity_report_to_dict(report), indent=2, sort_keys=True)
+
+
+def _fmt_float(value: float | None) -> str:
+    """Format an optional metric value for display, or 'n/a' when unmeasured."""
+    return "n/a" if value is None else f"{value:.4f}"
+
+
+def _fmt_int(value: int | None) -> str:
+    """Format an optional integer position for display, or 'none' when there isn't one."""
+    return "none" if value is None else str(value)
+
+
+def _verdict_label(verdict: ParityVerdict | None) -> str:
+    """Return the display label for a (possibly null) parity verdict."""
+    return "not determined" if verdict is None else verdict.value
+
+
+def _failing_static_checks(report: ParityReport) -> list[tuple[str, CheckResult]]:
+    """Return every non-passing check across the parity, base, and fused check sets.
+
+    Foregrounds the failure class for a human reader: which specific check
+    (its ``check_id``/``title``) is responsible, and whether it came from the
+    cross-target parity checks or an embedded base/fused ``text`` report.
+    """
+    failing: list[tuple[str, CheckResult]] = []
+    failing.extend(
+        ("parity", result) for result in report.results if result.status in {"fail", "warn"}
+    )
+    failing.extend(
+        ("base", result)
+        for result in report.base_report.results
+        if result.status in {"fail", "warn"}
+    )
+    failing.extend(
+        ("fused", result)
+        for result in report.fused_report.results
+        if result.status in {"fail", "warn"}
+    )
+    return failing
+
+
+def render_parity_text(report: ParityReport) -> str:
+    """Render a ParityReport as plain text.
+
+    Foregrounds the verdict (or its null state plus ``reasons``), the
+    agreement rates, gap, noise, and first divergence, any failing static or
+    embedded checks (the failure class), and the named delta-map tensors.
+    """
+    lines = [
+        f"MLX Model Doctor (parity): {report.adapter.original_ref} -> {report.fused.original_ref}",
+        "",
+        f"Verdict: {_verdict_label(report.verdict)}",
+    ]
+    if report.verdict is None:
+        lines.extend(f"  Reason: {reason}" for reason in report.reasons)
+    lines.extend(
+        [
+            "",
+            "Agreement:",
+            f"  fused vs adapter (agree_fa): {_fmt_float(report.agree_fa)}",
+            f"  fused vs base    (agree_fb): {_fmt_float(report.agree_fb)}",
+            f"  gap:                         {_fmt_float(report.gap)}",
+            f"  noise:                       {_fmt_float(report.noise)}",
+            f"  first divergence:            {_fmt_int(report.first_divergence)}",
+        ]
+    )
+    failing = _failing_static_checks(report)
+    if failing:
+        lines.extend(["", "Failing checks:"])
+        for source, result in failing:
+            lines.append(
+                f"  {result.status.upper()} [{source}] {result.check_id}: {result.message}"
+            )
+    if report.delta_map:
+        lines.extend(["", "Delta map:"])
+        for delta in report.delta_map:
+            suffix = f" -- {delta.reason}" if delta.reason else ""
+            lines.append(f"  {delta.klass} {delta.tensor}{suffix}")
+    return "\n".join(lines)
+
+
+def render_parity_markdown(report: ParityReport) -> str:
+    """Render a ParityReport as Markdown, mirroring ``render_parity_text``'s content."""
+    lines = [
+        f"# MLX Model Doctor (parity): {report.adapter.original_ref} "
+        f"vs {report.fused.original_ref}",
+        "",
+        f"**Verdict:** {_verdict_label(report.verdict)}",
+        "",
+    ]
+    if report.verdict is None and report.reasons:
+        lines.extend(f"> {reason}" for reason in report.reasons)
+        lines.append("")
+    lines.extend(
+        [
+            "| Metric | Value |",
+            "|---|---:|",
+            f"| agree_fa | {_fmt_float(report.agree_fa)} |",
+            f"| agree_fb | {_fmt_float(report.agree_fb)} |",
+            f"| gap | {_fmt_float(report.gap)} |",
+            f"| noise | {_fmt_float(report.noise)} |",
+            f"| first_divergence | {_fmt_int(report.first_divergence)} |",
+            "",
+        ]
+    )
+    failing = _failing_static_checks(report)
+    if failing:
+        lines.extend(["## Failing checks", ""])
+        for source, result in failing:
+            lines.extend(
+                [
+                    f"### {result.status.upper()} [{source}] {result.check_id}",
+                    "",
+                    f"**{result.title}.** {result.message}",
+                    "",
+                ]
+            )
+    if report.delta_map:
+        lines.extend(["## Delta map", "", "| Tensor | Class | Reason |", "|---|---|---|"])
+        lines.extend(
+            f"| {delta.tensor} | {delta.klass} | {delta.reason or ''} |"
+            for delta in report.delta_map
+        )
+    return "\n".join(lines)

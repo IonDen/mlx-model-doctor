@@ -7,6 +7,12 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
+from mlx_model_doctor.parity.deltamap import TensorDelta
+from mlx_model_doctor.parity.fixtures import DEFAULT_FIXTURE_ID, get_fixture
+from mlx_model_doctor.parity.oracle import ParityVerdict
+from mlx_model_doctor.parity.report import ParityReport, ResolvedIdentity, RuntimeProvenance
+from mlx_model_doctor.report import CheckResult, DoctorReport
+
 
 def safetensors_header_bytes(tensors: dict[str, dict[str, object]]) -> bytes:
     """Build the 8-byte-length + JSON header of a safetensors file, with no tensor data."""
@@ -477,3 +483,103 @@ def write_nonresponsive_stub(path: Path) -> Path:
 def write_slow_cooperative_stub(path: Path) -> Path:
     """Stub that sleeps past ``timeout_s`` but honors default SIGTERM handling (no KILL needed)."""
     return write_stub_script(path, _STUB_SLOW_COOPERATIVE_SOURCE)
+
+
+# --- ParityReport builder (offline; real dataclasses, no bypass flags) -------------
+#
+# Shared by test_parity_render.py and test_parity_exit_codes.py so both suites
+# exercise the renderers and parity_exit_code against genuine ParityReport
+# instances -- never a bypass/mock report.
+
+_PARITY_FIXTURE_REF, _PARITY_FIXTURE_TOKEN_IDS = get_fixture(DEFAULT_FIXTURE_ID)
+
+
+def parity_identity(role: str, *, source: str = "local") -> ResolvedIdentity:
+    """Build a minimal ``ResolvedIdentity`` for ``role`` ("base"/"adapter"/"fused")."""
+    original = f"mlx-community/{role}-model" if source == "hf" else f"/models/{role}"
+    return ResolvedIdentity(path=f"/snapshots/{role}", original_ref=original, source=source)  # type: ignore[arg-type]
+
+
+def parity_check_result(
+    *,
+    check_id: str = "parity/adapter.config_well_formed",
+    title: str = "t",
+    status: str = "pass",
+    severity: str = "info",
+    message: str = "m",
+    **kw: object,
+) -> CheckResult:
+    """Build a minimal parity ``CheckResult``, defaulting to a clean pass."""
+    return CheckResult(
+        check_id=check_id,
+        title=title,
+        status=status,  # type: ignore[arg-type]
+        severity=severity,  # type: ignore[arg-type]
+        message=message,
+        **kw,
+    )
+
+
+def embedded_doctor_report(name: str, *, status: str = "pass") -> DoctorReport:
+    """Build a minimal embedded single-target ``DoctorReport`` for base/fused."""
+    severity = "info" if status in {"pass", "skip"} else "high"
+    return DoctorReport(
+        target=name,
+        source="local",
+        plugin="text",
+        results=[
+            CheckResult(
+                check_id="text/a.b",
+                title="t",
+                status=status,  # type: ignore[arg-type]
+                severity=severity,
+                message="m",
+            )
+        ],
+    )
+
+
+def build_parity_report(**overrides: object) -> ParityReport:
+    """Build a full, valid, PASS-shaped ``ParityReport``; override any field by name."""
+    defaults: dict[str, object] = {
+        "base": parity_identity("base"),
+        "adapter": parity_identity("adapter"),
+        "fused": parity_identity("fused"),
+        "tokenizer_fingerprint": _PARITY_FIXTURE_REF.tokenizer_fingerprint,
+        "fixture": _PARITY_FIXTURE_REF,
+        "tool_version": "0.9.0",
+        "mlx_version": "0.32.0",
+        "mlx_lm_version": "0.31.3",
+        "provenance": RuntimeProvenance(
+            chip="Apple M1 Max",
+            os="macOS 15",
+            backend="metal",
+            weight_dtype="bfloat16",
+            compute_note="scoped top-token agreement",
+        ),
+        "base_report": embedded_doctor_report("base"),
+        "fused_report": embedded_doctor_report("fused"),
+        "results": (parity_check_result(),),
+        "verdict": ParityVerdict.PASS,
+        "agree_fa": 0.95,
+        "agree_fb": 0.4,
+        "gap": 0.6,
+        "noise": 0.02,
+        "first_divergence": 3,
+        "flip_count": 2,
+        "adapter_applied": True,
+        "delta_map": (
+            TensorDelta(tensor="model.layers.0.self_attn.q_proj.weight", klass="changed"),
+        ),
+        "phase_outcomes": {
+            "static": "ok",
+            "reference": "ok",
+            "tokenizer_gate": "ok",
+            "oracle": "ok",
+        },
+        "worker_status": {"base": "ok", "adapter": "ok", "fused": "ok"},
+        "peak_bytes": {"base": 1024, "adapter": 512, "fused": 1024},
+        "reasons": (),
+    }
+    defaults.update(overrides)
+    return ParityReport(**defaults)  # type: ignore[arg-type]
