@@ -201,10 +201,12 @@ def check_adapter_parity(
 
     fixture_ref, token_ids = get_fixture(options.fixture_id)
     tokenizer_fingerprint = pctx.base_tokenizer_fingerprint()
-    delta = _build_delta_map(pctx, base_target, fused_target, sources)
+    delta_result = _build_delta_map(pctx, base_target, fused_target, sources)
 
     reasons: list[str] = []
-    phase_outcomes: dict[str, PhaseOutcome] = {}
+    phase_outcomes: dict[str, PhaseOutcome] = {"delta_map": delta_result.phase}
+    if delta_result.reason is not None and delta_result.phase == "error":
+        reasons.append(delta_result.reason)
 
     embedded_fail = bool(base_report.summary["fail"]) or bool(fused_report.summary["fail"])
     adapter_config_fail = _has_fail(results, _ADAPTER_CONFIG_CHECK_ID)
@@ -254,7 +256,7 @@ def check_adapter_parity(
         first_divergence=runtime.first_divergence,
         flip_count=runtime.flip_count,
         adapter_applied=runtime.adapter_applied,
-        delta_map=delta,
+        delta_map=delta_result.deltas,
         phase_outcomes=phase_outcomes,
         worker_status=runtime.worker_status,
         peak_bytes=runtime.peak_bytes,
@@ -345,15 +347,22 @@ def _run_runtime(
     peak_bytes: dict[str, int | None] = {outcome.role: outcome.peak_bytes for outcome in outcomes}
 
     reference = by_role.get(ROLE_REFERENCE)
+    reference_ok = reference is not None and reference.status == "ok"
+    # adapter_applied is derived from the base+adapter reference ONLY (F1). An
+    # error outcome carries adapter_applied=None, so this is already None exactly
+    # when the reference worker itself errored or is absent.
     adapter_applied = reference.adapter_applied if reference is not None else None
 
     if any(outcome.status == "error" for outcome in outcomes):
         reasons.append("one or more parity workers failed; the oracle could not be computed.")
+        # Keep the reference-derived signal: a crash in a non-reference worker
+        # (base_repeat/fused) must not erase a valid reference verdict (F1). The
+        # run is still cannot-determine (exit 2) via the worker-status error.
         return _voided_runtime(
-            adapter_applied=None,
+            adapter_applied=adapter_applied,
             worker_status=worker_status,
             peak_bytes=peak_bytes,
-            phases={"reference": "error", "oracle": "error"},
+            phases={"reference": "ok" if reference_ok else "error", "oracle": "error"},
         )
     if adapter_applied is None:
         reasons.append(
@@ -454,28 +463,50 @@ def _build_worker_specs(
     ]
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _DeltaMapResult:
+    """The diagnostic delta map plus its phase outcome and an optional failure reason."""
+
+    deltas: tuple[TensorDelta, ...]
+    phase: PhaseOutcome
+    reason: str | None = None
+
+
 def _build_delta_map(
     pctx: ParityContext,
     base_target: LocalTarget,
     fused_target: LocalTarget,
     sources: ResolvedSources,
-) -> tuple[TensorDelta, ...]:
-    """Build the diagnostic delta map: byte-compare for local pairs, note-only for HF (F11)."""
+) -> _DeltaMapResult:
+    """Build the diagnostic delta map, tracking the ``delta_map`` phase (F11, spec Sec.9).
+
+    A byte-compare runs only for a local base/fused pair; an HF pair is
+    ``"skipped"`` (note-only), a missing header is ``"skipped"``, a completed
+    compare is ``"ok"``, and a caught read/parse failure is ``"error"`` with a
+    reason -- never a silent empty result.
+    """
     if sources.base.source != "local" or sources.fused.source != "local":
-        return _hf_non_comparable_delta(pctx)
+        return _DeltaMapResult(deltas=_hf_non_comparable_delta(pctx), phase="skipped")
     base_hdr = pctx.base.safetensors_header()
     fused_hdr = pctx.fused.safetensors_header()
     if base_hdr is None or fused_hdr is None:
-        return ()
+        return _DeltaMapResult(
+            deltas=(),
+            phase="skipped",
+            reason="delta map skipped: base or fused has no readable safetensors header.",
+        )
     targets = _delta_targets(pctx)
     try:
-        return tuple(
+        deltas = tuple(
             delta_map(
                 base_target, fused_target, base_hdr=base_hdr, fused_hdr=fused_hdr, targets=targets
             )
         )
-    except (ValueError, OSError):
-        return ()
+    except (ValueError, OSError) as exc:
+        return _DeltaMapResult(
+            deltas=(), phase="error", reason=f"delta map could not compare tensor bytes: {exc}"
+        )
+    return _DeltaMapResult(deltas=deltas, phase="ok")
 
 
 def _hf_non_comparable_delta(pctx: ParityContext) -> tuple[TensorDelta, ...]:

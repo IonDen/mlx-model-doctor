@@ -76,12 +76,12 @@ def _write_model_repo(root: Path, *, q_bytes: bytes, chat_template: str = "{{ x 
     return root
 
 
-def _write_adapter(root: Path) -> Path:
+def _write_adapter(root: Path, *, keys: tuple[str, ...] = ("self_attn.q_proj",)) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     config = {
         "num_layers": 1,
         "fine_tune_type": "lora",
-        "lora_parameters": {"rank": 4, "scale": 20.0, "keys": ["self_attn.q_proj"]},
+        "lora_parameters": {"rank": 4, "scale": 20.0, "keys": list(keys)},
     }
     (root / "adapter_config.json").write_text(json.dumps(config), encoding="utf-8")
     (root / "adapters.safetensors").write_bytes(
@@ -99,6 +99,7 @@ def _write_adapter(root: Path) -> Path:
 class _Repos:
     base: str
     adapter: str
+    adapter_bad_key: str  # names a LoRA target key that maps to no base tensor
     fused_diff: str  # q_proj differs from base (a genuine fuse)
     fused_same: str  # q_proj byte-identical to base (a copied-base fuse)
     fused_bad_tokenizer: str  # a changed chat template (a real tokenizer incompatibility)
@@ -113,9 +114,11 @@ def tiny_local_repos(tmp_path: Path) -> _Repos:
         tmp_path / "fused_bad_tokenizer", q_bytes=_F4_TWO * 64, chat_template="{{ y }}"
     )
     adapter = _write_adapter(tmp_path / "adapter")
+    adapter_bad_key = _write_adapter(tmp_path / "adapter_bad_key", keys=("self_attn.nonexistent",))
     return _Repos(
         base=str(base),
         adapter=str(adapter),
+        adapter_bad_key=str(adapter_bad_key),
         fused_diff=str(fused_diff),
         fused_same=str(fused_same),
         fused_bad_tokenizer=str(fused_bad_tokenizer),
@@ -246,6 +249,8 @@ def test_pass_yields_pass_verdict_and_exit_0(tiny_local_repos: _Repos) -> None:
     assert report.adapter_applied is True
     assert report.verdict is ParityVerdict.PASS
     assert parity_exit_code(report) == 0
+    # the local byte-compare ran to completion (delta_map phase tracked, not silent)
+    assert report.phase_outcomes["delta_map"] == "ok"
 
 
 def test_copied_base_fuse_is_tracks_base_not_voided_exit_1(tiny_local_repos: _Repos) -> None:
@@ -312,7 +317,8 @@ def test_tokenizer_mismatch_gates_the_oracle_without_running_workers(
     tiny_local_repos: _Repos,
 ) -> None:
     # A changed chat template is a real incompatibility (F6): the tokenizer check
-    # fails, the oracle is void-skipped (verdict null), and no worker is launched.
+    # fails, the oracle is void-skipped (verdict null), no worker is launched, and
+    # the run is a determined defect (exit 1), not a mere cannot-determine (2).
     launcher = RaisingLauncher()
     report = check_adapter_parity(
         base=tiny_local_repos.base,
@@ -327,6 +333,27 @@ def test_tokenizer_mismatch_gates_the_oracle_without_running_workers(
     assert report.verdict is None
     assert launcher.model_paths_by_role == {}
     assert set(report.worker_status.values()) == {"skipped"}
+    assert parity_exit_code(report) == 1
+
+
+def test_uncovered_lora_target_is_determined_bad_exit_1(tiny_local_repos: _Repos) -> None:
+    # A LoRA target key that names no base tensor is a statically-confirmed defect:
+    # the coverage check fails, the oracle is void-skipped (verdict null), no worker
+    # runs, and the exit code is 1 (determined bad), not 2.
+    launcher = RaisingLauncher()
+    report = check_adapter_parity(
+        base=tiny_local_repos.base,
+        adapter=tiny_local_repos.adapter_bad_key,
+        fused=tiny_local_repos.fused_diff,
+        options=ParityOptions(launcher=launcher),
+    )
+    assert any(
+        result.check_id == "parity/target.coverage" and result.status == "fail"
+        for result in report.results
+    )
+    assert report.verdict is None
+    assert launcher.model_paths_by_role == {}
+    assert parity_exit_code(report) == 1
 
 
 def test_worker_crash_returns_report_with_error_status_exit_2(tiny_local_repos: _Repos) -> None:
@@ -338,6 +365,9 @@ def test_worker_crash_returns_report_with_error_status_exit_2(tiny_local_repos: 
     )
     assert report.worker_status[ROLE_FUSED] == "error"
     assert report.verdict is None
+    # F1: only the fused worker crashed; the reference succeeded, so its
+    # adapter-applied signal (True here) must survive the crash, not be erased.
+    assert report.adapter_applied is True
     assert parity_exit_code(report) == 2
 
 

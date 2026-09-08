@@ -63,9 +63,10 @@ def _resolve_one(
         return ResolvedIdentity(path=str(local_dir.resolve()), original_ref=ref, source="local")
     if not allow_network:
         raise ModelDoctorError(
-            f"resolving Hugging Face source {ref!r} requires network access; "
-            "pass allow_network=True (downloads are gated by the 'network' marker in tests) "
-            "or supply an existing local directory."
+            f"cannot resolve source {ref!r}: it is not an existing local directory, and "
+            "resolving it as a Hugging Face repo id requires network access "
+            "(pass allow_network=True; downloads are gated by the 'network' marker in tests). "
+            "If this was meant to be a local path, check it for a typo."
         )
     snapshot_path = downloader.snapshot(ref)
     return ResolvedIdentity(path=snapshot_path, original_ref=ref, source="hf")
