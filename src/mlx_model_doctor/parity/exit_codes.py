@@ -4,11 +4,32 @@
 :mod:`mlx_model_doctor.exit_codes` (``exit_code_for``/``exit_code_for_error``,
 which stay untouched) -- the parity run has its own decision table over
 :class:`~mlx_model_doctor.parity.report.ParityReport`, not a
-:class:`~mlx_model_doctor.report.DoctorReport`. The table is total and
-evaluated in strict precedence order, cannot-determine (2) before
-determined-bad (1) before pass (0), so a blocking defect or worker error can
-never fall through to a pass -- even alongside a ``PASS`` verdict or a
-statically-confirmed defect that would otherwise resolve to 1 on its own.
+:class:`~mlx_model_doctor.report.DoctorReport`.
+
+The table is total and evaluated top-down, first match wins (spec Sec.3/Sec.9):
+
+1. **Tool/setup error -> 2:** a crashed parity check, a malformed
+   adapter-config/shape-mismatch fail, or a blocking embedded base/fused
+   ``text`` report failure. (A missing ``[mlx-lm]`` extra also lands here in
+   practice, via a worker reporting a dependency-import failure -- caught by
+   step 3's worker-status check, which returns the same exit code.)
+2. **Determined-bad static incompatibility -> 1:** a tokenizer mismatch or a
+   statically-confirmed missing/uncovered LoRA target. These are exit 1 EVEN
+   when ``verdict is None`` -- the oracle was deliberately void-skipped, not
+   failed, so this step must be checked *before* step 3's null-verdict
+   catch-all, not folded into it.
+3. **Runtime cannot-determine -> 2:** any ``worker_status`` value of
+   ``"error"``; ``adapter_applied`` is ``None``/``False``; ``verdict`` is
+   ``INCONCLUSIVE``; or ``verdict is None`` for any reason not already
+   covered by step 2.
+4. **Determined-bad runtime -> 1:** the oracle verdict is
+   ``FAIL_TRACKS_BASE``/``FAIL_GROSS``.
+5. **Pass -> 0:** none of the above (in practice, ``verdict is PASS`` with no
+   blocking failure).
+
+No blocking defect or worker error can ever fall through to a pass, even
+alongside a ``PASS`` verdict or a statically-confirmed defect that would
+otherwise resolve to 1 on its own.
 """
 
 from mlx_model_doctor.parity.oracle import ParityVerdict
@@ -55,44 +76,59 @@ def _has_blocking_embedded_failure(report: ParityReport) -> bool:
     return bool(report.base_report.summary["fail"]) or bool(report.fused_report.summary["fail"])
 
 
-def _cannot_determine(report: ParityReport) -> bool:
-    """Return whether the run cannot determine a parity verdict at all (F4, exit 2)."""
+def _tool_or_setup_error(report: ParityReport) -> bool:
+    """Step 1: return whether a tool/setup-level error occurred (exit 2)."""
     return (
-        any(status == "error" for status in report.worker_status.values())
-        or report.adapter_applied is not True
-        or report.verdict is None
-        or report.verdict is ParityVerdict.INCONCLUSIVE
-        or _any_check_crashed(report)
+        _any_check_crashed(report)
         or _has_failed_check(report, _MALFORMED_ADAPTER_CONFIG_CHECK_ID)
         or _has_blocking_embedded_failure(report)
     )
 
 
-def _determined_bad(report: ParityReport) -> bool:
-    """Return whether the run confirms a real, statically- or oracle-determined defect (exit 1)."""
-    return (
-        report.verdict in _DETERMINED_BAD_VERDICTS
-        or _has_missing_target_failure(report)
-        or _has_failed_check(report, _TOKENIZER_MISMATCH_CHECK_ID)
+def _determined_bad_static(report: ParityReport) -> bool:
+    """Step 2: return whether a statically-confirmed defect voided the oracle (exit 1).
+
+    Checked *before* step 3's null-verdict catch-all: a tokenizer mismatch or
+    a missing/uncovered target deliberately void-skips the oracle (leaving
+    ``verdict=None``) rather than failing it, and is still a determined, real
+    defect -- not a "cannot-determine" outcome.
+    """
+    return _has_missing_target_failure(report) or _has_failed_check(
+        report, _TOKENIZER_MISMATCH_CHECK_ID
     )
+
+
+def _runtime_cannot_determine(report: ParityReport) -> bool:
+    """Step 3: return whether the run cannot determine a verdict at runtime (exit 2)."""
+    return (
+        any(status == "error" for status in report.worker_status.values())
+        or report.adapter_applied is not True
+        or report.verdict is None
+        or report.verdict is ParityVerdict.INCONCLUSIVE
+    )
+
+
+def _determined_bad_runtime(report: ParityReport) -> bool:
+    """Step 4: return whether the oracle itself confirmed a defect (exit 1)."""
+    return report.verdict in _DETERMINED_BAD_VERDICTS
 
 
 def parity_exit_code(report: ParityReport) -> int:
     """Return the total process exit code for a completed adapter-parity report (F4).
 
-    - ``2`` (cannot-determine): a worker errored, ``adapter_applied`` is
-      ``False``/``None``, ``verdict`` is ``None``/``INCONCLUSIVE``, a parity
-      check crashed, the adapter config is malformed, or an embedded
-      base/fused ``text`` report recorded a blocking failure.
-    - ``1`` (determined-bad): none of the above, and either the oracle
-      verdict is ``FAIL_TRACKS_BASE``/``FAIL_GROSS``, a target-coverage or
-      fused-consistency check statically confirmed a missing/uncovered
-      target, or the tokenizer-identity check confirmed a mismatch.
-    - ``0`` (pass): none of the above -- an eligible run with no blocking
-      failure (in practice, ``verdict is ParityVerdict.PASS``).
+    Evaluated top-down, first match wins -- see the module docstring for the
+    full five-step table. In short: a tool/setup error (step 1) or a
+    statically-confirmed defect that void-skipped the oracle (step 2) is
+    decided before any runtime null-verdict/worker-status check (step 3), so
+    a tokenizer mismatch or missing target never gets mistaken for a mere
+    "cannot-determine" just because it left ``verdict`` null.
     """
-    if _cannot_determine(report):
+    if _tool_or_setup_error(report):
         return 2
-    if _determined_bad(report):
+    if _determined_bad_static(report):
+        return 1
+    if _runtime_cannot_determine(report):
+        return 2
+    if _determined_bad_runtime(report):
         return 1
     return 0

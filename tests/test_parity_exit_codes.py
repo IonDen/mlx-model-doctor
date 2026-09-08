@@ -49,6 +49,31 @@ def test_tokenizer_mismatch_is_one_even_with_pass_shaped_verdict() -> None:
     assert parity_exit_code(report) == 1
 
 
+def test_tokenizer_mismatch_is_one_even_with_null_verdict() -> None:
+    """A tokenizer mismatch VOID-SKIPS the oracle (leaves ``verdict=None``) rather than
+    failing it -- it is still a determined, real defect: exit 1, not 2.
+
+    Regresses to 2 if the null-verdict/runtime cannot-determine check (step 3) is
+    evaluated before this statically-confirmed defect (step 2).
+    """
+    report = build_parity_report(
+        verdict=None,
+        adapter_applied=None,
+        agree_fa=None,
+        agree_fb=None,
+        gap=None,
+        noise=None,
+        first_divergence=None,
+        flip_count=None,
+        results=(
+            parity_check_result(
+                check_id="parity/tokenizer.identity", status="fail", severity="high"
+            ),
+        ),
+    )
+    assert parity_exit_code(report) == 1
+
+
 def test_uncovered_target_coverage_failure_is_one_even_with_pass_shaped_verdict() -> None:
     """A statically-confirmed uncovered LoRA target is a real defect: exit 1.
 
@@ -67,6 +92,51 @@ def test_fused_target_inconsistency_failure_is_one_even_with_pass_shaped_verdict
     """A statically-confirmed fused-target inconsistency is a real defect: exit 1."""
     report = build_parity_report(
         verdict=ParityVerdict.PASS,
+        results=(
+            parity_check_result(
+                check_id="parity/fused.target_consistency", status="fail", severity="high"
+            ),
+        ),
+    )
+    assert parity_exit_code(report) == 1
+
+
+def test_missing_target_coverage_is_one_even_with_null_verdict() -> None:
+    """An uncovered LoRA target VOID-SKIPS the oracle (``verdict=None``) but is still
+    a determined, real defect: exit 1, not 2.
+
+    Regresses to 2 if the null-verdict check (step 3) is evaluated before this
+    statically-confirmed defect (step 2).
+    """
+    report = build_parity_report(
+        verdict=None,
+        adapter_applied=None,
+        agree_fa=None,
+        agree_fb=None,
+        gap=None,
+        noise=None,
+        first_divergence=None,
+        flip_count=None,
+        results=(
+            parity_check_result(check_id="parity/target.coverage", status="fail", severity="high"),
+        ),
+    )
+    assert parity_exit_code(report) == 1
+
+
+def test_fused_target_inconsistency_is_one_even_with_null_verdict() -> None:
+    """A fused-target inconsistency VOID-SKIPS the oracle (``verdict=None``) but is
+    still a determined, real defect: exit 1, not 2.
+    """
+    report = build_parity_report(
+        verdict=None,
+        adapter_applied=None,
+        agree_fa=None,
+        agree_fb=None,
+        gap=None,
+        noise=None,
+        first_divergence=None,
+        flip_count=None,
         results=(
             parity_check_result(
                 check_id="parity/fused.target_consistency", status="fail", severity="high"
@@ -174,11 +244,14 @@ def test_blocking_embedded_fused_failure_is_two_not_zero() -> None:
     assert parity_exit_code(report) == 2
 
 
-def test_precedence_static_defect_and_worker_error_is_two() -> None:
-    """cannot-determine outranks determined-bad: a worker error alongside a
-    statically-confirmed defect (which alone would be 1) must still exit 2.
+def test_precedence_determined_bad_static_outranks_runtime_worker_error() -> None:
+    """A statically-confirmed determined-bad defect (step 2) is evaluated before
+    a runtime worker error (step 3): a tokenizer mismatch alongside a worker
+    error exits 1, not 2, since the static check was reached first.
 
-    Regresses to 1 if cannot-determine is evaluated after determined-bad.
+    Regresses to 2 if the runtime worker-status check (step 3) is evaluated
+    before this statically-confirmed defect (step 2) -- i.e. if the step
+    ordering reverts to the old (buggy) precedence.
     """
     report = build_parity_report(
         verdict=ParityVerdict.PASS,
@@ -188,6 +261,27 @@ def test_precedence_static_defect_and_worker_error_is_two() -> None:
             ),
         ),
         worker_status={"base": "ok", "adapter": "ok", "fused": "error"},
+    )
+    assert parity_exit_code(report) == 1
+
+
+def test_precedence_malformed_config_and_tokenizer_mismatch_is_two() -> None:
+    """A tool/setup error (step 1, a malformed adapter config) outranks a
+    determined-bad static defect (step 2, a tokenizer mismatch): exit 2.
+
+    Regresses to 1 if step 1 is evaluated after step 2.
+    """
+    report = build_parity_report(
+        verdict=None,
+        adapter_applied=None,
+        results=(
+            parity_check_result(
+                check_id="parity/adapter.config_well_formed", status="fail", severity="high"
+            ),
+            parity_check_result(
+                check_id="parity/tokenizer.identity", status="fail", severity="high"
+            ),
+        ),
     )
     assert parity_exit_code(report) == 2
 
