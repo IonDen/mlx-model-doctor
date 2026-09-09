@@ -30,9 +30,10 @@ tokenizer directly, rather than forcing the default -- the documented
 user-fixture path.
 """
 
+import copy
 import hashlib
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from mlx_model_doctor.errors import ModelDoctorError
@@ -164,3 +165,100 @@ def get_fixture(fixture_id: str) -> tuple[FixtureRef, tuple[tuple[int, ...], ...
         return _FIXTURES[fixture_id]
     except KeyError:
         raise UnknownFixtureError(fixture_id) from None
+
+
+# --- User-fixture builder (the documented path for a real repository) -------
+
+
+def reference_tokenizer_files() -> tuple[dict[str, object], dict[str, object], str]:
+    """Return copies of the default fixture's own reference tokenizer artifacts.
+
+    ``(tokenizer_config, tokenizer_json, chat_template)`` -- exactly the shape
+    :func:`~mlx_model_doctor.parity.context.tokenizer_fingerprint` accepts, and
+    (once written to a repository's ``tokenizer_config.json``/``tokenizer.json``)
+    what makes that repository's own fingerprint reproduce
+    :data:`DEFAULT_FIXTURE_ID`'s exactly. Deep copies: callers are free to write
+    or mutate the returned mappings without affecting this module's state or
+    other callers.
+    """
+    return (
+        copy.deepcopy(_REFERENCE_TOKENIZER_CONFIG),
+        copy.deepcopy(_REFERENCE_TOKENIZER_JSON),
+        _REFERENCE_CHAT_TEMPLATE,
+    )
+
+
+def build_fixture_from_prompts(
+    *,
+    apply_chat_template: Callable[..., list[int]],
+    pairs: Sequence[tuple[str, str]],
+    tokenizer_fingerprint: TokenizerFingerprint,
+    fixture_id: str = "user-prompts",
+) -> tuple[FixtureRef, tuple[tuple[int, ...], ...]]:
+    """Build a tokenizer-bound fixture from real (prompt, completion) pairs (F9).
+
+    For each ``(prompt, completion)`` pair, renders the teacher-forced full
+    sequence via two calls to ``apply_chat_template``:
+
+    * ``prompt_ids = apply_chat_template([{"role": "user", "content": prompt}],
+      add_generation_prompt=True)`` -- the prompt alone, as a real generation
+      request would render it;
+    * ``full_ids = apply_chat_template([{"role": "user", "content": prompt},
+      {"role": "assistant", "content": completion}], add_generation_prompt=False)``
+      -- the prompt plus the assistant's completion, teacher-forced.
+
+    ``full_ids`` becomes the pair's sequence; its scored positions are the
+    indices whose logits predict the completion's tokens --
+    ``range(len(prompt_ids) - 1, len(full_ids) - 1)`` -- offset by the length
+    of every sequence concatenated before it, matching the flat concatenation
+    a worker produces (see the module docstring). A pair whose completion adds
+    no tokens beyond the prompt's own render (``len(full_ids) <=
+    len(prompt_ids)``) has no scorable position and is rejected.
+
+    Raises:
+        ValueError: ``pairs`` is empty, or a pair's completion adds no tokens.
+    """
+    if not pairs:
+        raise ValueError(
+            "build_fixture_from_prompts requires at least one (prompt, completion) pair"
+        )
+
+    sequences: list[tuple[int, ...]] = []
+    scored_positions: list[int] = []
+    offset = 0
+    for index, (prompt, completion) in enumerate(pairs):
+        prompt_ids = apply_chat_template(
+            [{"role": "user", "content": prompt}], add_generation_prompt=True
+        )
+        full_ids = apply_chat_template(
+            [
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": completion},
+            ],
+            add_generation_prompt=False,
+        )
+        if len(full_ids) <= len(prompt_ids):
+            raise ValueError(
+                f"pair {index}: completion produced no additional tokens "
+                f"(prompt render has {len(prompt_ids)} ids, full render has "
+                f"{len(full_ids)} ids); build_fixture_from_prompts requires a "
+                "non-empty completion"
+            )
+        sequence = tuple(full_ids)
+        sequences.append(sequence)
+        scored_positions.extend(
+            offset + position for position in range(len(prompt_ids) - 1, len(full_ids) - 1)
+        )
+        offset += len(sequence)
+
+    sequences_tuple = tuple(sequences)
+    return (
+        FixtureRef(
+            id=fixture_id,
+            input_digest=compute_input_digest(sequences_tuple),
+            max_length=_flatten_length(sequences_tuple),
+            scored_positions=tuple(scored_positions),
+            tokenizer_fingerprint=tokenizer_fingerprint,
+        ),
+        sequences_tuple,
+    )

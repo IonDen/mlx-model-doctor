@@ -148,13 +148,18 @@ class ParityOptions:
     parent-supervised :class:`SubprocessLauncher` is built (the offline tests
     inject a fake so no MLX/subprocess is needed). ``check_options`` tunes the
     embedded ``text`` pipeline and the cross-target checks. ``fixture_id`` selects
-    the pinned token-id fixture. ``allow_network``/``downloader`` gate and back the
-    Hugging Face snapshot resolution (F10).
+    the pinned token-id fixture, unless ``fixture`` is set, in which case it is used
+    directly instead of resolving ``fixture_id`` through :func:`get_fixture` -- the
+    seam a caller building a real-repository fixture (e.g. via
+    :func:`~mlx_model_doctor.parity.fixtures.build_fixture_from_prompts`) uses to
+    supply it. ``allow_network``/``downloader`` gate and back the Hugging Face
+    snapshot resolution (F10).
     """
 
     launcher: Launcher | None = None
     check_options: CheckOptions | None = None
     fixture_id: str = DEFAULT_FIXTURE_ID
+    fixture: "tuple[FixtureRef, tuple[tuple[int, ...], ...]] | None" = None
     allow_network: bool = False
     downloader: SnapshotDownloader | None = None
 
@@ -200,7 +205,9 @@ def check_adapter_parity(
     )
     results, crashed = run_parity_checks(pctx, _PARITY_CHECKS)
 
-    fixture_ref, token_ids = get_fixture(options.fixture_id)
+    fixture_ref, token_ids = (
+        options.fixture if options.fixture is not None else get_fixture(options.fixture_id)
+    )
     tokenizer_fingerprint = pctx.base_tokenizer_fingerprint()
     delta_result = _build_delta_map(pctx, base_target, fused_target, sources)
 

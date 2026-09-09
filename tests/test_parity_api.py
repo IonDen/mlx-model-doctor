@@ -22,6 +22,12 @@ from mlx_model_doctor import (
     check_adapter_parity,
     parity_exit_code,
 )
+from mlx_model_doctor.parity.fixtures import (
+    DEFAULT_FIXTURE_ID,
+    FixtureRef,
+    compute_input_digest,
+    get_fixture,
+)
 from mlx_model_doctor.parity.oracle import ROLE_BASE, ROLE_FUSED, ROLE_NOISE, ROLE_REFERENCE
 from mlx_model_doctor.parity.orchestrator import WorkerOutcome
 from mlx_model_doctor.parity.worker import WorkerSpec
@@ -155,9 +161,11 @@ class FakeLauncher:
     def __init__(self, by_role: dict[str, WorkerOutcome]) -> None:
         self._by_role = by_role
         self.model_paths_by_role: dict[str, str] = {}
+        self.specs_by_role: dict[str, WorkerSpec] = {}
 
     def run_one(self, spec: WorkerSpec) -> WorkerOutcome:
         self.model_paths_by_role[spec.role] = spec.model_path
+        self.specs_by_role[spec.role] = spec
         return self._by_role[spec.role]
 
 
@@ -429,3 +437,32 @@ def test_all_base_derived_workers_share_the_one_pinned_base_path(
     assert launcher.model_paths_by_role[ROLE_FUSED] == str(
         Path(tiny_local_repos.fused_diff).resolve()
     )
+
+
+def test_parity_options_fixture_overrides_get_fixture(tiny_local_repos: _Repos) -> None:
+    """ParityOptions.fixture, when set, replaces get_fixture(options.fixture_id): every
+    worker spec must carry the INJECTED fixture's id/token ids, and the report's own
+    ``fixture`` field must record it -- not silently fall back to the default fixture.
+    """
+    default_ref, _ = get_fixture(DEFAULT_FIXTURE_ID)
+    custom_token_ids = ((7, 8, 9),)
+    custom_ref = FixtureRef(
+        id="custom-fixture",
+        input_digest=compute_input_digest(custom_token_ids),
+        max_length=3,
+        scored_positions=(0, 1, 2),
+        tokenizer_fingerprint=default_ref.tokenizer_fingerprint,
+    )
+    launcher = _pass_launcher()
+
+    report = check_adapter_parity(
+        base=tiny_local_repos.base,
+        adapter=tiny_local_repos.adapter,
+        fused=tiny_local_repos.fused_diff,
+        options=ParityOptions(launcher=launcher, fixture=(custom_ref, custom_token_ids)),
+    )
+
+    for role in (ROLE_BASE, ROLE_NOISE, ROLE_REFERENCE, ROLE_FUSED):
+        assert launcher.specs_by_role[role].fixture_id == "custom-fixture"
+        assert launcher.specs_by_role[role].token_ids == custom_token_ids
+    assert report.fixture.id == "custom-fixture"
