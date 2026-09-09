@@ -548,6 +548,10 @@ def test_mlx_lm_worker_backend_concatenates_per_sequence_argmax_in_order(monkeyp
 
     assert result.argmax == [2, 0, 1, 0, 1]
     assert len(model.calls) == 2  # one model load, one forward per sequence
+    # Each forward must receive its OWN sequence's ids, in order -- not e.g. the
+    # first sequence forwarded twice, which would still pass the argmax/call-count
+    # assertions above by coincidence of this fixture's logits.
+    assert model.calls == [[[1, 2, 3]], [[4, 5]]]
     assert mlx_lm.load_calls == [{"path": "/models/base", "adapter_path": None}]  # loaded ONCE
 
     # Feed the concatenation into the oracle's scored-position reducer, differing
