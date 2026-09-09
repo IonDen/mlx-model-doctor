@@ -82,7 +82,10 @@ def _resolve_smoke_dirs() -> dict[str, str] | None:
     adapter = os.environ.get(_ENV_ADAPTER)
     fp16_dir = os.environ.get(_ENV_FUSED_FP16)
     q4_dir = os.environ.get(_ENV_FUSED_Q4)
-    if base is None or adapter is None or fp16_dir is None or q4_dir is None:
+    if not base or not adapter or not fp16_dir or not q4_dir:
+        # Guards against an empty-string env var: Path("").is_dir() is True (it
+        # resolves to the current working directory), so a blank value would
+        # otherwise silently pass the directory check below instead of skipping.
         return None
     if not (
         Path(base).is_dir()
@@ -98,6 +101,22 @@ def _write_prompts_json(path: Path) -> None:
     """Write the held-out QA pairs as the JSON array ``build_prompts_fixture`` reads."""
     payload = [{"prompt": question, "completion": answer} for question, answer in _QA]
     path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def test_resolve_smoke_dirs_treats_empty_env_var_as_unset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An empty-string env var must be treated the same as "unset", not resolved via
+    ``Path("").is_dir()`` -- which is ``True`` (an empty path resolves to the current
+    working directory) -- letting a blank ``MMD_PARITY_SMOKE_*`` value silently
+    "pass" the directory check instead of skipping the smoke test cleanly.
+    """
+    monkeypatch.setenv(_ENV_BASE, "")
+    monkeypatch.setenv(_ENV_ADAPTER, str(tmp_path))
+    monkeypatch.setenv(_ENV_FUSED_FP16, str(tmp_path))
+    monkeypatch.setenv(_ENV_FUSED_Q4, str(tmp_path))
+
+    assert _resolve_smoke_dirs() is None
 
 
 @pytest.mark.smoke

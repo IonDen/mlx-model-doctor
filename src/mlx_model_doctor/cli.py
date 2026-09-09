@@ -164,7 +164,11 @@ def _append_github_file(path: Path, content: str) -> None:
 def _cmd_parity_mlx(args: argparse.Namespace) -> int:
     if args.prompts is not None:
         # --prompts wins over --fixture when both are given.
-        options = ParityOptions(fixture=build_prompts_fixture(args.base, args.prompts))
+        try:
+            fixture = build_prompts_fixture(args.base, args.prompts)
+        except ValueError as exc:
+            raise ModelDoctorError(str(exc)) from exc
+        options = ParityOptions(fixture=fixture)
     else:
         options = ParityOptions(fixture_id=args.fixture)
     report = check_adapter_parity(

@@ -343,6 +343,64 @@ def test_parity_mlx_prompts_flag_wins_when_fixture_flag_is_also_given(
     assert data["fixture"]["id"] == "user-prompts"
 
 
+class _EmptyCompletionTokenizer:
+    """Fake tokenizer whose full render never adds tokens beyond the prompt-only
+    render -- the real ``build_prompts_fixture``/``build_fixture_from_prompts``
+    path raises a bare ``ValueError`` for this shape (an empty completion).
+    """
+
+    def apply_chat_template(
+        self, messages: list[dict[str, str]], *, add_generation_prompt: bool, tokenize: bool
+    ) -> list[int]:
+        return [100, 101, 102]
+
+
+def _inject_empty_completion_tokenizer(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_build_prompts_fixture = cli.build_prompts_fixture
+
+    def fake_build_prompts_fixture(base_ref: str, prompts_path: str) -> object:
+        return real_build_prompts_fixture(
+            base_ref, prompts_path, tokenizer_loader=lambda _path: _EmptyCompletionTokenizer()
+        )
+
+    monkeypatch.setattr(cli, "build_prompts_fixture", fake_build_prompts_fixture)
+
+
+def test_parity_mlx_prompts_empty_completion_exits_cleanly_not_a_traceback(
+    tiny_local_repos: _Repos,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """A realistic bad ``--prompts`` input (a pair whose completion renders no
+    additional tokens) must surface through the tool's clean error path -- a
+    printed ``Error: ...`` message and a tool-error exit code -- never an
+    uncaught ``ValueError`` traceback from the pure fixture builder.
+    """
+    prompts_path = tmp_path / "prompts.json"
+    prompts_path.write_text(json.dumps([{"prompt": "hi", "completion": ""}]), encoding="utf-8")
+    _inject_empty_completion_tokenizer(monkeypatch)
+
+    code = cli.main(
+        [
+            "parity",
+            "mlx",
+            "--base",
+            tiny_local_repos.base,
+            "--adapter",
+            tiny_local_repos.adapter,
+            "--fused",
+            tiny_local_repos.fused_diff,
+            "--prompts",
+            str(prompts_path),
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert code == 2
+    assert captured.err.startswith("Error:")
+
+
 def test_parity_command_requires_leaf_subcommand(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exc_info:
         cli.main(["parity"])
