@@ -238,8 +238,7 @@ def check_adapter_parity(
         reasons.append(
             "the parity fixture was built for a different tokenizer than the base model "
             f"({fixture_match.reason}); build a fixture for this model's tokenizer with "
-            "build_fixture_from_prompts and pass it via ParityOptions.fixture instead of "
-            "the built-in default."
+            "`mlx-model-doctor parity mlx --prompts <file>`."
         )
 
     runtime_gated = (

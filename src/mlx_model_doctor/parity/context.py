@@ -31,7 +31,18 @@ from dataclasses import dataclass, field
 from mlx_model_doctor.checks.chat_template import _template_string
 from mlx_model_doctor.context import _MAX_METADATA_BYTES, CheckContext, CheckOptions
 from mlx_model_doctor.errors import TargetError, raise_for_hf_target_error
-from mlx_model_doctor.targets import ModelTarget
+from mlx_model_doctor.targets import LocalTarget, ModelTarget
+
+# Options for a standalone tokenizer-fingerprint read (tokenizer_fingerprint_for_path):
+# no weight/smoke concerns apply, so this mirrors the offline-test default (tests/fakes.py
+# check_options()) rather than a real run's caller-supplied CheckOptions.
+_FINGERPRINT_CHECK_OPTIONS = CheckOptions(
+    max_memory_bytes=None,
+    context_length=4096,
+    include_weights=False,
+    smoke=False,
+    verbosity="normal",
+)
 
 _SPECIAL_TOKEN_KEYS = (
     "bos_token",
@@ -295,6 +306,24 @@ def _tokenizer_fingerprint_for(target: ModelTarget, ctx: CheckContext) -> Tokeni
         tokenizer_json=_read_tokenizer_json(target),
         chat_template=_template_string(ctx),
     )
+
+
+def tokenizer_fingerprint_for_path(path: str) -> TokenizerFingerprint:
+    """Compute a tokenizer fingerprint for a local model directory (F9).
+
+    Builds a :class:`~mlx_model_doctor.targets.LocalTarget` at ``path`` and the
+    same :class:`~mlx_model_doctor.context.CheckContext` machinery a real parity
+    run uses, then delegates to :func:`_tokenizer_fingerprint_for` -- the exact
+    function :meth:`ParityContext.base_tokenizer_fingerprint` calls for the base
+    target. The result is therefore IDENTICAL to what a real
+    :func:`~mlx_model_doctor.api.check_adapter_parity` run computes for a base
+    repository at the same path, which is what lets a fixture built against
+    ``path`` (see :mod:`mlx_model_doctor.parity.prompts`) pass the
+    fixture-vs-base tokenizer gate for a genuinely matching repository.
+    """
+    target = LocalTarget(path)
+    ctx = CheckContext(target=target, options=_FINGERPRINT_CHECK_OPTIONS)
+    return _tokenizer_fingerprint_for(target, ctx)
 
 
 @dataclass(slots=True, kw_only=True)

@@ -24,6 +24,7 @@ from mlx_model_doctor.exit_codes import exit_code_for, exit_code_for_error
 from mlx_model_doctor.memory import parse_memory
 from mlx_model_doctor.parity.exit_codes import parity_exit_code
 from mlx_model_doctor.parity.fixtures import DEFAULT_FIXTURE_ID
+from mlx_model_doctor.parity.prompts import build_prompts_fixture
 from mlx_model_doctor.parity.report import (
     ParityReport,
     render_parity_json,
@@ -88,6 +89,8 @@ def _cmd_man(_args: argparse.Namespace) -> int:
                 "  mlx-model-doctor check hf mlx-community/Llama-3.2-3B-Instruct-4bit",
                 "  mlx-model-doctor sample hf --author mlx-community --limit 5",
                 "  mlx-model-doctor parity mlx --base <B> --adapter <A> --fused <F>",
+                "  mlx-model-doctor parity mlx --base <B> --adapter <A> --fused <F>"
+                " --prompts <examples.json>",
                 "",
                 "Exit codes:",
                 "  0: checks passed or informational command completed",
@@ -159,7 +162,11 @@ def _append_github_file(path: Path, content: str) -> None:
 
 
 def _cmd_parity_mlx(args: argparse.Namespace) -> int:
-    options = ParityOptions(fixture_id=args.fixture)
+    if args.prompts is not None:
+        # --prompts wins over --fixture when both are given.
+        options = ParityOptions(fixture=build_prompts_fixture(args.base, args.prompts))
+    else:
+        options = ParityOptions(fixture_id=args.fixture)
     report = check_adapter_parity(
         base=args.base, adapter=args.adapter, fused=args.fused, options=options
     )
@@ -382,6 +389,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--fixture",
         default=DEFAULT_FIXTURE_ID,
         help="pinned token-id fixture id used for the teacher-forced worker loads",
+    )
+    parity_mlx.add_argument(
+        "--prompts",
+        default=None,
+        help=(
+            "JSON file of [{prompt, completion}] examples; builds a fixture bound to "
+            "the base model's own tokenizer instead of the built-in default (overrides "
+            "--fixture when set). Requires --base to be an existing local directory; "
+            "this flag never downloads a Hugging Face repository on its own."
+        ),
     )
     parity_mlx.set_defaults(func=_cmd_parity_mlx)
     return parser

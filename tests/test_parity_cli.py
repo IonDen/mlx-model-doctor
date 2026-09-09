@@ -11,12 +11,14 @@ module imports.
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
 from mlx_model_doctor import cli
 from mlx_model_doctor.api import ParityOptions
 from mlx_model_doctor.api import check_adapter_parity as real_check_adapter_parity
+from mlx_model_doctor.parity.oracle import ROLE_BASE, ROLE_FUSED, ROLE_NOISE, ROLE_REFERENCE
 from tests.test_parity_api import (
     FakeLauncher,
     RaisingLauncher,
@@ -29,6 +31,32 @@ from tests.test_parity_api import (
 __all__ = ["tiny_local_repos"]  # re-exported fixture; keep the import "used" for linters
 
 
+class _FakeCliTokenizer:
+    """Fake tokenizer used to inject a real, but fake-backed, ``--prompts`` fixture."""
+
+    def apply_chat_template(
+        self, messages: list[dict[str, str]], *, add_generation_prompt: bool, tokenize: bool
+    ) -> list[int]:
+        return [100, 101, 102] if add_generation_prompt else [100, 101, 102, 103, 104]
+
+
+def _inject_prompts_tokenizer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Wrap the real ``build_prompts_fixture`` so it always runs with a fake tokenizer.
+
+    Everything else (reading the prompts file, resolving the base to a local
+    path, computing the base's own tokenizer fingerprint) runs for real; only
+    the tokenizer load is faked, so no transformers/network is ever touched.
+    """
+    real_build_prompts_fixture = cli.build_prompts_fixture
+
+    def fake_build_prompts_fixture(base_ref: str, prompts_path: str) -> object:
+        return real_build_prompts_fixture(
+            base_ref, prompts_path, tokenizer_loader=lambda _path: _FakeCliTokenizer()
+        )
+
+    monkeypatch.setattr(cli, "build_prompts_fixture", fake_build_prompts_fixture)
+
+
 def _inject_launcher(
     monkeypatch: pytest.MonkeyPatch, launcher: FakeLauncher | RaisingLauncher
 ) -> None:
@@ -37,7 +65,9 @@ def _inject_launcher(
     The CLI's ``_cmd_parity_mlx`` builds its own ``ParityOptions`` from parsed
     args; this replaces only the ``launcher`` field before delegating to the
     real function, so source resolution/checks/delta-map/oracle all run for
-    real and only the worker loads are faked.
+    real and only the worker loads are faked. Both ``fixture_id`` and
+    ``fixture`` are forwarded unchanged, so this also covers the ``--prompts``
+    path (which sets ``fixture``, not ``fixture_id``).
     """
 
     def fake_check_adapter_parity(
@@ -47,12 +77,14 @@ def _inject_launcher(
         fused: str,
         options: ParityOptions | None = None,
     ) -> object:
-        fixture_id = options.fixture_id if options is not None else ParityOptions().fixture_id
+        opts = options if options is not None else ParityOptions()
         return real_check_adapter_parity(
             base=base,
             adapter=adapter,
             fused=fused,
-            options=ParityOptions(launcher=launcher, fixture_id=fixture_id),
+            options=ParityOptions(
+                launcher=launcher, fixture_id=opts.fixture_id, fixture=opts.fixture
+            ),
         )
 
     monkeypatch.setattr(cli, "check_adapter_parity", fake_check_adapter_parity)
@@ -236,6 +268,81 @@ def test_parity_mlx_fixture_flag_is_wired(
     assert captured["fixture_id"] == "default-v1"
 
 
+def test_parity_mlx_prompts_flag_builds_a_tokenizer_bound_fixture_and_reaches_workers(
+    tiny_local_repos: _Repos,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """--prompts must build a REAL fixture (via the real build_prompts_fixture, with
+    only the tokenizer loader faked) whose token ids reach every worker spec -- not
+    silently fall back to the default fixture.
+    """
+    prompts_path = tmp_path / "prompts.json"
+    prompts_path.write_text(json.dumps([{"prompt": "hi", "completion": "there"}]), encoding="utf-8")
+    _inject_prompts_tokenizer(monkeypatch)
+    launcher = _pass_launcher()
+    _inject_launcher(monkeypatch, launcher)
+
+    code = cli.main(
+        [
+            "parity",
+            "mlx",
+            "--base",
+            tiny_local_repos.base,
+            "--adapter",
+            tiny_local_repos.adapter,
+            "--fused",
+            tiny_local_repos.fused_diff,
+            "--prompts",
+            str(prompts_path),
+            "--format",
+            "json",
+        ]
+    )
+    data = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert data["fixture"]["id"] == "user-prompts"
+    for role in (ROLE_BASE, ROLE_NOISE, ROLE_REFERENCE, ROLE_FUSED):
+        assert launcher.specs_by_role[role].token_ids == ((100, 101, 102, 103, 104),)
+
+
+def test_parity_mlx_prompts_flag_wins_when_fixture_flag_is_also_given(
+    tiny_local_repos: _Repos,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    prompts_path = tmp_path / "prompts.json"
+    prompts_path.write_text(json.dumps([{"prompt": "hi", "completion": "there"}]), encoding="utf-8")
+    _inject_prompts_tokenizer(monkeypatch)
+    _inject_launcher(monkeypatch, _pass_launcher())
+
+    code = cli.main(
+        [
+            "parity",
+            "mlx",
+            "--base",
+            tiny_local_repos.base,
+            "--adapter",
+            tiny_local_repos.adapter,
+            "--fused",
+            tiny_local_repos.fused_diff,
+            "--prompts",
+            str(prompts_path),
+            "--fixture",
+            "default-v1",
+            "--format",
+            "json",
+        ]
+    )
+    data = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert data["fixture"]["id"] == "user-prompts"
+
+
 def test_parity_command_requires_leaf_subcommand(capsys: pytest.CaptureFixture[str]) -> None:
     with pytest.raises(SystemExit) as exc_info:
         cli.main(["parity"])
@@ -250,3 +357,11 @@ def test_man_command_mentions_parity_mlx(capsys: pytest.CaptureFixture[str]) -> 
 
     assert code == 0
     assert "parity mlx" in output
+
+
+def test_man_command_mentions_prompts_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    code = cli.main(["man"])
+    output = capsys.readouterr().out
+
+    assert code == 0
+    assert "--prompts" in output

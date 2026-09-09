@@ -438,6 +438,9 @@ def test_fixture_tokenizer_mismatch_gates_the_oracle_without_running_workers(
     assert any(
         "parity fixture was built for a different tokenizer" in reason for reason in report.reasons
     )
+    # The reason must point at the real CLI flow that builds a matching fixture,
+    # not just name the mismatch.
+    assert any("parity mlx --prompts" in reason for reason in report.reasons)
     assert parity_exit_code(report) == 2
 
 
