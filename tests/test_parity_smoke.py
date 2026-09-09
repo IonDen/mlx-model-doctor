@@ -14,6 +14,15 @@ _FUSED_Q4 point at real local calibration artifacts. This is a
 ``tests/conftest.py``) -- and additionally gated by these env vars so it only
 actually loads models on a machine that has the calibration artifacts.
 
+All four model loads and the verdict computation run inside a spawned child
+process (see ``_smoke_worker``): loading four real models sequentially in one
+process was observed to segfault at MLX/Metal interpreter teardown even
+though every assertion had already passed, and a 139 exit poisons pytest's
+return code for the whole ``--run-smoke`` invocation. Isolating the loads in
+a child that reports its result over a queue and then calls ``os._exit(0)``
+(skipping normal interpreter/MLX teardown) keeps that crash from ever
+reaching the parent pytest process.
+
 Calibrated 2026-09-09, mlx 0.32.0 / mlx-lm 0.31.3, Qwen2.5-0.5B-Instruct-4bit + wikisql LoRA, gap=0.338:
   fp16 --dequantize: agree_fa=0.974 agree_fb=0.636 -> PASS
   default q4:        agree_fa=0.779 agree_fb=0.818 -> INCONCLUSIVE (partial degradation)
@@ -21,8 +30,10 @@ Calibrated 2026-09-09, mlx 0.32.0 / mlx-lm 0.31.3, Qwen2.5-0.5B-Instruct-4bit + 
 """
 
 import gc
+import multiprocessing
 import os
 from pathlib import Path
+from queue import Empty
 
 import pytest
 
@@ -41,11 +52,18 @@ _ENV_FUSED_FP16 = "MMD_PARITY_SMOKE_FUSED_FP16"
 _ENV_FUSED_Q4 = "MMD_PARITY_SMOKE_FUSED_Q4"
 
 # Small retained-allocator cache bound, independent of the process-wide
-# wired/memory caps `tests/conftest.py` already installs at import
-# (`install_mlx_memory_caps`) -- Qwen2.5-0.5B fits comfortably under 1 GiB,
-# and a small cap plus the explicit `del` + `gc.collect()` + `mx.clear_cache()`
-# between loads below keep only one model's buffers resident at a time.
+# wired/memory caps `tests/conftest.py` installs at import in the parent
+# (`install_mlx_memory_caps`) -- the spawned child does NOT inherit that, so
+# it installs its own caps before any load. Qwen2.5-0.5B fits comfortably
+# under 1 GiB, and a small cap plus the explicit `del` + `gc.collect()` +
+# `mx.clear_cache()` between loads below keep only one model's buffers
+# resident at a time.
 _CACHE_LIMIT_BYTES = 1 * 1024**3
+
+# How long the parent waits for the child to report a result / exit, before
+# failing instead of hanging forever.
+_RESULT_TIMEOUT_S = 300
+_JOIN_TIMEOUT_S = 30
 
 # Held-out text-to-SQL QA pairs (wikisql-style), never used to train the
 # adapter -- the same fixture the 2026-09-09 calibration scored.
@@ -73,7 +91,7 @@ _QA: tuple[tuple[str, str], ...] = (
 )
 
 
-def _resolve_smoke_paths() -> tuple[str, str, str, str] | None:
+def _resolve_smoke_paths() -> dict[str, str] | None:
     """Return the four calibration model paths from env, or None if unavailable.
 
     ``MMD_PARITY_SMOKE_BASE`` may be an unresolved Hugging Face repo id
@@ -89,7 +107,7 @@ def _resolve_smoke_paths() -> tuple[str, str, str, str] | None:
         return None
     if not (Path(adapter).exists() and Path(fp16_dir).exists() and Path(q4_dir).exists()):
         return None
-    return base, adapter, fp16_dir, q4_dir
+    return {"base": base, "adapter": adapter, "fp16_dir": fp16_dir, "q4_dir": q4_dir}
 
 
 def _build_examples(tokenizer) -> list[tuple[list[int], range]]:
@@ -128,6 +146,90 @@ def _score_model(mx, model, examples: list[tuple[list[int], range]]) -> list[int
     return scored
 
 
+def _smoke_worker(paths: dict[str, str], out: "multiprocessing.Queue[dict[str, str]]") -> None:
+    """Load the four calibration models and compute verdict names in an isolated child process.
+
+    Runs entirely inside a spawned child so the MLX/Metal interpreter-teardown
+    segfault (observed after sequentially loading four real models in one
+    process) can never reach the parent pytest process: the result is sent
+    back over ``out`` and the child then calls ``os._exit(0)`` to bypass
+    normal Python/MLX interpreter teardown, rather than returning and falling
+    into it. Any exception is reported back as ``{"error": repr(exc)}``
+    instead of propagating, so the parent never hangs waiting on the queue.
+    """
+    try:
+        # The child does not inherit pytest's conftest, so it installs the
+        # MLX memory caps itself before any model load.
+        from mlx_model_doctor.memory import install_mlx_memory_caps
+
+        install_mlx_memory_caps()
+
+        import mlx.core as mx
+        from mlx_lm import load
+
+        mx.set_cache_limit(_CACHE_LIMIT_BYTES)
+
+        base = paths["base"]
+        adapter = paths["adapter"]
+        fp16_dir = paths["fp16_dir"]
+        q4_dir = paths["q4_dir"]
+
+        reference_model, tokenizer = load(base, adapter_path=adapter)
+        examples = _build_examples(tokenizer)
+        reference_tokens = _score_model(mx, reference_model, examples)
+        del reference_model
+        gc.collect()
+        mx.clear_cache()
+
+        fp16_model, _tokenizer = load(fp16_dir)
+        fp16_tokens = _score_model(mx, fp16_model, examples)
+        del fp16_model
+        gc.collect()
+        mx.clear_cache()
+
+        q4_model, _tokenizer = load(q4_dir)
+        q4_tokens = _score_model(mx, q4_model, examples)
+        del q4_model
+        gc.collect()
+        mx.clear_cache()
+
+        base_model, _tokenizer = load(base)
+        base_tokens = _score_model(mx, base_model, examples)
+        del base_model
+        gc.collect()
+        mx.clear_cache()
+
+        gap = 1.0 - argmax_agreement(base_tokens, reference_tokens)
+        noise = 0.0  # a second same-process base load is deterministic; no repeat load needed
+
+        def _verdict(fused_tokens: list[int]) -> ParityVerdict:
+            return decide_verdict(
+                agree_fa=argmax_agreement(fused_tokens, reference_tokens),
+                agree_fb=argmax_agreement(fused_tokens, base_tokens),
+                gap=gap,
+                noise=noise,
+                k=PARITY_K,
+                pass_floor=PARITY_PASS_FLOOR,
+                gross_floor=PARITY_GROSS_FLOOR,
+            )
+
+        # Verdict names (strings), not raw floats, are sent back: a real
+        # re-run's agreement numbers will vary slightly, but the honest
+        # three-way classification must not.
+        result = {
+            "fp16": _verdict(fp16_tokens).name,
+            "q4": _verdict(q4_tokens).name,
+            "revert": _verdict(base_tokens).name,
+        }
+        out.put(result)
+    except Exception as exc:
+        out.put({"error": repr(exc)})
+    finally:
+        out.close()
+        out.join_thread()
+        os._exit(0)  # skip MLX/Metal interpreter teardown entirely
+
+
 @pytest.mark.smoke
 def test_real_weights_pins_2026_09_09_fuse_degradation_calibration() -> None:
     """Real Qwen + wikisql LoRA: fp16 fuse PASSes, q4 fuse is INCONCLUSIVE, revert FAILs.
@@ -142,57 +244,28 @@ def test_real_weights_pins_2026_09_09_fuse_degradation_calibration() -> None:
             f"requires {_ENV_BASE}, {_ENV_ADAPTER}, {_ENV_FUSED_FP16}, and {_ENV_FUSED_Q4} "
             "pointing at real calibration artifacts (2026-09-09 fuse-degradation run)"
         )
-    base, adapter, fp16_dir, q4_dir = paths
 
-    import mlx.core as mx
-    from mlx_lm import load
-
-    mx.set_cache_limit(_CACHE_LIMIT_BYTES)
-
-    reference_model, tokenizer = load(base, adapter_path=adapter)
-    examples = _build_examples(tokenizer)
-    reference_tokens = _score_model(mx, reference_model, examples)
-    del reference_model
-    gc.collect()
-    mx.clear_cache()
-
-    fp16_model, _tokenizer = load(fp16_dir)
-    fp16_tokens = _score_model(mx, fp16_model, examples)
-    del fp16_model
-    gc.collect()
-    mx.clear_cache()
-
-    q4_model, _tokenizer = load(q4_dir)
-    q4_tokens = _score_model(mx, q4_model, examples)
-    del q4_model
-    gc.collect()
-    mx.clear_cache()
-
-    base_model, _tokenizer = load(base)
-    base_tokens = _score_model(mx, base_model, examples)
-    del base_model
-    gc.collect()
-    mx.clear_cache()
-
-    gap = 1.0 - argmax_agreement(base_tokens, reference_tokens)
-    noise = 0.0  # a second same-process base load is deterministic; no repeat load needed
-
-    def _verdict(fused_tokens: list[int]) -> ParityVerdict:
-        return decide_verdict(
-            agree_fa=argmax_agreement(fused_tokens, reference_tokens),
-            agree_fb=argmax_agreement(fused_tokens, base_tokens),
-            gap=gap,
-            noise=noise,
-            k=PARITY_K,
-            pass_floor=PARITY_PASS_FLOOR,
-            gross_floor=PARITY_GROSS_FLOOR,
+    ctx = multiprocessing.get_context("spawn")
+    out: multiprocessing.Queue[dict[str, str]] = ctx.Queue()
+    process = ctx.Process(target=_smoke_worker, args=(paths, out))
+    process.start()
+    try:
+        result = out.get(timeout=_RESULT_TIMEOUT_S)
+    except Empty:
+        pytest.fail(
+            f"smoke worker reported no result within {_RESULT_TIMEOUT_S}s "
+            "(the child process appears stuck rather than crashed)"
         )
+    finally:
+        process.join(timeout=_JOIN_TIMEOUT_S)
 
-    # Verdicts, not raw floats, are the assertion: a real re-run's agreement
-    # numbers will vary slightly, but the honest three-way classification
-    # must not.
-    assert _verdict(fp16_tokens) == ParityVerdict.PASS
-    assert _verdict(q4_tokens) == ParityVerdict.INCONCLUSIVE
-    # The revert control reuses base_tokens as the "fused" sequence -- no
-    # separate load, since reverting the fuse means shipping the base model.
-    assert _verdict(base_tokens) == ParityVerdict.FAIL_TRACKS_BASE
+    # Rely on the returned result, not the child's exit code: the child
+    # deliberately calls `os._exit(0)` to skip MLX/Metal teardown, so a
+    # nonzero exit code here would not by itself mean the run was bad -- and
+    # the four assertions below already give a precise failure signal.
+    if "error" in result:
+        pytest.fail(result["error"])
+
+    assert result["fp16"] == ParityVerdict.PASS.name
+    assert result["q4"] == ParityVerdict.INCONCLUSIVE.name
+    assert result["revert"] == ParityVerdict.FAIL_TRACKS_BASE.name

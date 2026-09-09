@@ -306,6 +306,29 @@ class TestVerdictMatrix:
             is V.INCONCLUSIVE
         )
 
+    def test_pass_branch_interior_delta_between_noise_and_required_is_inconclusive(self) -> None:
+        # Interior of the PASS branch's `delta >= required` gate (not the exact
+        # boundary already covered above): agree_fa (0.875) clears pass_floor
+        # (0.875), but delta (0.125) sits strictly between noise (0.0) and
+        # required (0.25) -- noise (0) < delta (0.125) < required (0.25) -- so
+        # the PASS gate's `delta >= required` FAILS (0.125 < 0.25), the
+        # negative branch also fails (-delta is negative), and the verdict is
+        # INCONCLUSIVE. A weakened PASS threshold (delta>=noise instead of
+        # delta>=required) would report a marginal fuse as PASS instead of
+        # INCONCLUSIVE.
+        assert (
+            decide_verdict(
+                agree_fa=0.875,
+                agree_fb=0.75,
+                gap=0.5,
+                noise=0.0,
+                k=0.5,
+                pass_floor=0.875,
+                gross_floor=0.5,
+            )
+            is V.INCONCLUSIVE
+        )
+
     def test_minus_plus_mutant_killer(self) -> None:
         # correct=FAIL_TRACKS_BASE; '+' would PASS
         assert (
