@@ -381,6 +381,30 @@ class TestAssembleVerdictInputs:
         with pytest.raises(ValueError, match="reference"):
             assemble_verdict_inputs(outcomes)
 
+    def test_scored_restricts_all_four_metrics(self) -> None:
+        # base/noise/reference/fused chosen so gap, noise, agree_fa, and agree_fb
+        # each take a different value over the full 8 positions than over
+        # scored=[0, 1, 2, 3] -- catches a metric that stayed on the full
+        # sequence instead of being routed through `scored` (all four internal
+        # argmax_agreement calls must consume the same scored set).
+        outcomes = [
+            _ok_outcome(ROLE_BASE, [0, 0, 0, 0, 1, 1, 1, 1]),
+            _ok_outcome(ROLE_REFERENCE, [0, 0, 1, 1, 0, 0, 0, 0]),
+            _ok_outcome(ROLE_NOISE, [0, 0, 0, 1, 1, 1, 1, 1]),
+            _ok_outcome(ROLE_FUSED, [0, 1, 1, 1, 1, 1, 0, 0]),
+        ]
+        full = assemble_verdict_inputs(outcomes)
+        assert full.gap == 0.75
+        assert full.noise == 0.125
+        assert full.agree_fa == 0.625
+        assert full.agree_fb == 0.375
+
+        scored = assemble_verdict_inputs(outcomes, scored=[0, 1, 2, 3])
+        assert scored.gap == 0.5
+        assert scored.noise == 0.25
+        assert scored.agree_fa == 0.75
+        assert scored.agree_fb == 0.25
+
     def test_none_argmax_on_a_required_role_raises(self) -> None:
         outcomes = [
             _ok_outcome(ROLE_BASE, [1, 1]),

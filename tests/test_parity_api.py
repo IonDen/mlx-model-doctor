@@ -221,6 +221,26 @@ class RaisingLauncher:
         )
 
 
+def _inconclusive_launcher() -> FakeLauncher:
+    # Engineered to a real INCONCLUSIVE verdict under the production constants
+    # (PARITY_K=0.3, PARITY_PASS_FLOOR=0.9, PARITY_GROSS_FLOOR=0.5): base_repeat
+    # equals base exactly (noise=0), and fused lands equidistant from both base
+    # and the base+adapter reference (agree_fa == agree_fb == 4/7), so neither a
+    # PASS nor a FAIL_TRACKS_BASE preference clears the noise floor -- an honest
+    # "the fuse partially degraded the adapter" case, not a crash or a gate.
+    base_am = [0, 0, 0, 0, 0, 0, 0]
+    reference_am = [1, 1, 0, 0, 0, 0, 0]
+    fused_am = [1, 0, 0, 0, 0, 1, 1]
+    return FakeLauncher(
+        {
+            ROLE_BASE: _ok(ROLE_BASE, base_am),
+            ROLE_NOISE: _ok(ROLE_NOISE, base_am),
+            ROLE_REFERENCE: _ok(ROLE_REFERENCE, reference_am, adapter_applied=True),
+            ROLE_FUSED: _ok(ROLE_FUSED, fused_am),
+        }
+    )
+
+
 def _fused_crash_launcher() -> FakeLauncher:
     return FakeLauncher(
         {
@@ -368,6 +388,25 @@ def test_worker_crash_returns_report_with_error_status_exit_2(tiny_local_repos: 
     # F1: only the fused worker crashed; the reference succeeded, so its
     # adapter-applied signal (True here) must survive the crash, not be erased.
     assert report.adapter_applied is True
+    assert parity_exit_code(report) == 2
+
+
+def test_inconclusive_verdict_carries_an_honest_reason(tiny_local_repos: _Repos) -> None:
+    # An INCONCLUSIVE verdict (the oracle ran but couldn't call a preference) must
+    # not ship silently: it needs a user-facing reason string, and it still exits
+    # 2 (cannot-determine), the same as any other unresolved oracle outcome.
+    report = check_adapter_parity(
+        base=tiny_local_repos.base,
+        adapter=tiny_local_repos.adapter,
+        fused=tiny_local_repos.fused_diff,
+        options=_opts(_inconclusive_launcher()),
+    )
+    assert report.verdict is ParityVerdict.INCONCLUSIVE
+    assert (
+        "the fused model's outputs do not clearly track the base+adapter reference; "
+        "adapter parity could not be confirmed (the fuse may partially degrade the "
+        "adapter)."
+    ) in report.reasons
     assert parity_exit_code(report) == 2
 
 

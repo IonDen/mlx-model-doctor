@@ -388,7 +388,8 @@ def _run_runtime(
             phases={"reference": "blocking_fail", "oracle": "skipped"},
         )
 
-    vi = assemble_verdict_inputs(outcomes)
+    scored = list(fixture_ref.scored_positions)
+    vi = assemble_verdict_inputs(outcomes, scored=scored)
     verdict = decide_verdict(
         agree_fa=vi.agree_fa,
         agree_fb=vi.agree_fb,
@@ -398,13 +399,19 @@ def _run_runtime(
         pass_floor=PARITY_PASS_FLOOR,
         gross_floor=PARITY_GROSS_FLOOR,
     )
+    if verdict is ParityVerdict.INCONCLUSIVE:
+        reasons.append(
+            "the fused model's outputs do not clearly track the base+adapter reference; "
+            "adapter parity could not be confirmed (the fuse may partially degrade the "
+            "adapter)."
+        )
     reference_argmax = by_role[ROLE_REFERENCE].argmax
     fused_argmax = by_role[ROLE_FUSED].argmax
     first_div: int | None = None
     flips: int | None = None
     if reference_argmax is not None and fused_argmax is not None:
-        first_div = first_divergence(fused_argmax, reference_argmax)
-        flips = flip_count(fused_argmax, reference_argmax)
+        first_div = first_divergence(fused_argmax, reference_argmax, scored)
+        flips = flip_count(fused_argmax, reference_argmax, scored)
     return _RuntimeOutcome(
         verdict=verdict,
         agree_fa=vi.agree_fa,
