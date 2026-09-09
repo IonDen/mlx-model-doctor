@@ -22,8 +22,9 @@ from mlx_model_doctor.parity.context import ParityContext, ParityTargets
 from mlx_model_doctor.parity.deltamap import TensorDelta, delta_map
 from mlx_model_doctor.parity.fixtures import DEFAULT_FIXTURE_ID, FixtureRef, get_fixture
 from mlx_model_doctor.parity.oracle import (
-    PARITY_FLOOR,
+    PARITY_GROSS_FLOOR,
     PARITY_K,
+    PARITY_PASS_FLOOR,
     ROLE_BASE,
     ROLE_FUSED,
     ROLE_NOISE,
@@ -394,7 +395,8 @@ def _run_runtime(
         gap=vi.gap,
         noise=vi.noise,
         k=PARITY_K,
-        floor=PARITY_FLOOR,
+        pass_floor=PARITY_PASS_FLOOR,
+        gross_floor=PARITY_GROSS_FLOOR,
     )
     reference_argmax = by_role[ROLE_REFERENCE].argmax
     fused_argmax = by_role[ROLE_FUSED].argmax

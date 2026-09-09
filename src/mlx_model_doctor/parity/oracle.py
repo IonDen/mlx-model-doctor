@@ -5,8 +5,13 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
 
-PARITY_K = 0.5  # margin fraction of the base-vs-adapter gap (finalized in Task 13)
-PARITY_FLOOR = 0.8  # min fused-vs-adapter agreement for PASS (finalized in Task 13)
+# Calibrated 2026-09-09 against mlx 0.32.0 / mlx-lm 0.31.3 on Qwen2.5-0.5B-Instruct-4bit +
+# a wikisql LoRA; fp16 (--dequantize) fuse fa~0.97 -> PASS, default-q4 fuse fa~0.78/fb~0.82
+# -> INCONCLUSIVE (partial degradation), fused==base -> FAIL_TRACKS_BASE (see
+# docs/superpowers/reviews/2026-09-09-mlx-model-doctor-adapter-parity-calibration.md).
+PARITY_K = 0.3  # margin fraction of the base-vs-adapter gap
+PARITY_PASS_FLOOR = 0.9  # min fused-vs-adapter agreement for PASS
+PARITY_GROSS_FLOOR = 0.5  # max fused-vs-{adapter,base} agreement for FAIL_GROSS
 
 # The four worker roles the reducer consumes. ``ROLE_NOISE`` is a second load of
 # the base model whose disagreement with the first base load measures the
@@ -33,25 +38,51 @@ def _check(a: list[int], b: list[int]) -> None:
         raise ValueError("parity sequences must be equal, nonzero length")
 
 
-def argmax_agreement(a: list[int], b: list[int]) -> float:
-    """Compute agreement ratio: fraction of positions where a and b are equal."""
-    _check(a, b)
-    return sum(1 for x, y in zip(a, b, strict=True) if x == y) / len(a)
+def _resolve_positions(length: int, scored: list[int] | None) -> Sequence[int]:
+    """Return the indices to iterate: ``scored`` when given (validated), else all of them.
+
+    ``scored`` must be nonzero-length and every index must be in ``range(length)``;
+    raises ``ValueError`` otherwise (same discipline as :func:`_check`).
+    """
+    if scored is None:
+        return range(length)
+    if not scored or any(idx < 0 or idx >= length for idx in scored):
+        raise ValueError("scored positions must be a nonzero-length list of valid indices")
+    return scored
 
 
-def first_divergence(a: list[int], b: list[int]) -> int | None:
-    """Return the first position where a and b differ, or None if identical."""
+def argmax_agreement(a: list[int], b: list[int], scored: list[int] | None = None) -> float:
+    """Compute agreement ratio: fraction of positions where a and b are equal.
+
+    When ``scored`` is given, the ratio is computed over only those indices.
+    """
     _check(a, b)
-    for i, (x, y) in enumerate(zip(a, b, strict=True)):
-        if x != y:
+    positions = _resolve_positions(len(a), scored)
+    return sum(1 for i in positions if a[i] == b[i]) / len(positions)
+
+
+def first_divergence(a: list[int], b: list[int], scored: list[int] | None = None) -> int | None:
+    """Return the first position where a and b differ, or None if identical.
+
+    When ``scored`` is given, only those indices are considered, checked in the
+    order ``scored`` lists them.
+    """
+    _check(a, b)
+    positions = _resolve_positions(len(a), scored)
+    for i in positions:
+        if a[i] != b[i]:
             return i
     return None
 
 
-def flip_count(a: list[int], b: list[int]) -> int:
-    """Return the number of positions where a and b differ."""
+def flip_count(a: list[int], b: list[int], scored: list[int] | None = None) -> int:
+    """Return the number of positions where a and b differ.
+
+    When ``scored`` is given, only those indices are counted.
+    """
     _check(a, b)
-    return sum(1 for x, y in zip(a, b, strict=True) if x != y)
+    positions = _resolve_positions(len(a), scored)
+    return sum(1 for i in positions if a[i] != b[i])
 
 
 class _RoleArgmax(Protocol):
@@ -126,19 +157,26 @@ def decide_verdict(
     gap: float,
     noise: float,
     k: float,
-    floor: float,
+    pass_floor: float,
+    gross_floor: float,
 ) -> ParityVerdict:
-    """Compute three-way parity verdict from agreement metrics and noise bounds."""
+    """Compute three-way parity verdict from agreement metrics and noise bounds.
+
+    ``pass_floor`` and ``gross_floor`` are separate thresholds: ``pass_floor`` is
+    the higher bar a PASS must clear on ``agree_fa``; ``gross_floor`` is the lower
+    bar below which fused tracks neither the base+adapter reference nor the base
+    (FAIL_GROSS), and the bar FAIL_TRACKS_BASE must clear on ``agree_fb``.
+    """
     required = k * gap
     if required <= noise:  # can't discriminate
         return ParityVerdict.INCONCLUSIVE
-    if agree_fa < floor and agree_fb < floor:  # tracks neither
+    if agree_fa < gross_floor and agree_fb < gross_floor:  # tracks neither
         return ParityVerdict.FAIL_GROSS
     delta = agree_fa - agree_fb
     if abs(delta) <= noise:  # preference within noise (F7)
         return ParityVerdict.INCONCLUSIVE
-    if delta >= required and agree_fa >= floor:
+    if delta >= required and agree_fa >= pass_floor:
         return ParityVerdict.PASS
-    if -delta >= required and agree_fb >= floor:
+    if -delta >= required and agree_fb >= gross_floor:
         return ParityVerdict.FAIL_TRACKS_BASE
     return ParityVerdict.INCONCLUSIVE  # not a catch-all FAIL_GROSS
