@@ -274,6 +274,29 @@ class TestBuildFixtureFromPrompts:
                 tokenizer_fingerprint=_fingerprint(),
             )
 
+    def test_non_prefix_full_render_raises_value_error_naming_the_pair_index(self) -> None:
+        """A tokenizer that is not append-stable at the prompt/completion boundary --
+        the full render's own first len(prompt_ids) ids diverge from the prompt-only
+        render, e.g. a BPE/SentencePiece merge across the boundary -- must be
+        rejected: ``scored_positions`` is derived purely from ``len(prompt_ids)``, so
+        silently trusting a non-prefix render would score the wrong logit positions.
+        """
+        template = _ScriptedChatTemplate(
+            {
+                ("hello", True): [1, 2, 3],
+                # full_ids[:3] == [1, 2, 9] != prompt_ids == [1, 2, 3]: token 3 got
+                # merged/retokenized away by the completion's presence, not just
+                # appended to.
+                ("hello", False): [1, 2, 9, 4, 5],
+            }
+        )
+        with pytest.raises(ValueError, match=r"\b0\b"):
+            build_fixture_from_prompts(
+                apply_chat_template=template,
+                pairs=[("hello", "world")],
+                tokenizer_fingerprint=_fingerprint(),
+            )
+
 
 class TestReferenceTokenizerFiles:
     """reference_tokenizer_files exposes the default fixture's own reference tokenizer."""

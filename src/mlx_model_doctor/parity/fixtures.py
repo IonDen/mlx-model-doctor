@@ -213,10 +213,18 @@ def build_fixture_from_prompts(
     of every sequence concatenated before it, matching the flat concatenation
     a worker produces (see the module docstring). A pair whose completion adds
     no tokens beyond the prompt's own render (``len(full_ids) <=
-    len(prompt_ids)``) has no scorable position and is rejected.
+    len(prompt_ids)``) has no scorable position and is rejected. So is a pair
+    whose ``full_ids`` is not a token-level prefix match of ``prompt_ids`` over
+    ``prompt_ids``'s own length: that shape means the tokenizer is not
+    append-stable at the prompt/completion boundary (a real BPE/SentencePiece
+    tokenizer can merge tokens across it), so the scored-position range derived
+    purely from ``len(prompt_ids)``/``len(full_ids)`` would not line up with
+    where the completion's tokens actually land.
 
     Raises:
-        ValueError: ``pairs`` is empty, or a pair's completion adds no tokens.
+        ValueError: ``pairs`` is empty, a pair's completion adds no tokens, or a
+            pair's full render is not a prefix-consistent extension of its
+            prompt-only render.
     """
     if not pairs:
         raise ValueError(
@@ -243,6 +251,13 @@ def build_fixture_from_prompts(
                 f"(prompt render has {len(prompt_ids)} ids, full render has "
                 f"{len(full_ids)} ids); build_fixture_from_prompts requires a "
                 "non-empty completion"
+            )
+        if tuple(full_ids[: len(prompt_ids)]) != tuple(prompt_ids):
+            raise ValueError(
+                f"pair {index}: the full render's first {len(prompt_ids)} ids do not "
+                "match the prompt-only render; the tokenizer is not append-stable at "
+                "the prompt/completion boundary, so scored_positions cannot be "
+                "derived by length"
             )
         sequence = tuple(full_ids)
         sequences.append(sequence)

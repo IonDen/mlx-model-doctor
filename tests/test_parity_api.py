@@ -22,6 +22,7 @@ from mlx_model_doctor import (
     check_adapter_parity,
     parity_exit_code,
 )
+from mlx_model_doctor.parity.context import tokenizer_fingerprint_for_path
 from mlx_model_doctor.parity.fixtures import (
     DEFAULT_FIXTURE_ID,
     FixtureRef,
@@ -407,6 +408,80 @@ def _write_repo_with_custom_tokenizer(root: Path, *, q_bytes: bytes) -> Path:
     return root
 
 
+def _write_repo_without_tokenizer_json(root: Path, *, q_bytes: bytes) -> Path:
+    """Write a synthetic model repo with NO ``tokenizer.json`` -- the real shape of a
+    loadable SentencePiece-based "slow" tokenizer repository (only
+    ``tokenizer_config.json``'s special-token fields, no fast-tokenizer vocab file).
+    Its ``base_tokenizer_fingerprint()`` therefore has ``vocab_size=None`` (and, by
+    extension, ``token_id_map_digest=None``) -- the exact shape the fixture-vs-base
+    equality gate (F6/F9) must still recognize as a match against its OWN fixture.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    config = {
+        "model_type": "llama",
+        "hidden_size": 8,
+        "num_hidden_layers": 1,
+        "num_attention_heads": 2,
+        "num_key_value_heads": 2,
+        "head_dim": 4,
+        "vocab_size": 16,
+        "intermediate_size": 16,
+        "pad_token_id": 0,
+        "eos_token_id": 1,
+    }
+    (root / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    (root / "tokenizer_config.json").write_text(
+        json.dumps({"bos_token": "<s>", "eos_token": "</s>"}), encoding="utf-8"
+    )
+    write_safetensors_file(root / "model.safetensors", _model_tensors(q_bytes))
+    return root
+
+
+def test_fixture_matching_base_without_tokenizer_json_is_not_flagged_as_fixture_mismatch(
+    tmp_path: Path,
+) -> None:
+    """A ``--prompts`` fixture's fingerprint is computed FROM the exact same base repo
+    via ``tokenizer_fingerprint_for_path`` -- IDENTICAL to what
+    ``base_tokenizer_fingerprint()`` itself returns for that repo, even when that
+    fingerprint has unavailable (``None``) fields, e.g. a real, loadable
+    SentencePiece-slow-tokenizer repo with no ``tokenizer.json``. The fixture-vs-base
+    gate must recognize this as an exact match by comparing fingerprints for EQUALITY,
+    not by reusing ``tokenizers_match`` -- the base-vs-FUSED comparator, which by
+    design treats even an identical "both sides unavailable" as a non-match (see
+    ``tokenizers_match``'s own docstring). Reporting a fixture mismatch here would be a
+    false positive: the fixture was built for this exact repository.
+
+    (This particular base/fused pair -- both legitimately missing ``tokenizer.json`` --
+    is ALSO gated by the separate, pre-existing ``parity/tokenizer.identity`` check,
+    which applies that same base-vs-FUSED policy directly to base vs fused and treats
+    this shape as incompatible there too; that is an unrelated, out-of-scope limitation
+    this fix does not touch. The assertion below isolates the ONE reason the fixture
+    gate itself must never produce.)
+    """
+    base = _write_repo_without_tokenizer_json(tmp_path / "base", q_bytes=_F4 * 64)
+    fused = _write_repo_without_tokenizer_json(tmp_path / "fused", q_bytes=_F4_TWO * 64)
+    adapter = _write_adapter(tmp_path / "adapter")
+    fingerprint = tokenizer_fingerprint_for_path(str(base))
+    token_ids = ((0, 10, 22, 45, 7, 33, 1),)
+    fixture_ref = FixtureRef(
+        id="fixture-matches-base-without-tokenizer-json",
+        input_digest=compute_input_digest(token_ids),
+        max_length=7,
+        scored_positions=tuple(range(7)),
+        tokenizer_fingerprint=fingerprint,
+    )
+    launcher = RaisingLauncher()
+
+    report = check_adapter_parity(
+        base=str(base),
+        adapter=str(adapter),
+        fused=str(fused),
+        options=ParityOptions(launcher=launcher, fixture=(fixture_ref, token_ids)),
+    )
+
+    assert not any("different tokenizer" in reason for reason in report.reasons)
+
+
 def test_fixture_tokenizer_mismatch_gates_the_oracle_without_running_workers(
     tmp_path: Path,
 ) -> None:
@@ -436,7 +511,8 @@ def test_fixture_tokenizer_mismatch_gates_the_oracle_without_running_workers(
     assert launcher.model_paths_by_role == {}
     assert set(report.worker_status.values()) == {"skipped"}
     assert any(
-        "parity fixture was built for a different tokenizer" in reason for reason in report.reasons
+        "the parity fixture's tokenizer fingerprint does not match the base model's" in reason
+        for reason in report.reasons
     )
     # The reason must point at the real CLI flow that builds a matching fixture,
     # not just name the mismatch.
@@ -461,7 +537,8 @@ def test_matching_fixture_tokenizer_does_not_gate_the_oracle(tiny_local_repos: _
     assert launcher.model_paths_by_role  # the workers DID run
     assert report.phase_outcomes["oracle"] == "ok"
     assert not any(
-        "parity fixture was built for a different tokenizer" in reason for reason in report.reasons
+        "the parity fixture's tokenizer fingerprint does not match the base model's" in reason
+        for reason in report.reasons
     )
 
 

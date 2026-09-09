@@ -18,7 +18,7 @@ from mlx_model_doctor.parity.checks import (
     resolve_targets_against_base,
     run_parity_checks,
 )
-from mlx_model_doctor.parity.context import ParityContext, ParityTargets, tokenizers_match
+from mlx_model_doctor.parity.context import ParityContext, ParityTargets
 from mlx_model_doctor.parity.deltamap import TensorDelta, delta_map
 from mlx_model_doctor.parity.fixtures import DEFAULT_FIXTURE_ID, FixtureRef, get_fixture
 from mlx_model_doctor.parity.oracle import (
@@ -209,8 +209,15 @@ def check_adapter_parity(
         options.fixture if options.fixture is not None else get_fixture(options.fixture_id)
     )
     tokenizer_fingerprint = pctx.base_tokenizer_fingerprint()
-    fixture_match = tokenizers_match(fixture_ref.tokenizer_fingerprint, tokenizer_fingerprint)
-    fixture_mismatch = not fixture_match.matched
+    # Equality, not `tokenizers_match`: that comparator is the base-vs-FUSED check and
+    # treats any unavailable field (e.g. `vocab_size is None` for a repo with no
+    # `tokenizer.json` -- a real, loadable SentencePiece-slow-tokenizer shape) as "does
+    # not match", even when both fingerprints are identical. A `--prompts` fixture's
+    # fingerprint is computed from this SAME base repo (via
+    # `tokenizer_fingerprint_for_path`, identical to `base_tokenizer_fingerprint()`), so
+    # the correct comparison here is fingerprint equality -- `TokenizerFingerprint` is a
+    # frozen dataclass, so `!=` compares every field, including matching `None`s.
+    fixture_mismatch = fixture_ref.tokenizer_fingerprint != tokenizer_fingerprint
     delta_result = _build_delta_map(pctx, base_target, fused_target, sources)
 
     reasons: list[str] = []
@@ -236,8 +243,8 @@ def check_adapter_parity(
 
     if fixture_mismatch:
         reasons.append(
-            "the parity fixture was built for a different tokenizer than the base model "
-            f"({fixture_match.reason}); build a fixture for this model's tokenizer with "
+            "the parity fixture's tokenizer fingerprint does not match the base model's; "
+            "build a fixture for this model's tokenizer with "
             "`mlx-model-doctor parity mlx --prompts <file>`."
         )
 
