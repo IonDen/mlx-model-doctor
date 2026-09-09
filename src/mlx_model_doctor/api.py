@@ -333,7 +333,7 @@ def _run_runtime(
     pctx: ParityContext,
     sources: ResolvedSources,
     fixture_ref: FixtureRef,
-    token_ids: tuple[int, ...],
+    token_ids: tuple[tuple[int, ...], ...],
     options: ParityOptions,
     reasons: list[str],
 ) -> _RuntimeOutcome:
@@ -436,7 +436,7 @@ def _build_launcher(pctx: ParityContext, options: ParityOptions) -> Launcher:
 
 
 def _build_worker_specs(
-    sources: ResolvedSources, fixture_ref: FixtureRef, token_ids: tuple[int, ...]
+    sources: ResolvedSources, fixture_ref: FixtureRef, token_ids: tuple[tuple[int, ...], ...]
 ) -> list[WorkerSpec]:
     """Build the four worker specs over the pinned paths (base thrice, fused once)."""
     base_path = sources.base.path

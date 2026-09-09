@@ -7,6 +7,7 @@ import pytest
 
 import mlx_model_doctor.parity.worker as worker_module
 from mlx_model_doctor.errors import MemorySafetyError, ModelDoctorError, WorkerArtifactError
+from mlx_model_doctor.parity.oracle import argmax_agreement, first_divergence, flip_count
 from mlx_model_doctor.parity.worker import (
     AdapterValidation,
     MlxLmWorkerBackend,
@@ -27,6 +28,7 @@ from tests.parity_fakes import (
     NeverCalledBackend,
     OrderAwareCaps,
     OrderCheckingBackend,
+    SequenceLogitsMlxLmModel,
     StubBackend,
     lora_tensor,
     make_import_module,
@@ -38,7 +40,7 @@ def _spec(**overrides: object) -> WorkerSpec:
     defaults: dict[str, object] = {
         "model_path": "/models/base",
         "adapter_path": None,
-        "token_ids": (1, 2, 3),
+        "token_ids": ((1, 2, 3),),
         "fixture_id": "fx-1",
         "role": "base",
     }
@@ -62,10 +64,10 @@ def _result(**overrides: object) -> WorkerResult:
 
 
 def test_worker_spec_holds_the_expected_fields() -> None:
-    spec = _spec(adapter_path="/adapters/a", token_ids=(4, 5))
+    spec = _spec(adapter_path="/adapters/a", token_ids=((4, 5),))
     assert spec.model_path == "/models/base"
     assert spec.adapter_path == "/adapters/a"
-    assert spec.token_ids == (4, 5)
+    assert spec.token_ids == ((4, 5),)
     assert spec.fixture_id == "fx-1"
     assert spec.role == "base"
 
@@ -110,10 +112,22 @@ def test_run_worker_body_refuses_for_any_non_positive_cap(caps: tuple[int, int])
 
 
 def test_run_worker_body_rejects_argmax_length_mismatch() -> None:
-    backend = StubBackend(_result(argmax=[1, 2]))  # spec has 3 token ids
+    backend = StubBackend(_result(argmax=[1, 2]))  # spec has 3 token ids (one sequence)
 
     with pytest.raises(ModelDoctorError, match="3"):
-        run_worker_body(_spec(token_ids=(1, 2, 3)), backend, caps_fn=lambda: (20, 22))
+        run_worker_body(_spec(token_ids=((1, 2, 3),)), backend, caps_fn=lambda: (20, 22))
+
+
+def test_run_worker_body_rejects_argmax_length_mismatch_across_multiple_sequences() -> None:
+    """The expected length is the SUM across sequences, not the sequence count.
+
+    A mutant comparing against ``len(spec.token_ids)`` (the sequence count, 2)
+    instead of the total token count (3) must fail this test.
+    """
+    backend = StubBackend(_result(argmax=[1, 2]))  # total token ids across sequences is 3
+
+    with pytest.raises(ModelDoctorError, match="3"):
+        run_worker_body(_spec(token_ids=((1, 2), (3,))), backend, caps_fn=lambda: (20, 22))
 
 
 def test_run_worker_body_returns_backend_result_on_success() -> None:
@@ -493,7 +507,7 @@ def test_mlx_lm_worker_backend_computes_argmax_without_adapter(monkeypatch) -> N
     )
 
     result = MlxLmWorkerBackend().load_argmax(
-        _spec(token_ids=(1, 2), adapter_path=None, role="base")
+        _spec(token_ids=((1, 2),), adapter_path=None, role="base")
     )
 
     assert result.argmax == [1, 0]  # argmax of each row
@@ -503,6 +517,47 @@ def test_mlx_lm_worker_backend_computes_argmax_without_adapter(monkeypatch) -> N
     assert result.fixture_id == "fx-1"
     assert mlx_lm.load_calls == [{"path": "/models/base", "adapter_path": None}]
     assert mx.eval_calls == 1
+
+
+def test_mlx_lm_worker_backend_concatenates_per_sequence_argmax_in_order(monkeypatch) -> None:
+    """Two sequences (3 + 2 tokens): the flat argmax must be the per-sequence argmax
+    vectors concatenated IN ORDER over a single model load, so scored positions that
+    address the second sequence land on the right values.
+
+    Catches: only the first sequence scored, a sequence silently dropped, or the
+    concatenation offset/ordered wrong.
+    """
+    # sequence 1 (3 positions) -> argmax [2, 0, 1]; sequence 2 (2 positions) -> argmax [0, 1]
+    logits_per_call = [
+        [[0.1, 0.2, 5.0], [4.0, 0.1, 0.2], [0.1, 3.0, 0.2]],
+        [[6.0, 0.1], [0.1, 2.0]],
+    ]
+    model = SequenceLogitsMlxLmModel(logits_per_call)
+    mlx_lm = FakeMlxLmModule(model)
+    mx = FakeMxCore()
+
+    monkeypatch.setattr(
+        worker_module.importlib,
+        "import_module",
+        make_import_module({"mlx.core": mx, "mlx_lm": mlx_lm}),
+    )
+
+    result = MlxLmWorkerBackend().load_argmax(
+        _spec(token_ids=((1, 2, 3), (4, 5)), adapter_path=None, role="base")
+    )
+
+    assert result.argmax == [2, 0, 1, 0, 1]
+    assert len(model.calls) == 2  # one model load, one forward per sequence
+    assert mlx_lm.load_calls == [{"path": "/models/base", "adapter_path": None}]  # loaded ONCE
+
+    # Feed the concatenation into the oracle's scored-position reducer, differing
+    # only at index 3 (the second sequence's first position), to prove positions
+    # addressing the second sequence are correctly aligned in the concatenation.
+    other = [2, 0, 1, 9, 1]
+    scored = [1, 3, 4]
+    assert argmax_agreement(result.argmax, other, scored) == 2 / 3
+    assert first_divergence(result.argmax, other, scored) == 3
+    assert flip_count(result.argmax, other, scored) == 1
 
 
 def test_mlx_lm_worker_backend_rejects_non_finite_logits(monkeypatch) -> None:
@@ -518,7 +573,7 @@ def test_mlx_lm_worker_backend_rejects_non_finite_logits(monkeypatch) -> None:
     )
 
     with pytest.raises(ModelDoctorError, match="non-finite"):
-        MlxLmWorkerBackend().load_argmax(_spec(token_ids=(1, 2)))
+        MlxLmWorkerBackend().load_argmax(_spec(token_ids=((1, 2),)))
 
 
 def test_mlx_lm_worker_backend_determines_adapter_applied_true_for_nonzero_delta(
@@ -544,7 +599,7 @@ def test_mlx_lm_worker_backend_determines_adapter_applied_true_for_nonzero_delta
     )
 
     result = MlxLmWorkerBackend().load_argmax(
-        _spec(token_ids=(1,), adapter_path=str(adapter_dir), role="adapter")
+        _spec(token_ids=((1,),), adapter_path=str(adapter_dir), role="adapter")
     )
 
     assert result.adapter_applied is True
@@ -574,7 +629,7 @@ def test_mlx_lm_worker_backend_adapter_applied_false_for_negligible_delta(
     )
 
     result = MlxLmWorkerBackend().load_argmax(
-        _spec(token_ids=(1,), adapter_path=str(adapter_dir), role="adapter")
+        _spec(token_ids=((1,),), adapter_path=str(adapter_dir), role="adapter")
     )
 
     assert result.adapter_applied is False
@@ -601,7 +656,7 @@ def test_mlx_lm_worker_backend_adapter_applied_none_for_unsupported_type(
     )
 
     result = MlxLmWorkerBackend().load_argmax(
-        _spec(token_ids=(1,), adapter_path=str(adapter_dir), role="adapter")
+        _spec(token_ids=((1,),), adapter_path=str(adapter_dir), role="adapter")
     )
 
     assert result.adapter_applied is None
@@ -897,7 +952,7 @@ def test_adapter_applied_is_false_when_manifest_is_incomplete(monkeypatch, tmp_p
     model = FakeMlxLmModel([[0.1, 5.0]], modules=[("target", lora_module)])
 
     applied = worker_module._adapter_applied_from_reference(
-        model, _spec(adapter_path=str(adapter_dir), token_ids=(1,))
+        model, _spec(adapter_path=str(adapter_dir), token_ids=((1,),))
     )
 
     assert applied is False
@@ -910,7 +965,7 @@ def test_adapter_applied_is_false_when_no_lora_family_modules_are_discovered(
     model = FakeMlxLmModel([[0.1, 5.0]], modules=[])  # no LoRA-family modules at all
 
     applied = worker_module._adapter_applied_from_reference(
-        model, _spec(adapter_path=str(adapter_dir), token_ids=(1,))
+        model, _spec(adapter_path=str(adapter_dir), token_ids=((1,),))
     )
 
     assert applied is False
@@ -966,13 +1021,30 @@ def test_cwd_file_names_returns_empty_set_on_oserror(monkeypatch) -> None:
     assert worker_module._cwd_file_names() == set()
 
 
-def test_parse_token_ids_empty_string_returns_empty_tuple() -> None:
-    assert worker_module._parse_token_ids("") == ()
-    assert worker_module._parse_token_ids("   ") == ()
+def test_parse_token_id_sequences_rejects_empty_string() -> None:
+    """A fixture must have at least one nonempty sequence -- empty input is invalid."""
+    with pytest.raises(ValueError, match="empty"):
+        worker_module._parse_token_id_sequences("")
+    with pytest.raises(ValueError, match="empty"):
+        worker_module._parse_token_id_sequences("   ")
 
 
-def test_parse_token_ids_parses_comma_separated_integers() -> None:
-    assert worker_module._parse_token_ids("1,2,3") == (1, 2, 3)
+def test_parse_token_id_sequences_parses_a_single_sequence() -> None:
+    assert worker_module._parse_token_id_sequences("1,2,3") == ((1, 2, 3),)
+
+
+def test_parse_token_id_sequences_parses_multiple_sequences() -> None:
+    assert worker_module._parse_token_id_sequences("1,2,3;4,5") == ((1, 2, 3), (4, 5))
+
+
+def test_parse_token_id_sequences_rejects_an_empty_sequence_between_separators() -> None:
+    with pytest.raises(ValueError, match="empty"):
+        worker_module._parse_token_id_sequences("1,2;;3,4")
+
+
+def test_parse_token_id_sequences_rejects_a_trailing_empty_sequence() -> None:
+    with pytest.raises(ValueError, match="empty"):
+        worker_module._parse_token_id_sequences("1,2;")
 
 
 def test_read_worker_json_rejects_non_positive_length(tmp_path: Path) -> None:

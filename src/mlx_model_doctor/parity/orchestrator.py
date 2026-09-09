@@ -81,13 +81,18 @@ def _default_argv_prefix() -> tuple[str, ...]:
 
 
 def _build_worker_argv(spec: WorkerSpec, out_path: Path) -> list[str]:
-    """Build the ``--flag value`` argv the worker's argument parser expects (see ``worker.main``)."""
+    """Build the ``--flag value`` argv the worker's argument parser expects (see ``worker.main``).
+
+    Serializes ``spec.token_ids`` (one or more sequences) as ``;``-separated
+    groups of ``,``-separated integers -- the exact format
+    ``worker._parse_token_id_sequences`` parses back.
+    """
     argv = ["--model-path", spec.model_path]
     if spec.adapter_path is not None:
         argv += ["--adapter-path", spec.adapter_path]
     argv += [
         "--token-ids",
-        ",".join(str(token_id) for token_id in spec.token_ids),
+        ";".join(",".join(str(token_id) for token_id in sequence) for sequence in spec.token_ids),
         "--fixture-id",
         spec.fixture_id,
         "--role",
@@ -157,7 +162,7 @@ class SubprocessLauncher:
                     expect_fixture=spec.fixture_id,
                     expect_role=spec.role,
                     vocab_size=self.vocab_size,
-                    length=len(spec.token_ids),
+                    length=sum(len(sequence) for sequence in spec.token_ids),
                 )
             except (WorkerArtifactError, ValueError) as exc:
                 return _error_outcome(spec.role, str(exc))

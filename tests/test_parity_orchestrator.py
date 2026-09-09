@@ -10,7 +10,7 @@ from mlx_model_doctor.parity.orchestrator import (
     WorkerOutcome,
     run_parity_workers,
 )
-from mlx_model_doctor.parity.worker import WorkerSpec
+from mlx_model_doctor.parity.worker import WorkerSpec, _parse_token_id_sequences
 from tests.parity_fakes import (
     RaisingLauncher,
     TrackingLauncher,
@@ -28,7 +28,7 @@ def _spec(**overrides: object) -> WorkerSpec:
     defaults: dict[str, object] = {
         "model_path": "/models/base",
         "adapter_path": None,
-        "token_ids": (1, 2, 3),
+        "token_ids": ((1, 2, 3),),
         "fixture_id": "fx-1",
         "role": "base",
     }
@@ -143,7 +143,7 @@ def test_run_parity_workers_isolates_a_launcher_crash_from_other_specs() -> None
 
 def test_build_worker_argv_omits_adapter_path_when_none() -> None:
     argv = orchestrator_module._build_worker_argv(
-        _spec(adapter_path=None, token_ids=(1, 2)), Path("/tmp/out.json")
+        _spec(adapter_path=None, token_ids=((1, 2),)), Path("/tmp/out.json")
     )
 
     assert "--adapter-path" not in argv
@@ -170,6 +170,23 @@ def test_build_worker_argv_includes_adapter_path_when_set() -> None:
     assert argv[argv.index("--adapter-path") + 1] == "/adapters/a"
 
 
+def test_build_worker_argv_serializes_multiple_sequences_with_semicolons() -> None:
+    argv = orchestrator_module._build_worker_argv(
+        _spec(adapter_path=None, token_ids=((1, 2, 3), (4, 5))), Path("/tmp/out.json")
+    )
+
+    assert argv[argv.index("--token-ids") + 1] == "1,2,3;4,5"
+
+
+def test_build_worker_argv_token_ids_round_trip_through_the_worker_parser() -> None:
+    """The orchestrator's serialization and the worker's parser must agree exactly."""
+    spec = _spec(token_ids=((1, 2, 3), (4, 5), (6,)))
+    argv = orchestrator_module._build_worker_argv(spec, Path("/tmp/out.json"))
+    serialized = argv[argv.index("--token-ids") + 1]
+
+    assert _parse_token_id_sequences(serialized) == spec.token_ids
+
+
 # --- SubprocessLauncher: defaults ---------------------------------------------------
 
 
@@ -188,7 +205,7 @@ def test_subprocess_launcher_success_stub_returns_ok_outcome(tmp_path: Path) -> 
         vocab_size=10, timeout_s=10.0, argv_prefix=(sys.executable, str(stub))
     )
 
-    outcome = launcher.run_one(_spec(token_ids=(1, 2, 3), fixture_id="fx-1", role="base"))
+    outcome = launcher.run_one(_spec(token_ids=((1, 2, 3),), fixture_id="fx-1", role="base"))
 
     assert outcome.status == "ok"
     assert outcome.error is None
@@ -243,10 +260,30 @@ def test_subprocess_launcher_wrong_length_artifact_returns_error(tmp_path: Path)
         vocab_size=10, timeout_s=10.0, argv_prefix=(sys.executable, str(stub))
     )
 
-    outcome = launcher.run_one(_spec(token_ids=(1, 2, 3)))  # stub always writes a length-1 argmax
+    outcome = launcher.run_one(
+        _spec(token_ids=((1, 2, 3),))
+    )  # stub always writes a length-1 argmax
 
     assert outcome.status == "error"
     assert outcome.error is not None
+
+
+def test_subprocess_launcher_reads_length_as_the_sum_across_sequences(tmp_path: Path) -> None:
+    """A multi-sequence spec's expected argmax length is the SUM across sequences.
+
+    A mutant reading ``len(spec.token_ids)`` (the sequence count, 2) instead of
+    the per-sequence sum (5) must fail this test.
+    """
+    stub = write_success_stub(tmp_path / "stub.py")
+    launcher = SubprocessLauncher(
+        vocab_size=10, timeout_s=10.0, argv_prefix=(sys.executable, str(stub))
+    )
+
+    outcome = launcher.run_one(_spec(token_ids=((1, 2, 3), (4, 5))))
+
+    assert outcome.status == "ok"
+    assert outcome.error is None
+    assert outcome.argmax == [0, 0, 0, 0, 0]
 
 
 def test_subprocess_launcher_missing_sentinel_is_an_error(tmp_path: Path) -> None:

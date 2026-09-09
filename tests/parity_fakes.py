@@ -258,6 +258,33 @@ class FakeMlxLmModel:
         return list(self._modules)
 
 
+class SequenceLogitsMlxLmModel:
+    """Fake ``nn.Module``-shaped model returning per-call logits from a fixed list.
+
+    Each call to the model returns the next entry of ``logits_per_call``, in call
+    order -- lets a test pin distinct, known argmax results for each sequence a
+    multi-sequence :class:`~mlx_model_doctor.parity.worker.WorkerSpec` forwards,
+    proving a worker's per-sequence forwards land in the right concatenation slot.
+    """
+
+    def __init__(
+        self,
+        logits_per_call: list[list[list[float]]],
+        modules: list[tuple[str, object]] | None = None,
+    ) -> None:
+        self._logits_per_call = logits_per_call
+        self._modules = modules if modules is not None else []
+        self.calls: list[object] = []
+
+    def __call__(self, ids: object) -> list[list[list[float]]]:
+        index = len(self.calls)
+        self.calls.append(ids)
+        return [self._logits_per_call[index]]
+
+    def named_modules(self) -> list[tuple[str, object]]:
+        return list(self._modules)
+
+
 class FakeMlxLmModule:
     """Fake top-level ``mlx_lm`` module exposing ``load``."""
 
@@ -358,11 +385,12 @@ def _arg(flag):
 out_path = _arg("--out")
 fixture_id = _arg("--fixture-id")
 role = _arg("--role")
-token_ids = [t for t in _arg("--token-ids").split(",") if t]
+sequences = [chunk for chunk in _arg("--token-ids").split(";") if chunk]
+total = sum(len([t for t in seq.split(",") if t]) for seq in sequences)
 payload = {
     "fixture_id": fixture_id,
     "role": role,
-    "argmax": [0] * len(token_ids),
+    "argmax": [0] * total,
     "peak_bytes": 123,
     "adapter_applied": None,
 }

@@ -56,11 +56,16 @@ _DEFAULT_POLL_S = 0.05
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class WorkerSpec:
-    """A single worker invocation: which model/adapter to load and what to score."""
+    """A single worker invocation: which model/adapter to load and what to score.
+
+    ``token_ids`` is a tuple of one or more token-id sequences. The backend
+    loads the model ONCE and runs one forward per sequence, concatenating the
+    per-sequence argmax, in sequence order, into ``WorkerResult.argmax``.
+    """
 
     model_path: str
     adapter_path: str | None = None
-    token_ids: tuple[int, ...]
+    token_ids: tuple[tuple[int, ...], ...]
     fixture_id: str
     role: str
 
@@ -93,7 +98,9 @@ def run_worker_body(
 
     ``caps_fn`` is called (and its result checked) strictly before
     ``backend.load_argmax`` so a worker can never load a model with unbounded
-    MLX memory.
+    MLX memory. The expected argmax length is the TOTAL token count across
+    every sequence in ``spec.token_ids`` (the flat per-sequence-argmax
+    concatenation a backend produces), not the sequence count.
     """
     wired_gib, memory_gib = caps_fn()
     if wired_gib <= 0 or memory_gib <= 0:
@@ -101,11 +108,12 @@ def run_worker_body(
             "MLX memory caps could not be installed; refusing to run the parity worker uncapped."
         )
     result = backend.load_argmax(spec)
-    if len(result.argmax) != len(spec.token_ids):
+    expected_length = sum(len(sequence) for sequence in spec.token_ids)
+    if len(result.argmax) != expected_length:
         raise ModelDoctorError(
             f"worker backend returned {len(result.argmax)} argmax ids for "
-            f"{len(spec.token_ids)} token ids (fixture={spec.fixture_id!r}, "
-            f"role={spec.role!r})"
+            f"{expected_length} total token ids across {len(spec.token_ids)} "
+            f"sequence(s) (fixture={spec.fixture_id!r}, role={spec.role!r})"
         )
     return result
 
@@ -454,19 +462,27 @@ class MlxLmWorkerBackend:
     """
 
     def load_argmax(self, spec: WorkerSpec) -> WorkerResult:
-        """Load the target (with optional adapter) and score a teacher-forced argmax."""
+        """Load the target ONCE (with optional adapter) and score every sequence.
+
+        Runs one forward pass per sequence in ``spec.token_ids`` against the
+        single loaded model, concatenating each sequence's per-position argmax,
+        in sequence order, into one flat result vector.
+        """
         mx = _import_mlx_core()
         mlx_lm_module = _import_mlx_lm()
         model, _tokenizer = mlx_lm_module.load(spec.model_path, adapter_path=spec.adapter_path)
         applied = _adapter_applied_from_reference(model, spec) if spec.adapter_path else None
-        ids = mx.array([list(spec.token_ids)])
-        logits = model(ids)[0]
-        if not bool(mx.all(mx.isfinite(logits))):
-            raise ModelDoctorError("non-finite logits in parity worker")
-        am = mx.argmax(logits, axis=-1)
-        mx.eval(am)
+        flat_argmax: list[int] = []
+        for sequence in spec.token_ids:
+            ids = mx.array([list(sequence)])
+            logits = model(ids)[0]
+            if not bool(mx.all(mx.isfinite(logits))):
+                raise ModelDoctorError("non-finite logits in parity worker")
+            am = mx.argmax(logits, axis=-1)
+            mx.eval(am)
+            flat_argmax.extend(int(x) for x in am.tolist())
         return WorkerResult(
-            argmax=[int(x) for x in am.tolist()],
+            argmax=flat_argmax,
             adapter_applied=applied,
             peak_bytes=int(mx.get_peak_memory()),
             role=spec.role,
@@ -583,7 +599,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m mlx_model_doctor.parity.worker")
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--adapter-path", default=None)
-    parser.add_argument("--token-ids", required=True, help="comma-separated integer token ids")
+    parser.add_argument(
+        "--token-ids",
+        required=True,
+        help=(
+            "token-id sequences: one or more comma-separated integer sequences, "
+            "separated by ';' (e.g. '1,2,3;4,5' for two sequences)"
+        ),
+    )
     parser.add_argument("--fixture-id", required=True)
     parser.add_argument("--role", required=True)
     parser.add_argument("--out", required=True, help="path to write the worker result JSON")
@@ -592,11 +615,25 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _parse_token_ids(raw: str) -> tuple[int, ...]:
+def _parse_token_id_sequences(raw: str) -> tuple[tuple[int, ...], ...]:
+    """Parse ``;``-separated sequences of ``,``-separated integer token ids.
+
+    A fixture requires at least one nonempty sequence: both an empty overall
+    input and an empty individual sequence (e.g. two consecutive ``;``, or a
+    trailing ``;``) raise ``ValueError``.
+    """
     stripped = raw.strip()
     if not stripped:
-        return ()
-    return tuple(int(item) for item in stripped.split(","))
+        raise ValueError(
+            "token id sequences must not be empty; a fixture requires at least one sequence"
+        )
+    sequences: list[tuple[int, ...]] = []
+    for chunk in stripped.split(";"):
+        chunk = chunk.strip()
+        if not chunk:
+            raise ValueError(f"token id sequences must not contain an empty sequence: {raw!r}")
+        sequences.append(tuple(int(item) for item in chunk.split(",")))
+    return tuple(sequences)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -610,7 +647,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     spec = WorkerSpec(
         model_path=args.model_path,
         adapter_path=args.adapter_path,
-        token_ids=_parse_token_ids(args.token_ids),
+        token_ids=_parse_token_id_sequences(args.token_ids),
         fixture_id=args.fixture_id,
         role=args.role,
     )
