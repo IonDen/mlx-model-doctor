@@ -18,7 +18,7 @@ from mlx_model_doctor.parity.checks import (
     resolve_targets_against_base,
     run_parity_checks,
 )
-from mlx_model_doctor.parity.context import ParityContext, ParityTargets
+from mlx_model_doctor.parity.context import ParityContext, ParityTargets, tokenizers_match
 from mlx_model_doctor.parity.deltamap import TensorDelta, delta_map
 from mlx_model_doctor.parity.fixtures import DEFAULT_FIXTURE_ID, FixtureRef, get_fixture
 from mlx_model_doctor.parity.oracle import (
@@ -209,6 +209,8 @@ def check_adapter_parity(
         options.fixture if options.fixture is not None else get_fixture(options.fixture_id)
     )
     tokenizer_fingerprint = pctx.base_tokenizer_fingerprint()
+    fixture_match = tokenizers_match(fixture_ref.tokenizer_fingerprint, tokenizer_fingerprint)
+    fixture_mismatch = not fixture_match.matched
     delta_result = _build_delta_map(pctx, base_target, fused_target, sources)
 
     reasons: list[str] = []
@@ -232,8 +234,21 @@ def check_adapter_parity(
 
     phase_outcomes["tokenizer_gate"] = "blocking_fail" if tokenizer_mismatch else "ok"
 
+    if fixture_mismatch:
+        reasons.append(
+            "the parity fixture was built for a different tokenizer than the base model "
+            f"({fixture_match.reason}); build a fixture for this model's tokenizer with "
+            "build_fixture_from_prompts and pass it via ParityOptions.fixture instead of "
+            "the built-in default."
+        )
+
     runtime_gated = (
-        crashed or embedded_fail or adapter_config_fail or missing_target_fail or tokenizer_mismatch
+        crashed
+        or embedded_fail
+        or adapter_config_fail
+        or missing_target_fail
+        or tokenizer_mismatch
+        or fixture_mismatch
     )
 
     runtime = (

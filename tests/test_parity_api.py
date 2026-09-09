@@ -27,6 +27,7 @@ from mlx_model_doctor.parity.fixtures import (
     FixtureRef,
     compute_input_digest,
     get_fixture,
+    reference_tokenizer_files,
 )
 from mlx_model_doctor.parity.oracle import ROLE_BASE, ROLE_FUSED, ROLE_NOISE, ROLE_REFERENCE
 from mlx_model_doctor.parity.orchestrator import WorkerOutcome
@@ -35,6 +36,12 @@ from tests.parity_fakes import lora_tensor, safetensors_header_bytes, write_safe
 
 _F4 = struct.pack("<f", 1.0)
 _F4_TWO = struct.pack("<f", 2.0)
+
+# The default fixture's own reference chat template -- used as the DEFAULT chat
+# template for every synthetic repo below, so a repo's own tokenizer fingerprint
+# matches DEFAULT_FIXTURE_ID's by default (the new fixture-vs-base gate, F6/F9)
+# and only an EXPLICIT override (see `fused_bad_tokenizer`) produces a mismatch.
+_, _, _REFERENCE_CHAT_TEMPLATE = reference_tokenizer_files()
 
 
 # --- on-disk repository builders ------------------------------------------------
@@ -55,7 +62,15 @@ def _model_tensors(q_bytes: bytes) -> dict[str, tuple[str, list[int], bytes]]:
     }
 
 
-def _write_model_repo(root: Path, *, q_bytes: bytes, chat_template: str = "{{ x }}") -> Path:
+def _write_model_repo(
+    root: Path, *, q_bytes: bytes, chat_template: str = _REFERENCE_CHAT_TEMPLATE
+) -> Path:
+    """Write a synthetic model repo whose tokenizer is the default fixture's OWN
+    reference tokenizer (see ``reference_tokenizer_files``), so its base tokenizer
+    fingerprint matches ``DEFAULT_FIXTURE_ID``'s and the fixture-vs-base gate never
+    fires by accident -- only an explicit ``chat_template`` override (a real
+    base-vs-fused incompatibility, see ``fused_bad_tokenizer``) produces a mismatch.
+    """
     root.mkdir(parents=True, exist_ok=True)
     config = {
         "model_type": "llama",
@@ -70,14 +85,10 @@ def _write_model_repo(root: Path, *, q_bytes: bytes, chat_template: str = "{{ x 
         "eos_token_id": 1,
     }
     (root / "config.json").write_text(json.dumps(config), encoding="utf-8")
-    (root / "tokenizer.json").write_text(
-        json.dumps({"model": {"type": "BPE", "vocab": {f"t{i}": i for i in range(16)}}}),
-        encoding="utf-8",
-    )
-    (root / "tokenizer_config.json").write_text(
-        json.dumps({"bos_token": "t0", "eos_token": "t1", "chat_template": chat_template}),
-        encoding="utf-8",
-    )
+    tokenizer_config, tokenizer_json, _ = reference_tokenizer_files()
+    tokenizer_config["chat_template"] = chat_template
+    (root / "tokenizer.json").write_text(json.dumps(tokenizer_json), encoding="utf-8")
+    (root / "tokenizer_config.json").write_text(json.dumps(tokenizer_config), encoding="utf-8")
     write_safetensors_file(root / "model.safetensors", _model_tensors(q_bytes))
     return root
 
@@ -362,6 +373,93 @@ def test_tokenizer_mismatch_gates_the_oracle_without_running_workers(
     assert launcher.model_paths_by_role == {}
     assert set(report.worker_status.values()) == {"skipped"}
     assert parity_exit_code(report) == 1
+
+
+def _write_repo_with_custom_tokenizer(root: Path, *, q_bytes: bytes) -> Path:
+    """Write a repo using a tokenizer that is NOT the default fixture's reference
+    tokenizer -- isolates the fixture-vs-base gate: base and fused below share this
+    SAME non-reference tokenizer, so the base-vs-fused ``TokenizerIdentityCheck``
+    agrees and only the fixture disagrees.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    config = {
+        "model_type": "llama",
+        "hidden_size": 8,
+        "num_hidden_layers": 1,
+        "num_attention_heads": 2,
+        "num_key_value_heads": 2,
+        "head_dim": 4,
+        "vocab_size": 16,
+        "intermediate_size": 16,
+        "pad_token_id": 0,
+        "eos_token_id": 1,
+    }
+    (root / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    (root / "tokenizer.json").write_text(
+        json.dumps({"model": {"type": "BPE", "vocab": {f"t{i}": i for i in range(16)}}}),
+        encoding="utf-8",
+    )
+    (root / "tokenizer_config.json").write_text(
+        json.dumps({"bos_token": "t0", "eos_token": "t1", "chat_template": "{{ x }}"}),
+        encoding="utf-8",
+    )
+    write_safetensors_file(root / "model.safetensors", _model_tensors(q_bytes))
+    return root
+
+
+def test_fixture_tokenizer_mismatch_gates_the_oracle_without_running_workers(
+    tmp_path: Path,
+) -> None:
+    """A fixture built for one tokenizer must never be silently scored against a
+    base model with a DIFFERENT one: base and fused agree with each other (so the
+    existing base-vs-fused check stays green), but neither matches the default
+    fixture's reference tokenizer -- the oracle must void-skip, cleanly, with a
+    reason distinct from the base-vs-fused one, and NO worker may run.
+    """
+    base = _write_repo_with_custom_tokenizer(tmp_path / "base", q_bytes=_F4 * 64)
+    fused = _write_repo_with_custom_tokenizer(tmp_path / "fused", q_bytes=_F4_TWO * 64)
+    adapter = _write_adapter(tmp_path / "adapter")
+    launcher = RaisingLauncher()
+
+    report = check_adapter_parity(
+        base=str(base),
+        adapter=str(adapter),
+        fused=str(fused),
+        options=ParityOptions(launcher=launcher),
+    )
+
+    assert not any(
+        result.check_id == "parity/tokenizer.identity" and result.status == "fail"
+        for result in report.results
+    )
+    assert report.verdict is None
+    assert launcher.model_paths_by_role == {}
+    assert set(report.worker_status.values()) == {"skipped"}
+    assert any(
+        "parity fixture was built for a different tokenizer" in reason for reason in report.reasons
+    )
+    assert parity_exit_code(report) == 2
+
+
+def test_matching_fixture_tokenizer_does_not_gate_the_oracle(tiny_local_repos: _Repos) -> None:
+    """The base repo's tokenizer IS the default fixture's own reference tokenizer
+    (see ``_write_model_repo``): the fixture-vs-base gate must let the run through
+    -- workers run and the oracle reaches a real verdict, not a false-positive skip.
+    """
+    launcher = _pass_launcher()
+
+    report = check_adapter_parity(
+        base=tiny_local_repos.base,
+        adapter=tiny_local_repos.adapter,
+        fused=tiny_local_repos.fused_diff,
+        options=_opts(launcher),
+    )
+
+    assert launcher.model_paths_by_role  # the workers DID run
+    assert report.phase_outcomes["oracle"] == "ok"
+    assert not any(
+        "parity fixture was built for a different tokenizer" in reason for reason in report.reasons
+    )
 
 
 def test_uncovered_lora_target_is_determined_bad_exit_1(tiny_local_repos: _Repos) -> None:
