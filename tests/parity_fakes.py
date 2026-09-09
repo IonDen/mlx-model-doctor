@@ -300,8 +300,20 @@ class FakeMlxLmModule:
         self._raise_error = raise_error
         self.load_calls: list[dict[str, object]] = []
 
-    def load(self, path_or_repo: str, *, adapter_path: str | None = None) -> tuple[object, object]:
-        self.load_calls.append({"path": path_or_repo, "adapter_path": adapter_path})
+    def load(
+        self,
+        path_or_repo: str,
+        *,
+        adapter_path: str | None = None,
+        tokenizer_config: dict[str, object] | None = None,
+    ) -> tuple[object, object]:
+        self.load_calls.append(
+            {
+                "path": path_or_repo,
+                "adapter_path": adapter_path,
+                "tokenizer_config": tokenizer_config,
+            }
+        )
         if self._raise_error is not None:
             raise self._raise_error
         return (self._model, self._tokenizer)
@@ -313,7 +325,13 @@ class LoadForbiddenMlxLmModule:
     def __init__(self) -> None:
         self.load_calls = 0
 
-    def load(self, path_or_repo: str, *, adapter_path: str | None = None) -> tuple[object, object]:
+    def load(
+        self,
+        path_or_repo: str,
+        *,
+        adapter_path: str | None = None,
+        tokenizer_config: dict[str, object] | None = None,
+    ) -> tuple[object, object]:
         self.load_calls += 1
         raise AssertionError("mlx_lm.load() must not be called without MLX memory caps")
 

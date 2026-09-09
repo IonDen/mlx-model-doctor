@@ -16,6 +16,7 @@ from mlx_model_doctor.errors import DependencyError, ModelDoctorError
 from mlx_model_doctor.parity import prompts as prompts_module
 from mlx_model_doctor.parity.context import TokenizerFingerprint, tokenizer_fingerprint
 from mlx_model_doctor.parity.prompts import build_prompts_fixture
+from tests.parity_fakes import make_import_module
 
 
 class _FakeTokenizer:
@@ -182,3 +183,32 @@ class TestDefaultTokenizerLoader:
         with pytest.raises(DependencyError, match="Install it with") as exc_info:
             prompts_module._default_tokenizer_loader("/some/path")
         assert exc_info.value.missing_package == "transformers"
+
+    def test_pins_trust_remote_code_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The ``--prompts`` tokenizer load must never enable ``trust_remote_code``.
+
+        Catches: the ``--prompts`` tokenizer load enabling remote code execution
+        from an untrusted base repo (an omitted or ``True`` pin here reaches
+        ``transformers.AutoTokenizer.from_pretrained`` for a repo the user only
+        pointed at by path/id, not one they've vetted).
+        """
+        calls: list[dict[str, object]] = []
+
+        class _FakeAutoTokenizer:
+            @staticmethod
+            def from_pretrained(path: str, **kwargs: object) -> _FakeTokenizer:
+                calls.append({"path": path, **kwargs})
+                return _FakeTokenizer({})
+
+        class _FakeTransformers:
+            AutoTokenizer = _FakeAutoTokenizer
+
+        monkeypatch.setattr(
+            prompts_module.importlib,
+            "import_module",
+            make_import_module({"transformers": _FakeTransformers()}),
+        )
+
+        prompts_module._default_tokenizer_loader("/some/path")
+
+        assert calls == [{"path": "/some/path", "trust_remote_code": False}]

@@ -515,8 +515,39 @@ def test_mlx_lm_worker_backend_computes_argmax_without_adapter(monkeypatch) -> N
     assert result.peak_bytes == 777
     assert result.role == "base"
     assert result.fixture_id == "fx-1"
-    assert mlx_lm.load_calls == [{"path": "/models/base", "adapter_path": None}]
+    assert mlx_lm.load_calls == [
+        {
+            "path": "/models/base",
+            "adapter_path": None,
+            "tokenizer_config": {"trust_remote_code": False},
+        }
+    ]
     assert mx.eval_calls == 1
+
+
+def test_mlx_lm_worker_backend_pins_tokenizer_trust_remote_code_false(monkeypatch) -> None:
+    """The parity worker's tokenizer load must never enable ``trust_remote_code``.
+
+    Catches: the parity worker loading an untrusted repo's tokenizer with remote
+    code execution enabled (``mlx_lm.load`` forwards ``tokenizer_config`` to
+    ``transformers.AutoTokenizer.from_pretrained(**tokenizer_config)``, so an
+    omitted or ``True`` pin here reaches the tokenizer resolution).
+    """
+    logits = [[0.1, 5.0, 0.2]]
+    model = FakeMlxLmModel(logits)
+    mlx_lm = FakeMlxLmModule(model)
+    mx = FakeMxCore(logits=logits)
+
+    monkeypatch.setattr(
+        worker_module.importlib,
+        "import_module",
+        make_import_module({"mlx.core": mx, "mlx_lm": mlx_lm}),
+    )
+
+    MlxLmWorkerBackend().load_argmax(_spec(token_ids=((1,),)))
+
+    assert len(mlx_lm.load_calls) == 1
+    assert mlx_lm.load_calls[0]["tokenizer_config"] == {"trust_remote_code": False}
 
 
 def test_mlx_lm_worker_backend_concatenates_per_sequence_argmax_in_order(monkeypatch) -> None:
@@ -552,7 +583,13 @@ def test_mlx_lm_worker_backend_concatenates_per_sequence_argmax_in_order(monkeyp
     # first sequence forwarded twice, which would still pass the argmax/call-count
     # assertions above by coincidence of this fixture's logits.
     assert model.calls == [[[1, 2, 3]], [[4, 5]]]
-    assert mlx_lm.load_calls == [{"path": "/models/base", "adapter_path": None}]  # loaded ONCE
+    assert mlx_lm.load_calls == [
+        {
+            "path": "/models/base",
+            "adapter_path": None,
+            "tokenizer_config": {"trust_remote_code": False},
+        }
+    ]  # loaded ONCE
 
     # Feed the concatenation into the oracle's scored-position reducer, differing
     # only at index 3 (the second sequence's first position), to prove positions

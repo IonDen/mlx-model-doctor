@@ -1,8 +1,11 @@
 """Tests for the serial parity orchestrator + parent-supervised subprocess launcher (F2/F9)."""
 
+import subprocess
 import sys
 import time
 from pathlib import Path
+
+import pytest
 
 import mlx_model_doctor.parity.orchestrator as orchestrator_module
 from mlx_model_doctor.parity.orchestrator import (
@@ -194,6 +197,42 @@ def test_subprocess_launcher_default_argv_prefix_targets_the_real_worker_module(
     launcher = SubprocessLauncher(vocab_size=10)
 
     assert launcher.argv_prefix == (sys.executable, "-m", "mlx_model_doctor.parity.worker")
+
+
+def test_subprocess_launcher_detaches_worker_stdin_from_the_parent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A worker subprocess must never inherit the parent's stdin (F2 process isolation).
+
+    Catches: a ``subprocess.Popen(...)`` call that omits ``stdin=subprocess.DEVNULL``,
+    which would let the worker block on -- or silently read -- whatever the parent's
+    stdin carries (e.g. a hung ``transformers`` ``trust_remote_code`` prompt
+    swallowing an operator's stray keypress as consent).
+    """
+    recorded_kwargs: list[dict[str, object]] = []
+
+    class _FakeProcess:
+        returncode = 1
+
+        def communicate(self, timeout: float | None = None) -> tuple[str, str]:
+            return ("", "boom")
+
+        def terminate(self) -> None:
+            pass
+
+        def kill(self) -> None:
+            pass
+
+    def fake_popen(argv: list[str], **kwargs: object) -> _FakeProcess:
+        recorded_kwargs.append(kwargs)
+        return _FakeProcess()
+
+    monkeypatch.setattr(orchestrator_module.subprocess, "Popen", fake_popen)
+    launcher = SubprocessLauncher(vocab_size=10, timeout_s=5.0)
+
+    launcher.run_one(_spec())
+
+    assert recorded_kwargs[0]["stdin"] == subprocess.DEVNULL
 
 
 # --- SubprocessLauncher: offline stub-script scenarios ------------------------------

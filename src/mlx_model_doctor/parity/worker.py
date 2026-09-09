@@ -448,9 +448,17 @@ class MlxLmParityModule(Protocol):
     """mlx-lm API surface used by the parity worker."""
 
     def load(
-        self, path_or_repo: str, *, adapter_path: str | None = None
+        self,
+        path_or_repo: str,
+        *,
+        adapter_path: str | None = None,
+        tokenizer_config: dict[str, object] | None = None,
     ) -> tuple[ParityModel, object]:
-        """Load a model and tokenizer, optionally applying LoRA/DoRA adapters."""
+        """Load a model and tokenizer, optionally applying LoRA/DoRA adapters.
+
+        ``tokenizer_config`` is forwarded by ``mlx_lm.load`` to
+        ``transformers.AutoTokenizer.from_pretrained(**tokenizer_config)``.
+        """
 
 
 @dataclass(frozen=True, slots=True)
@@ -470,7 +478,15 @@ class MlxLmWorkerBackend:
         """
         mx = _import_mlx_core()
         mlx_lm_module = _import_mlx_lm()
-        model, _tokenizer = mlx_lm_module.load(spec.model_path, adapter_path=spec.adapter_path)
+        # The tokenizer resolution a bare `load()` triggers can fall into
+        # transformers' `trust_remote_code` prompt/execution path for an
+        # untrusted repo even though the loaded tokenizer itself is discarded
+        # below -- pin it explicitly rather than accept the caller's default.
+        model, _tokenizer = mlx_lm_module.load(
+            spec.model_path,
+            adapter_path=spec.adapter_path,
+            tokenizer_config={"trust_remote_code": False},
+        )
         applied = _adapter_applied_from_reference(model, spec) if spec.adapter_path else None
         flat_argmax: list[int] = []
         for sequence in spec.token_ids:

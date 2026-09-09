@@ -128,7 +128,11 @@ class SubprocessLauncher:
 
             try:
                 process = subprocess.Popen(
-                    argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                    argv,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
                 )
             except OSError as exc:
                 return _error_outcome(spec.role, f"failed to launch worker subprocess: {exc}")

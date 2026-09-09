@@ -57,7 +57,7 @@ class _AutoTokenizerClass(Protocol):
     """The ``transformers.AutoTokenizer`` surface ``_default_tokenizer_loader`` needs."""
 
     @staticmethod
-    def from_pretrained(path: str) -> _ChatTemplateTokenizer:
+    def from_pretrained(path: str, *, trust_remote_code: bool) -> _ChatTemplateTokenizer:
         """Load a tokenizer from a local directory."""
 
 
@@ -68,13 +68,19 @@ def _default_tokenizer_loader(path: str) -> _ChatTemplateTokenizer:
     calling :func:`build_prompts_fixture` with an injected ``tokenizer_loader``
     -- never requires ``transformers`` to be installed. ``transformers`` is
     pulled in transitively by the optional ``mlx-lm`` extra.
+
+    Pins ``trust_remote_code=False`` explicitly: ``path`` may point at an
+    unvetted base repo (the whole reason ``--prompts`` exists is to test a
+    real, user-supplied model), and the ``transformers`` default for a repo
+    that ships custom tokenizer code is an interactive prompt -- never
+    trust-on-load.
     """
     try:
         transformers_module = importlib.import_module("transformers")
     except ImportError as exc:
         raise _dependency_error("transformers") from exc
     auto_tokenizer = cast("_AutoTokenizerClass", transformers_module.AutoTokenizer)
-    return auto_tokenizer.from_pretrained(path)
+    return auto_tokenizer.from_pretrained(path, trust_remote_code=False)
 
 
 def _dependency_error(missing_package: str) -> DependencyError:
