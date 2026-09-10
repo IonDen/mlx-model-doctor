@@ -35,7 +35,12 @@ class _FakeCliTokenizer:
     """Fake tokenizer used to inject a real, but fake-backed, ``--prompts`` fixture."""
 
     def apply_chat_template(
-        self, messages: list[dict[str, str]], *, add_generation_prompt: bool, tokenize: bool
+        self,
+        messages: list[dict[str, str]],
+        *,
+        add_generation_prompt: bool,
+        tokenize: bool,
+        return_dict: bool,
     ) -> list[int]:
         return [100, 101, 102] if add_generation_prompt else [100, 101, 102, 103, 104]
 
@@ -350,7 +355,12 @@ class _EmptyCompletionTokenizer:
     """
 
     def apply_chat_template(
-        self, messages: list[dict[str, str]], *, add_generation_prompt: bool, tokenize: bool
+        self,
+        messages: list[dict[str, str]],
+        *,
+        add_generation_prompt: bool,
+        tokenize: bool,
+        return_dict: bool,
     ) -> list[int]:
         return [100, 101, 102]
 

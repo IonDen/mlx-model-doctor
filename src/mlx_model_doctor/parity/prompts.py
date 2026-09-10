@@ -45,10 +45,22 @@ from mlx_model_doctor.parity.sources import ResolvedSources, SnapshotDownloader,
 
 
 class _ChatTemplateTokenizer(Protocol):
-    """The minimal tokenizer surface ``build_prompts_fixture`` needs."""
+    """The minimal tokenizer surface ``build_prompts_fixture`` needs.
+
+    ``return_dict`` is required, not optional: ``transformers`` 5.x changed
+    ``apply_chat_template(..., tokenize=True)`` to return a dict/``BatchEncoding``
+    (``{"input_ids": [...], "attention_mask": [...]}``) by default, and only an
+    explicit ``return_dict=False`` yields the flat ``list[int]`` this module
+    needs. ``build_prompts_fixture`` always passes it explicitly.
+    """
 
     def apply_chat_template(
-        self, messages: list[dict[str, str]], *, add_generation_prompt: bool, tokenize: bool
+        self,
+        messages: list[dict[str, str]],
+        *,
+        add_generation_prompt: bool,
+        tokenize: bool,
+        return_dict: bool,
     ) -> list[int]:
         """Render ``messages`` to token ids, matching the ``transformers`` tokenizer API."""
 
@@ -142,11 +154,18 @@ def build_prompts_fixture(
     def apply_chat_template(
         messages: list[dict[str, str]], *, add_generation_prompt: bool
     ) -> list[int]:
-        return list(
-            tokenizer.apply_chat_template(
-                messages, add_generation_prompt=add_generation_prompt, tokenize=True
+        # transformers 5.x returns a dict/BatchEncoding by default when
+        # tokenize=True; request the flat token-id list explicitly rather than
+        # risk `list(...)`-wrapping a dict into its two keys.
+        return [
+            int(token_id)
+            for token_id in tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=add_generation_prompt,
+                tokenize=True,
+                return_dict=False,
             )
-        )
+        ]
 
     fingerprint = fingerprint_fn(local_base_path)
     return build_fixture_from_prompts(

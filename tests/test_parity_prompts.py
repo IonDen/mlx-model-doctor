@@ -27,11 +27,43 @@ class _FakeTokenizer:
         self.calls: list[tuple[list[dict[str, str]], bool, bool]] = []
 
     def apply_chat_template(
-        self, messages: list[dict[str, str]], *, add_generation_prompt: bool, tokenize: bool
+        self,
+        messages: list[dict[str, str]],
+        *,
+        add_generation_prompt: bool,
+        tokenize: bool,
+        return_dict: bool,
     ) -> list[int]:
         self.calls.append((messages, add_generation_prompt, tokenize))
         key = (messages[0]["content"], add_generation_prompt)
         return list(self._responses[key])
+
+
+class _TransformersFiveTokenizer:
+    """Models the real ``transformers`` 5.x ``apply_chat_template`` default.
+
+    Verified against the installed transformers 5.15.0: with ``tokenize=True``
+    and no explicit ``return_dict`` argument, ``apply_chat_template`` returns a
+    dict/``BatchEncoding`` (``{"input_ids": [...], "attention_mask": [...]}``),
+    not a flat list of token ids. Only an explicit ``return_dict=False`` yields
+    the flat ``list[int]`` ``build_prompts_fixture`` needs.
+    """
+
+    def __init__(self, responses: dict[tuple[str, bool], list[int]]) -> None:
+        self._responses = responses
+
+    def apply_chat_template(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        add_generation_prompt: bool,
+        tokenize: bool,
+        return_dict: bool = True,
+    ) -> list[int] | dict[str, list[int]]:
+        input_ids = list(self._responses[(messages[0]["content"], add_generation_prompt)])
+        if return_dict is False:
+            return input_ids
+        return {"input_ids": input_ids, "attention_mask": [1] * len(input_ids)}
 
 
 def _fp() -> TokenizerFingerprint:
@@ -169,6 +201,35 @@ class TestBuildPromptsFixture:
 
         with pytest.raises(ModelDoctorError, match="network access"):
             build_prompts_fixture("definitely/not-a-real-directory", str(prompts_path))
+
+    def test_builds_a_real_fixture_against_a_transformers_five_tokenizer(
+        self, tmp_path: Path
+    ) -> None:
+        """A transformers 5.x tokenizer returns a dict by default, not a flat list.
+
+        Catches: ``build_prompts_fixture`` asking for the default
+        ``apply_chat_template(..., tokenize=True)`` shape instead of the flat
+        ``list[int]`` it needs. Against a real transformers 5.x tokenizer that
+        bug renders every prompt as the dict's two keys
+        (``["input_ids", "attention_mask"]``) instead of real token ids, so the
+        fixture always looks like a 2-token, zero-additional-token completion
+        and ``build_fixture_from_prompts`` rejects it as empty -- even though
+        the supplied completion is real and non-empty.
+        """
+        base_dir = _make_base_dir(tmp_path)
+        prompts_path = tmp_path / "prompts.json"
+        _write_prompts(prompts_path, [{"prompt": "hi", "completion": "there"}])
+        tokenizer = _TransformersFiveTokenizer({("hi", True): [1, 2], ("hi", False): [1, 2, 3, 4]})
+
+        ref, sequences = build_prompts_fixture(
+            str(base_dir),
+            str(prompts_path),
+            tokenizer_loader=lambda _path: tokenizer,
+            fingerprint_fn=lambda _path: _fp(),
+        )
+
+        assert sequences == ((1, 2, 3, 4),)
+        assert ref.id == "user-prompts"
 
 
 class TestDefaultTokenizerLoader:
