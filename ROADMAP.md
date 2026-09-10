@@ -5,6 +5,17 @@ as priorities change.
 
 ## Released
 
+- **v0.9.0** (2026-09-10) — the adapter-parity verifier. A new `parity mlx`
+  command and `check_adapter_parity` API check whether fusing a LoRA adapter
+  into a base model kept the behavior the adapter learned, by comparing the
+  top-token predictions of the base, the base with the adapter loaded, and the
+  fused model on the same teacher-forced input. `--prompts` builds the
+  comparison fixture from your own examples, tokenized with the base model's own
+  tokenizer. Each model loads in its own memory-capped subprocess. The work
+  surfaced a real gotcha: mlx-lm's default fuse re-quantizes the merged weights
+  and loses part of the adapter, so a 4-bit fuse can quietly behave worse than
+  the adapter it was built from — fuse with `--dequantize`, or run the check
+  first. New `parity.v1` JSON schema.
 - **v0.8.0** (2026-08-11) — trust and depth. Version-bound check tables (MLX
   quantization modes, safetensors dtypes) now warn instead of failing on a
   recognized-but-unlisted value, each annotated with the upstream version it
