@@ -38,6 +38,19 @@ _TENSOR_PAYLOAD_SUFFIXES = (".weight", ".scales", ".biases")
 # these attributes would need a matching update here.
 _LORA_FACTOR_SUFFIXES = (".lora_a", ".lora_b", ".m")
 
+# `tokenizers_match` reasons that reflect a genuine VOCABULARY (token<->id map)
+# incompatibility -- the only aspect load-bearing for the adapter-parity oracle,
+# which feeds the SAME pre-computed token ids to both the base and fused models
+# (a fixed-id teacher-forced comparison, not a fresh tokenize/detokenize round
+# trip). Every other reason (`special_tokens_*`, `chat_template_*`) is metadata
+# that a real `mlx_lm.fuse` run commonly re-serializes differently (e.g. base
+# `additional_special_tokens` vs fused `extra_special_tokens`) without touching
+# what ids are fed to either model, so `TokenizerIdentityCheck` treats it as a
+# warning instead of voiding the oracle.
+_VOCAB_MISMATCH_REASONS = frozenset(
+    {"vocab_unavailable", "vocab_size_differs", "token_id_map_differs"}
+)
+
 
 class HasCheckIdTitle(Protocol):
     """Minimal check_id/title shape shared by ModelCheck and ParityCheck.
@@ -388,33 +401,70 @@ class FusedTargetConsistencyCheck:
 
 @dataclass(frozen=True, slots=True)
 class TokenizerIdentityCheck:
-    """Check that the base and fused targets' tokenizers are identical (F6)."""
+    """Check that the base and fused targets' tokenizer VOCABULARY matches (F6).
+
+    The adapter-parity oracle is a fixed-token-id teacher-forced comparison --
+    the same pre-computed token ids are fed to both the base and fused models --
+    so only the vocabulary (the token<->id mapping) is load-bearing for whether
+    the comparison is valid at all. A base/fused pair whose vocabulary matches
+    but whose special-tokens/chat-template *metadata* differs (real
+    ``mlx_lm.fuse`` output routinely re-serializes ``tokenizer_config.json``
+    that way) still produces a comparable oracle run, so that class of
+    difference warns rather than blocking it.
+    """
 
     check_id: str = "parity/tokenizer.identity"
     title: str = "Tokenizer identity"
 
     def run(self, pctx: ParityContext) -> CheckResult:
-        """Compare base vs fused tokenizer fingerprints; a mismatch voids the oracle."""
+        """Compare base vs fused tokenizer fingerprints.
+
+        Only a vocabulary-affecting reason (``vocab_unavailable``,
+        ``vocab_size_differs``, ``token_id_map_differs``) fails and voids the
+        oracle. A metadata-only reason (``special_tokens_*``,
+        ``chat_template_*``) warns; the oracle still runs.
+        """
         match = tokenizers_match(
             pctx.base_tokenizer_fingerprint(), pctx.fused_tokenizer_fingerprint()
         )
-        if not match.matched:
+        if match.matched:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="pass",
+                severity="info",
+                message="The base and fused targets' tokenizers match.",
+            )
+        if match.reason in _VOCAB_MISMATCH_REASONS:
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,
                 status="fail",
                 severity="high",
                 message=(
-                    "The base and fused targets' tokenizers do not match "
-                    f"({match.reason}); the parity oracle's outputs would not be comparable."
+                    "The base and fused targets' tokenizer vocabularies do not match "
+                    f"({match.reason}); the parity oracle's fixed token ids would not be "
+                    "comparable across the two vocabularies."
                 ),
                 details={"match_reason": match.reason, "void_oracle": True},
-                remediation="Ensure the fuse step carries the base tokenizer through unchanged.",
+                remediation=(
+                    "Ensure the fuse step carries the base tokenizer's vocabulary through "
+                    "unchanged."
+                ),
             )
         return CheckResult(
             check_id=self.check_id,
             title=self.title,
-            status="pass",
-            severity="info",
-            message="The base and fused targets' tokenizers match.",
+            status="warn",
+            severity="medium",
+            message=(
+                "The base and fused targets' tokenizer vocabularies match, but their "
+                f"special-tokens/chat-template metadata differs ({match.reason}); the parity "
+                "oracle's fixed-id comparison is still valid and will run."
+            ),
+            details={"match_reason": match.reason, "void_oracle": False},
+            remediation=(
+                "Metadata-only difference (common after mlx_lm.fuse re-serializes "
+                "tokenizer_config.json); confirm it is expected."
+            ),
         )

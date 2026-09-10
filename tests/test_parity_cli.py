@@ -200,8 +200,10 @@ def test_parity_mlx_determined_bad_exits_one(
 def test_parity_mlx_never_launches_a_real_worker_when_statically_gated(
     tiny_local_repos: _Repos, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # A tokenizer mismatch gates the oracle before any worker runs; a launcher
-    # whose run_one() raises proves the CLI path never attempts a real load.
+    # A genuine tokenizer VOCABULARY mismatch gates the oracle before any worker
+    # runs; a launcher whose run_one() raises proves the CLI path never attempts
+    # a real load. (A chat-template-only mismatch no longer gates -- see
+    # tests/test_parity_api.py::test_tokenizer_metadata_only_mismatch_warns_but_runs_the_oracle.)
     launcher = RaisingLauncher()
     _inject_launcher(monkeypatch, launcher)
 
@@ -214,7 +216,7 @@ def test_parity_mlx_never_launches_a_real_worker_when_statically_gated(
             "--adapter",
             tiny_local_repos.adapter,
             "--fused",
-            tiny_local_repos.fused_bad_tokenizer,
+            tiny_local_repos.fused_vocab_mismatch,
             "--format",
             "json",
         ]

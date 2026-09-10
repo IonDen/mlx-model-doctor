@@ -663,6 +663,57 @@ class TestTokenizerIdentityCheck:
         assert result.details["void_oracle"] is True
         assert result.details["match_reason"] == "token_id_map_differs"
 
+    def test_chat_template_difference_with_matching_vocab_warns_and_does_not_void_oracle(
+        self,
+    ) -> None:
+        # F6 relaxation: the oracle feeds the SAME pre-computed token ids to both
+        # models, so only the vocab (token<->id map) is load-bearing. A changed
+        # chat template with an unchanged vocab must warn, not fail -- and must
+        # NOT void the oracle.
+        pctx = _pctx(
+            base=FakeTarget(
+                files={**_tokenizer_files(_PARITY_VOCAB, chat_template="{{ x }}")}, name="base"
+            ),
+            adapter=_adapter_target(_adapter_config_bytes()),
+            fused=FakeTarget(
+                files={**_tokenizer_files(_PARITY_VOCAB, chat_template="{{ y }}")}, name="fused"
+            ),
+        )
+        result = TokenizerIdentityCheck().run(pctx)
+        assert result.status == "warn"
+        assert result.details["void_oracle"] is False
+        assert result.details["match_reason"] == "chat_template_differs"
+
+    def test_special_tokens_difference_with_matching_vocab_warns_and_does_not_void_oracle(
+        self,
+    ) -> None:
+        # A real `mlx_lm.fuse` output re-serializes tokenizer_config.json (e.g.
+        # base `additional_special_tokens` vs fused `extra_special_tokens`) --
+        # metadata that never reaches the fixed-id forward pass. Vocab and chat
+        # template are unchanged here; only the special-token fields differ.
+        base_files = _tokenizer_files(_PARITY_VOCAB)
+        fused_config = {
+            "bos_token": "<s>",
+            "eos_token": "</s>",
+            "pad_token": "<pad>",
+            "chat_template": "a template",
+        }
+        fused_files = {
+            "tokenizer_config.json": json.dumps(fused_config).encode("utf-8"),
+            "tokenizer.json": json.dumps({"model": {"type": "BPE", "vocab": _PARITY_VOCAB}}).encode(
+                "utf-8"
+            ),
+        }
+        pctx = _pctx(
+            base=FakeTarget(files={**base_files}, name="base"),
+            adapter=_adapter_target(_adapter_config_bytes()),
+            fused=FakeTarget(files=fused_files, name="fused"),
+        )
+        result = TokenizerIdentityCheck().run(pctx)
+        assert result.status == "warn"
+        assert result.details["void_oracle"] is False
+        assert result.details["match_reason"] == "special_tokens_differ"
+
 
 @dataclass(frozen=True, slots=True)
 class _CrashingParityCheck:

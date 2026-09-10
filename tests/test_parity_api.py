@@ -94,6 +94,50 @@ def _write_model_repo(
     return root
 
 
+def _write_model_repo_with_mismatched_vocab(root: Path, *, q_bytes: bytes) -> Path:
+    """Write a repo whose tokenizer VOCABULARY differs from the reference tokenizer.
+
+    Base uses the reference tokenizer's full vocabulary; this repo uses a small,
+    unrelated vocabulary instead -- a genuine incompatibility, distinct from
+    ``fused_bad_tokenizer``'s metadata-only (chat-template) difference, which
+    must still gate the oracle even under the metadata-tolerant tokenizer check
+    (F6): the fixed-id oracle's token ids would not mean the same thing under a
+    different token<->id map.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    config = {
+        "model_type": "llama",
+        "hidden_size": 8,
+        "num_hidden_layers": 1,
+        "num_attention_heads": 2,
+        "num_key_value_heads": 2,
+        "head_dim": 4,
+        "vocab_size": 16,
+        "intermediate_size": 16,
+        "pad_token_id": 0,
+        "eos_token_id": 1,
+    }
+    (root / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    (root / "tokenizer.json").write_text(
+        json.dumps(
+            {"model": {"type": "BPE", "vocab": {f"different_tok_{i}": i for i in range(8)}}}
+        ),
+        encoding="utf-8",
+    )
+    (root / "tokenizer_config.json").write_text(
+        json.dumps(
+            {
+                "bos_token": "different_tok_0",
+                "eos_token": "different_tok_1",
+                "chat_template": _REFERENCE_CHAT_TEMPLATE,
+            }
+        ),
+        encoding="utf-8",
+    )
+    write_safetensors_file(root / "model.safetensors", _model_tensors(q_bytes))
+    return root
+
+
 def _write_adapter(root: Path, *, keys: tuple[str, ...] = ("self_attn.q_proj",)) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     config = {
@@ -120,7 +164,8 @@ class _Repos:
     adapter_bad_key: str  # names a LoRA target key that maps to no base tensor
     fused_diff: str  # q_proj differs from base (a genuine fuse)
     fused_same: str  # q_proj byte-identical to base (a copied-base fuse)
-    fused_bad_tokenizer: str  # a changed chat template (a real tokenizer incompatibility)
+    fused_bad_tokenizer: str  # a changed chat template only (vocab unchanged: metadata, not a gate)
+    fused_vocab_mismatch: str  # a different tokenizer vocabulary (a real tokenizer incompatibility)
 
 
 @pytest.fixture
@@ -131,6 +176,9 @@ def tiny_local_repos(tmp_path: Path) -> _Repos:
     fused_bad_tokenizer = _write_model_repo(
         tmp_path / "fused_bad_tokenizer", q_bytes=_F4_TWO * 64, chat_template="{{ y }}"
     )
+    fused_vocab_mismatch = _write_model_repo_with_mismatched_vocab(
+        tmp_path / "fused_vocab_mismatch", q_bytes=_F4_TWO * 64
+    )
     adapter = _write_adapter(tmp_path / "adapter")
     adapter_bad_key = _write_adapter(tmp_path / "adapter_bad_key", keys=("self_attn.nonexistent",))
     return _Repos(
@@ -140,6 +188,7 @@ def tiny_local_repos(tmp_path: Path) -> _Repos:
         fused_diff=str(fused_diff),
         fused_same=str(fused_same),
         fused_bad_tokenizer=str(fused_bad_tokenizer),
+        fused_vocab_mismatch=str(fused_vocab_mismatch),
     )
 
 
@@ -353,17 +402,46 @@ def test_no_effect_adapter_reference_is_indeterminate_exit_2(tiny_local_repos: _
     assert parity_exit_code(report) == 2
 
 
-def test_tokenizer_mismatch_gates_the_oracle_without_running_workers(
+def test_tokenizer_metadata_only_mismatch_warns_but_runs_the_oracle(
     tiny_local_repos: _Repos,
 ) -> None:
-    # A changed chat template is a real incompatibility (F6): the tokenizer check
-    # fails, the oracle is void-skipped (verdict null), no worker is launched, and
-    # the run is a determined defect (exit 1), not a mere cannot-determine (2).
-    launcher = RaisingLauncher()
+    # F6 relaxation: a changed chat template alone (vocab unchanged) is metadata
+    # a real `mlx_lm.fuse` output routinely re-serializes -- it does not affect
+    # the fixed-id forward pass, so the tokenizer check WARNS instead of failing,
+    # and the oracle still runs to a real verdict (workers ARE invoked).
     report = check_adapter_parity(
         base=tiny_local_repos.base,
         adapter=tiny_local_repos.adapter,
         fused=tiny_local_repos.fused_bad_tokenizer,
+        options=_opts(_pass_launcher()),
+    )
+    assert any(
+        result.check_id == "parity/tokenizer.identity" and result.status == "warn"
+        for result in report.results
+    )
+    assert not any(
+        result.check_id == "parity/tokenizer.identity" and result.status == "fail"
+        for result in report.results
+    )
+    assert report.adapter_applied is True
+    assert report.verdict is ParityVerdict.PASS
+    assert parity_exit_code(report) == 0
+
+
+def test_vocab_mismatch_still_gates_the_oracle_without_running_workers(
+    tiny_local_repos: _Repos,
+) -> None:
+    # A genuine tokenizer VOCABULARY difference is still a real incompatibility
+    # (F6): the fixed-id oracle's token ids would not mean the same thing under
+    # a different token<->id map, so the tokenizer check fails, the oracle is
+    # void-skipped (verdict null), no worker is launched, and the run is a
+    # determined defect (exit 1), not a mere cannot-determine (2). Distinct from
+    # the metadata-only case above, which now warns and runs the oracle.
+    launcher = RaisingLauncher()
+    report = check_adapter_parity(
+        base=tiny_local_repos.base,
+        adapter=tiny_local_repos.adapter,
+        fused=tiny_local_repos.fused_vocab_mismatch,
         options=ParityOptions(launcher=launcher),
     )
     assert any(
