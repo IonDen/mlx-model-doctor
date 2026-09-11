@@ -275,6 +275,35 @@ def test_parity_mlx_fixture_flag_is_wired(
     assert captured["fixture_id"] == "default-v1"
 
 
+def test_parity_mlx_unknown_fixture_exits_cleanly_with_a_clear_message(
+    tiny_local_repos: _Repos, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An unknown ``--fixture`` id must surface a clear message, not ``KeyError``'s
+    quoted repr (``Error: 'nonexistent'``) and never an uncaught traceback.
+    """
+    code = cli.main(
+        [
+            "parity",
+            "mlx",
+            "--base",
+            tiny_local_repos.base,
+            "--adapter",
+            tiny_local_repos.adapter,
+            "--fused",
+            tiny_local_repos.fused_diff,
+            "--fixture",
+            "nonexistent",
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert code == 2
+    assert captured.err == (
+        "Error: unknown parity fixture 'nonexistent'; the only built-in fixture is "
+        "'default-v1' — use --prompts to build a fixture for your own model\n"
+    )
+
+
 def test_parity_mlx_prompts_flag_builds_a_tokenizer_bound_fixture_and_reaches_workers(
     tiny_local_repos: _Repos,
     monkeypatch: pytest.MonkeyPatch,
@@ -419,6 +448,22 @@ def test_parity_command_requires_leaf_subcommand(capsys: pytest.CaptureFixture[s
 
     assert exc_info.value.code == 2
     assert "required" in capsys.readouterr().err
+
+
+def test_parity_mlx_help_does_not_promise_a_hugging_face_repo_id(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--base``/``--adapter``/``--fused`` accept only a local directory today (the CLI
+    has no network opt-in); the help text must not claim an HF repo id also works.
+    """
+    with pytest.raises(SystemExit):
+        cli.main(["parity", "mlx", "--help"])
+    help_text = capsys.readouterr().out
+
+    assert "Hugging Face repo id" not in help_text
+    assert "local base model directory" in help_text
+    assert "local LoRA adapter directory" in help_text
+    assert "local fused model directory" in help_text
 
 
 def test_man_command_mentions_parity_mlx(capsys: pytest.CaptureFixture[str]) -> None:

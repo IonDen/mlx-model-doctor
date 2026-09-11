@@ -374,15 +374,11 @@ def build_parser() -> argparse.ArgumentParser:
     parity_mlx = parity_subparsers.add_parser(
         "mlx", help="verify a fused model preserved a LoRA adapter's behavior"
     )
+    parity_mlx.add_argument("--base", required=True, help="path to a local base model directory")
     parity_mlx.add_argument(
-        "--base", required=True, help="base model local path or Hugging Face repo id"
+        "--adapter", required=True, help="path to a local LoRA adapter directory"
     )
-    parity_mlx.add_argument(
-        "--adapter", required=True, help="LoRA adapter local path or Hugging Face repo id"
-    )
-    parity_mlx.add_argument(
-        "--fused", required=True, help="fused model local path or Hugging Face repo id"
-    )
+    parity_mlx.add_argument("--fused", required=True, help="path to a local fused model directory")
     parity_mlx.add_argument(
         "--format",
         choices=("text", "json", "markdown"),

@@ -118,12 +118,15 @@ def test_hf_adapter_id_resolves_to_a_local_directory(tmp_path: Path) -> None:
     assert Path(sources.adapter.path).is_dir()
 
 
-def test_hf_source_without_network_raises(tmp_path: Path) -> None:
-    """A Hugging Face id with ``allow_network=False`` is a setup failure, not a silent download."""
+def test_hf_source_without_network_raises_a_human_facing_download_hint(tmp_path: Path) -> None:
+    """A Hugging Face id with ``allow_network=False`` is a setup failure, not a silent
+    download -- and the message must tell the user how to fix it (download it and pass
+    a local path) without leaking the internal ``allow_network``/test-marker seam.
+    """
     adapter = _make_dir(tmp_path, "adapter")
     fused = _make_dir(tmp_path, "fused")
 
-    with pytest.raises(ModelDoctorError, match="network"):
+    with pytest.raises(ModelDoctorError) as exc_info:
         resolve_sources(
             "org/base-model",
             str(adapter),
@@ -131,6 +134,11 @@ def test_hf_source_without_network_raises(tmp_path: Path) -> None:
             allow_network=False,
             downloader=ForbiddenDownloader(),
         )
+
+    message = str(exc_info.value)
+    assert "hf download org/base-model --local-dir" in message
+    assert "network marker" not in message
+    assert "in tests" not in message
 
 
 @pytest.mark.network

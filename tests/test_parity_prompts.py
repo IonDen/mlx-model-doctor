@@ -199,7 +199,7 @@ class TestBuildPromptsFixture:
         prompts_path = tmp_path / "prompts.json"
         _write_prompts(prompts_path, [{"prompt": "hi", "completion": "there"}])
 
-        with pytest.raises(ModelDoctorError, match="network access"):
+        with pytest.raises(ModelDoctorError, match="it is not a local directory"):
             build_prompts_fixture("definitely/not-a-real-directory", str(prompts_path))
 
     def test_builds_a_real_fixture_against_a_transformers_five_tokenizer(

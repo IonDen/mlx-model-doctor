@@ -84,6 +84,17 @@ class TestGetFixture:
         with pytest.raises(UnknownFixtureError):
             get_fixture("does-not-exist")
 
+    def test_unknown_fixture_error_str_is_a_clear_message_not_a_quoted_key_repr(self) -> None:
+        """``UnknownFixtureError`` subclasses ``KeyError``, whose ``__str__`` would otherwise
+        wrap the id in quotes (``"'foo'"``) with no explanation -- a real CLI regression
+        (``Error: 'foo'``) this pins against.
+        """
+        error = UnknownFixtureError("foo")
+        assert str(error) == (
+            "unknown parity fixture 'foo'; the only built-in fixture is 'default-v1' "
+            "— use --prompts to build a fixture for your own model"
+        )
+
 
 class TestComputeInputDigest:
     """compute_input_digest is a deterministic, order/value-sensitive hash over sequences."""

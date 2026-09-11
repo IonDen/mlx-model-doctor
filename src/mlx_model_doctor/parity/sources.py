@@ -49,6 +49,11 @@ class ResolvedSources:
     fused: ResolvedIdentity
 
 
+def _local_dir_hint(ref: str) -> str:
+    """Return a plausible local directory name to suggest for ``hf download --local-dir``."""
+    return Path(ref).name or ref
+
+
 def _resolve_one(
     ref: str, *, allow_network: bool, downloader: SnapshotDownloader
 ) -> ResolvedIdentity:
@@ -63,9 +68,8 @@ def _resolve_one(
         return ResolvedIdentity(path=str(local_dir.resolve()), original_ref=ref, source="local")
     if not allow_network:
         raise ModelDoctorError(
-            f"cannot resolve source {ref!r}: it is not an existing local directory, and "
-            "resolving it as a Hugging Face repo id requires network access "
-            "(pass allow_network=True; downloads are gated by the 'network' marker in tests). "
+            f"cannot use '{ref}': it is not a local directory. Download it first (e.g. "
+            f"`hf download {ref} --local-dir ./{_local_dir_hint(ref)}`) and pass that path. "
             "If this was meant to be a local path, check it for a typo."
         )
     snapshot_path = downloader.snapshot(ref)

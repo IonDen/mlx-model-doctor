@@ -59,7 +59,25 @@ class FixtureRef:
 
 
 class UnknownFixtureError(ModelDoctorError, KeyError):
-    """Raised by get_fixture for a fixture id with no pinned registration."""
+    """Raised by get_fixture for a fixture id with no pinned registration.
+
+    Subclasses ``KeyError`` for callers pattern-matching on that family, but
+    overrides ``__str__``: ``KeyError.__str__`` wraps the message in quotes
+    with no explanation (``"'foo'"``), which surfaced verbatim as an
+    unhelpful ``Error: 'foo'`` at the CLI.
+    """
+
+    def __init__(self, fixture_id: str) -> None:
+        """Store the unknown ``fixture_id`` and initialize the base ``KeyError``."""
+        self.fixture_id = fixture_id
+        super().__init__(fixture_id)
+
+    def __str__(self) -> str:
+        """Return a clear message naming the unknown id and the only built-in fixture."""
+        return (
+            f"unknown parity fixture {self.fixture_id!r}; the only built-in fixture is "
+            f"{DEFAULT_FIXTURE_ID!r} — use --prompts to build a fixture for your own model"
+        )
 
 
 def compute_input_digest(token_sequences: Sequence[Sequence[int]]) -> str:
