@@ -33,6 +33,19 @@ from mlx_model_doctor.context import _MAX_METADATA_BYTES, CheckContext, CheckOpt
 from mlx_model_doctor.errors import TargetError, raise_for_hf_target_error
 from mlx_model_doctor.targets import LocalTarget, ModelTarget
 
+# tokenizer.json (the fast-tokenizer vocab file) is read only by
+# _read_tokenizer_json below, for one purpose: computing a base/fused tokenizer
+# fingerprint (F6/F9). It gets its OWN, larger read cap rather than reusing the
+# shared _MAX_METADATA_BYTES (16 MiB) that config.json/tokenizer_config.json/
+# adapter_config.json use: a real base model's tokenizer.json commonly exceeds
+# 16 MiB purely from a large BPE vocabulary + merge table (Llama-3.2 ~17 MB,
+# GLM-4 ~20 MB, Gemma-3 ~33 MB), unrelated to how large a genuine config file
+# gets. Reading it under the shared 16 MiB cap silently made the vocabulary look
+# unavailable for these common bases, voiding the adapter-parity oracle for a
+# correct fuse (B1). 64 MiB keeps headroom above the largest verified base while
+# still bounding the read.
+_MAX_TOKENIZER_JSON_BYTES = 64 * 1024**2
+
 # Options for a standalone tokenizer-fingerprint read (tokenizer_fingerprint_for_path):
 # no weight/smoke concerns apply, so this mirrors the offline-test default (tests/fakes.py
 # check_options()) rather than a real run's caller-supplied CheckOptions.
@@ -235,15 +248,18 @@ def _read_tokenizer_json(target: ModelTarget) -> Mapping[str, object] | None:
     Also a raw target read, for the same reason as :func:`_read_adapter_config`:
     :class:`~mlx_model_doctor.context.CheckContext` reads
     ``tokenizer_config.json`` but never the separate ``tokenizer.json`` vocab
-    file :func:`tokenizer_fingerprint` needs.
+    file :func:`tokenizer_fingerprint` needs. Bounded by
+    :data:`_MAX_TOKENIZER_JSON_BYTES`, not the shared
+    :data:`~mlx_model_doctor.context._MAX_METADATA_BYTES` -- see that constant's
+    module comment for why.
     """
     try:
         if not target.exists("tokenizer.json"):
             return None
         size = target.size("tokenizer.json")
-        if size is None or size > _MAX_METADATA_BYTES:
+        if size is None or size > _MAX_TOKENIZER_JSON_BYTES:
             return None
-        text = target.read_text("tokenizer.json", max_bytes=_MAX_METADATA_BYTES)
+        text = target.read_text("tokenizer.json", max_bytes=_MAX_TOKENIZER_JSON_BYTES)
     except TargetError as exc:
         raise_for_hf_target_error(exc)
         return None

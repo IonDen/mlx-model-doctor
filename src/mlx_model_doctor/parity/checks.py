@@ -38,18 +38,26 @@ _TENSOR_PAYLOAD_SUFFIXES = (".weight", ".scales", ".biases")
 # these attributes would need a matching update here.
 _LORA_FACTOR_SUFFIXES = (".lora_a", ".lora_b", ".m")
 
-# `tokenizers_match` reasons that reflect a genuine VOCABULARY (token<->id map)
-# incompatibility -- the only aspect load-bearing for the adapter-parity oracle,
+# `tokenizers_match` reasons that reflect a genuine, CONFIRMED VOCABULARY
+# (token<->id map) incompatibility -- both sides' vocabularies were readable
+# and they differ. The only aspect load-bearing for the adapter-parity oracle,
 # which feeds the SAME pre-computed token ids to both the base and fused models
 # (a fixed-id teacher-forced comparison, not a fresh tokenize/detokenize round
-# trip). Every other reason (`special_tokens_*`, `chat_template_*`) is metadata
-# that a real `mlx_lm.fuse` run commonly re-serializes differently (e.g. base
-# `additional_special_tokens` vs fused `extra_special_tokens`) without touching
-# what ids are fed to either model, so `TokenizerIdentityCheck` treats it as a
-# warning instead of voiding the oracle.
-_VOCAB_MISMATCH_REASONS = frozenset(
-    {"vocab_unavailable", "vocab_size_differs", "token_id_map_differs"}
-)
+# trip), so a confirmed difference here is a determined defect: `fail`, and it
+# voids the oracle. Every other reason (`special_tokens_*`, `chat_template_*`)
+# is metadata that a real `mlx_lm.fuse` run commonly re-serializes differently
+# (e.g. base `additional_special_tokens` vs fused `extra_special_tokens`)
+# without touching what ids are fed to either model, so `TokenizerIdentityCheck`
+# treats it as a warning instead of voiding the oracle.
+#
+# `vocab_unavailable` (a vocabulary that could not even be READ, e.g. a
+# tokenizer.json absent or too large to read) is deliberately NOT in this set:
+# "we could not confirm identity" is not "we confirmed a mismatch", so it gets
+# its own `warn` branch below rather than a `fail` -- see
+# `TokenizerIdentityCheck.run`.
+_VOCAB_MISMATCH_REASONS = frozenset({"vocab_size_differs", "token_id_map_differs"})
+
+_VOCAB_UNAVAILABLE_REASON = "vocab_unavailable"
 
 
 class HasCheckIdTitle(Protocol):
@@ -419,10 +427,17 @@ class TokenizerIdentityCheck:
     def run(self, pctx: ParityContext) -> CheckResult:
         """Compare base vs fused tokenizer fingerprints.
 
-        Only a vocabulary-affecting reason (``vocab_unavailable``,
-        ``vocab_size_differs``, ``token_id_map_differs``) fails and voids the
-        oracle. A metadata-only reason (``special_tokens_*``,
-        ``chat_template_*``) warns; the oracle still runs.
+        A CONFIRMED vocabulary difference (``vocab_size_differs``,
+        ``token_id_map_differs`` -- both sides readable) fails and voids the
+        oracle: a determined defect (F6). An UNREADABLE vocabulary
+        (``vocab_unavailable``) warns instead: we could not confirm identity at
+        all, so it is a cannot-determine outcome, not a confirmed mismatch --
+        but it still voids the oracle, since the fixed token ids cannot be
+        confirmed comparable either way (``details["void_oracle"]`` is what
+        :func:`~mlx_model_doctor.api.check_adapter_parity` keys off to
+        distinguish this warn from the metadata-only one below without
+        re-deriving the reason). A metadata-only reason (``special_tokens_*``,
+        ``chat_template_*``) warns without voiding the oracle; it still runs.
         """
         match = tokenizers_match(
             pctx.base_tokenizer_fingerprint(), pctx.fused_tokenizer_fingerprint()
@@ -434,6 +449,23 @@ class TokenizerIdentityCheck:
                 status="pass",
                 severity="info",
                 message="The base and fused targets' tokenizers match.",
+            )
+        if match.reason == _VOCAB_UNAVAILABLE_REASON:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="warn",
+                severity="high",
+                message=(
+                    "Could not read the base and/or fused tokenizer vocabulary to confirm "
+                    "tokenizer identity; ensure both repositories ship a readable "
+                    "tokenizer.json."
+                ),
+                details={"match_reason": match.reason, "void_oracle": True},
+                remediation=(
+                    "Ensure both the base and fused repositories ship a readable "
+                    "tokenizer.json so their vocabularies can be compared."
+                ),
             )
         if match.reason in _VOCAB_MISMATCH_REASONS:
             return CheckResult(

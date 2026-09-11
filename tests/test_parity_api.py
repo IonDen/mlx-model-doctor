@@ -454,6 +454,57 @@ def test_vocab_mismatch_still_gates_the_oracle_without_running_workers(
     assert parity_exit_code(report) == 1
 
 
+def test_vocab_unavailable_is_cannot_determine_not_a_determined_mismatch(
+    tmp_path: Path,
+) -> None:
+    # B1b: an UNREADABLE vocabulary (both sides lack tokenizer.json, so neither
+    # side's token<->id map can even be compared) means we could not confirm
+    # tokenizer identity -- not that we confirmed the two tokenizers differ. This
+    # must be a cannot-determine outcome (exit 2), never folded into the
+    # determined-bad-static exit-1 path a GENUINE vocab mismatch (the test above)
+    # takes. One-line bug this catches: classifying "could not read the vocab" the
+    # same way as "read both vocabs and they differ" (a `fail`), which used to flip
+    # this to exit 1.
+    #
+    # The injected fixture's fingerprint is computed from this exact base repo (so
+    # it equals base's own fingerprint, all-None fields included) -- this isolates
+    # the base-vs-fused vocab-unavailable gate under test from the separate
+    # fixture-vs-base equality gate, which must NOT also fire here.
+    base = _write_repo_without_tokenizer_json(tmp_path / "base", q_bytes=_F4 * 64)
+    fused = _write_repo_without_tokenizer_json(tmp_path / "fused", q_bytes=_F4_TWO * 64)
+    adapter = _write_adapter(tmp_path / "adapter")
+    fingerprint = tokenizer_fingerprint_for_path(str(base))
+    token_ids = ((0, 10, 22, 45, 7, 33, 1),)
+    fixture_ref = FixtureRef(
+        id="fixture-matches-base-without-tokenizer-json",
+        input_digest=compute_input_digest(token_ids),
+        max_length=7,
+        scored_positions=tuple(range(7)),
+        tokenizer_fingerprint=fingerprint,
+    )
+    launcher = RaisingLauncher()
+
+    report = check_adapter_parity(
+        base=str(base),
+        adapter=str(adapter),
+        fused=str(fused),
+        options=ParityOptions(launcher=launcher, fixture=(fixture_ref, token_ids)),
+    )
+
+    assert not any(
+        result.check_id == "parity/tokenizer.identity" and result.status == "fail"
+        for result in report.results
+    )
+    assert any(
+        result.check_id == "parity/tokenizer.identity" and result.status == "warn"
+        for result in report.results
+    )
+    assert report.verdict is None
+    assert launcher.model_paths_by_role == {}
+    assert set(report.worker_status.values()) == {"skipped"}
+    assert parity_exit_code(report) == 2
+
+
 def _write_repo_with_custom_tokenizer(root: Path, *, q_bytes: bytes) -> Path:
     """Write a repo using a tokenizer that is NOT the default fixture's reference
     tokenizer -- isolates the fixture-vs-base gate: base and fused below share this
@@ -515,40 +566,71 @@ def _write_repo_without_tokenizer_json(root: Path, *, q_bytes: bytes) -> Path:
     return root
 
 
-def test_fixture_matching_base_without_tokenizer_json_is_not_flagged_as_fixture_mismatch(
+def _write_model_repo_without_chat_template(root: Path, *, q_bytes: bytes) -> Path:
+    """Write a synthetic repo with a REAL, readable tokenizer vocabulary and special
+    tokens but NO chat template (unlike ``_write_repo_without_tokenizer_json``, whose
+    fingerprint has an unavailable vocabulary too). Its fingerprint therefore has
+    every field populated except ``chat_template_digest``, which is ``None``.
+
+    Isolates the fixture-vs-base equality gate from the (separate) base-vs-fused
+    ``TokenizerIdentityCheck``: base and fused below share this exact tokenizer, so
+    that check only reaches its metadata-only ``chat_template_unavailable`` warn (it
+    never gates the oracle) -- only the fixture-vs-base gate under test can void it.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    config = {
+        "model_type": "llama",
+        "hidden_size": 8,
+        "num_hidden_layers": 1,
+        "num_attention_heads": 2,
+        "num_key_value_heads": 2,
+        "head_dim": 4,
+        "vocab_size": 16,
+        "intermediate_size": 16,
+        "pad_token_id": 0,
+        "eos_token_id": 1,
+    }
+    (root / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    tokenizer_config, tokenizer_json, _ = reference_tokenizer_files()
+    del tokenizer_config["chat_template"]
+    (root / "tokenizer.json").write_text(json.dumps(tokenizer_json), encoding="utf-8")
+    (root / "tokenizer_config.json").write_text(json.dumps(tokenizer_config), encoding="utf-8")
+    write_safetensors_file(root / "model.safetensors", _model_tensors(q_bytes))
+    return root
+
+
+def test_fixture_equal_to_base_fingerprint_runs_the_oracle_despite_an_unavailable_field(
     tmp_path: Path,
 ) -> None:
-    """A ``--prompts`` fixture's fingerprint is computed FROM the exact same base repo
-    via ``tokenizer_fingerprint_for_path`` -- IDENTICAL to what
-    ``base_tokenizer_fingerprint()`` itself returns for that repo, even when that
-    fingerprint has unavailable (``None``) fields, e.g. a real, loadable
-    SentencePiece-slow-tokenizer repo with no ``tokenizer.json``. The fixture-vs-base
-    gate must recognize this as an exact match by comparing fingerprints for EQUALITY,
-    not by reusing ``tokenizers_match`` -- the base-vs-FUSED comparator, which by
-    design treats even an identical "both sides unavailable" as a non-match (see
-    ``tokenizers_match``'s own docstring). Reporting a fixture mismatch here would be a
-    false positive: the fixture was built for this exact repository.
+    """C2: the fixture-vs-base gate must compare fingerprints for EQUALITY
+    (``fixture_ref.tokenizer_fingerprint != tokenizer_fingerprint``), never by reusing
+    ``tokenizers_match`` -- the base-vs-FUSED comparator, which by design treats even
+    an identical "both sides unavailable" field (here: no chat template) as a
+    non-match (see ``tokenizers_match``'s own docstring). Base and fused below share
+    the exact same tokenizer (so the unrelated base-vs-fused check only warns, never
+    gates), and the injected fixture's fingerprint is computed from this exact base
+    repo -- byte-identical to what ``base_tokenizer_fingerprint()`` itself returns for
+    it. The oracle must therefore run, not void-skip on a false-positive fixture
+    mismatch.
 
-    (This particular base/fused pair -- both legitimately missing ``tokenizer.json`` --
-    is ALSO gated by the separate, pre-existing ``parity/tokenizer.identity`` check,
-    which applies that same base-vs-FUSED policy directly to base vs fused and treats
-    this shape as incompatible there too; that is an unrelated, out-of-scope limitation
-    this fix does not touch. The assertion below isolates the ONE reason the fixture
-    gate itself must never produce.)
+    One-line bug this catches: swapping the equality gate for
+    ``not tokenizers_match(fixture_ref.tokenizer_fingerprint, tokenizer_fingerprint).matched``
+    in ``check_adapter_parity`` -- proven by reverting to that form locally and
+    confirming this test goes red (see the fix commit's verification notes).
     """
-    base = _write_repo_without_tokenizer_json(tmp_path / "base", q_bytes=_F4 * 64)
-    fused = _write_repo_without_tokenizer_json(tmp_path / "fused", q_bytes=_F4_TWO * 64)
+    base = _write_model_repo_without_chat_template(tmp_path / "base", q_bytes=_F4 * 64)
+    fused = _write_model_repo_without_chat_template(tmp_path / "fused", q_bytes=_F4_TWO * 64)
     adapter = _write_adapter(tmp_path / "adapter")
     fingerprint = tokenizer_fingerprint_for_path(str(base))
     token_ids = ((0, 10, 22, 45, 7, 33, 1),)
     fixture_ref = FixtureRef(
-        id="fixture-matches-base-without-tokenizer-json",
+        id="fixture-matches-base-without-chat-template",
         input_digest=compute_input_digest(token_ids),
         max_length=7,
         scored_positions=tuple(range(7)),
         tokenizer_fingerprint=fingerprint,
     )
-    launcher = RaisingLauncher()
+    launcher = _pass_launcher()
 
     report = check_adapter_parity(
         base=str(base),
@@ -557,7 +639,12 @@ def test_fixture_matching_base_without_tokenizer_json_is_not_flagged_as_fixture_
         options=ParityOptions(launcher=launcher, fixture=(fixture_ref, token_ids)),
     )
 
-    assert not any("different tokenizer" in reason for reason in report.reasons)
+    assert launcher.model_paths_by_role  # the workers DID run
+    assert report.phase_outcomes["oracle"] == "ok"
+    assert not any(
+        "the parity fixture's tokenizer fingerprint does not match the base model's" in reason
+        for reason in report.reasons
+    )
 
 
 def test_fixture_tokenizer_mismatch_gates_the_oracle_without_running_workers(

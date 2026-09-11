@@ -229,6 +229,7 @@ def check_adapter_parity(
     adapter_config_fail = _has_fail(results, _ADAPTER_CONFIG_CHECK_ID)
     missing_target_fail = any(_has_fail(results, cid) for cid in _MISSING_TARGET_CHECK_IDS)
     tokenizer_mismatch = _has_fail(results, _TOKENIZER_CHECK_ID)
+    tokenizer_vocab_unavailable = _tokenizer_vocab_unavailable(results, _TOKENIZER_CHECK_ID)
 
     if crashed:
         phase_outcomes["static"] = "error"
@@ -239,7 +240,15 @@ def check_adapter_parity(
     else:
         phase_outcomes["static"] = "ok"
 
-    phase_outcomes["tokenizer_gate"] = "blocking_fail" if tokenizer_mismatch else "ok"
+    if tokenizer_mismatch:
+        phase_outcomes["tokenizer_gate"] = "blocking_fail"
+    elif tokenizer_vocab_unavailable:
+        # Could not READ the vocabulary (as opposed to reading it and finding a
+        # confirmed difference) -- a cannot-determine outcome, not a determined
+        # defect, so this is deliberately "unsupported", not "blocking_fail".
+        phase_outcomes["tokenizer_gate"] = "unsupported"
+    else:
+        phase_outcomes["tokenizer_gate"] = "ok"
 
     if fixture_mismatch:
         reasons.append(
@@ -254,11 +263,16 @@ def check_adapter_parity(
         or adapter_config_fail
         or missing_target_fail
         or tokenizer_mismatch
+        or tokenizer_vocab_unavailable
         or fixture_mismatch
     )
 
     runtime = (
-        _skipped_runtime(reasons, tokenizer_mismatch=tokenizer_mismatch)
+        _skipped_runtime(
+            reasons,
+            tokenizer_mismatch=tokenizer_mismatch,
+            tokenizer_vocab_unavailable=tokenizer_vocab_unavailable,
+        )
         if runtime_gated
         else _run_runtime(pctx, sources, fixture_ref, token_ids, options, reasons)
     )
@@ -313,10 +327,17 @@ class _RuntimeOutcome:
 _ALL_ROLES = (ROLE_BASE, ROLE_NOISE, ROLE_REFERENCE, ROLE_FUSED)
 
 
-def _skipped_runtime(reasons: list[str], *, tokenizer_mismatch: bool) -> _RuntimeOutcome:
+def _skipped_runtime(
+    reasons: list[str], *, tokenizer_mismatch: bool, tokenizer_vocab_unavailable: bool = False
+) -> _RuntimeOutcome:
     """Build the runtime outcome for a run gated before any worker ran."""
     if tokenizer_mismatch:
         reasons.append("base and fused tokenizers differ; the oracle's outputs are not comparable.")
+    if tokenizer_vocab_unavailable:
+        reasons.append(
+            "the base and/or fused tokenizer vocabulary could not be read; the oracle's "
+            "fixed token ids cannot be confirmed comparable across the two repositories."
+        )
     worker_status: dict[str, WorkerStatusValue] = dict.fromkeys(_ALL_ROLES, "skipped")
     peak_bytes: dict[str, int | None] = dict.fromkeys(_ALL_ROLES)
     return _RuntimeOutcome(
@@ -568,6 +589,26 @@ def _delta_targets(pctx: ParityContext) -> tuple[str, ...]:
 def _has_fail(results: "tuple[CheckResult, ...] | list[CheckResult]", check_id: str) -> bool:
     """Return whether a parity check result for ``check_id`` is a ``fail``."""
     return any(result.check_id == check_id and result.status == "fail" for result in results)
+
+
+def _tokenizer_vocab_unavailable(
+    results: "tuple[CheckResult, ...] | list[CheckResult]", check_id: str
+) -> bool:
+    """Return whether the tokenizer-identity check recorded an UNREADABLE vocabulary.
+
+    Distinct from :func:`_has_fail`: an unreadable vocabulary is a ``warn`` --
+    "we could not confirm identity", not "we confirmed a mismatch" -- but it
+    still must void-skip the oracle. ``details["void_oracle"]`` is the signal
+    :class:`~mlx_model_doctor.parity.checks.TokenizerIdentityCheck` sets ``True``
+    only for this shape (the metadata-only warn sets it ``False``), so checking
+    it here avoids re-deriving the reason from the check's message text.
+    """
+    return any(
+        result.check_id == check_id
+        and result.status == "warn"
+        and result.details.get("void_oracle") is True
+        for result in results
+    )
 
 
 def _base_vocab_size(pctx: ParityContext) -> int:
