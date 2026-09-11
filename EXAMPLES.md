@@ -562,17 +562,20 @@ Agreement:
   gap:                         0.3377
   noise:                       0.0000
   first divergence:            267
+  flip count:                  2
+  adapter applied:             true
 
 Failing checks:
   WARN [parity] parity/tokenizer.identity: The base and fused targets' tokenizer vocabularies match, but their special-tokens/chat-template metadata differs (special_tokens_differ); the parity oracle's fixed-id comparison is still valid and will run.
 
-Delta map:
-  628 tensors: 507 non_comparable, 121 unchanged
-  (a --dequantize fuse turns every quantized weight into float, so a byte
-   comparison against the 4-bit base does not apply — hence non_comparable)
+Delta map: 628 tensors (121 unchanged, 507 non_comparable)
 $ echo $?
 0
 ```
+
+A `--dequantize` fuse turns every quantized weight into float, so a byte
+comparison against the 4-bit base does not apply — every tensor is
+`non_comparable`, and the summary is all you need here.
 
 The default fuse re-quantizes the merged weights back to 4-bit, and that
 round-trip erases part of the adapter. The fused model then tracks neither the
@@ -594,15 +597,17 @@ Agreement:
   gap:                         0.3377
   noise:                       0.0000
   first divergence:            43
+  flip count:                  17
+  adapter applied:             true
 
 Failing checks:
   WARN [parity] parity/tokenizer.identity: The base and fused targets' tokenizer vocabularies match, but their special-tokens/chat-template metadata differs (special_tokens_differ); the parity oracle's fixed-id comparison is still valid and will run.
 
-Delta map:
-  625 tensors: 336 changed, 289 unchanged
+Delta map: 628 tensors (336 changed, 292 unchanged)
   changed model.layers.10.mlp.down_proj.weight
   changed model.layers.10.self_attn.q_proj.weight
-  ... (334 more changed tensors)
+  changed model.layers.10.self_attn.v_proj.weight
+  … (the summary is followed by the notable tensors, capped, then a "… (N more)" line)
 $ echo $?
 2
 ```

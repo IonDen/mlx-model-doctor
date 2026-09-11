@@ -138,7 +138,7 @@ fine-tuned. `parity mlx` catches that before you ship the fused model.
 
 ```bash
 mlx-model-doctor parity mlx \
-  --base mlx-community/Qwen2.5-0.5B-Instruct-4bit \
+  --base ./Qwen2.5-0.5B-Instruct-4bit \
   --adapter ./my-lora \
   --fused ./my-fused-model \
   --prompts ./examples.json
@@ -146,11 +146,11 @@ mlx-model-doctor parity mlx \
 
 It runs the same teacher-forced input through three models — the base alone,
 the base with the adapter loaded, and the fused model — and compares their
-top-token predictions. If the fused model tracks base+adapter it's a `PASS`; if
-it fell back to the base and lost the adapter it's `FAIL_TRACKS_BASE`; if it
-matches neither it's `FAIL_GROSS`; and if the difference is within measurement
-noise it's `INCONCLUSIVE`. A default 4-bit fuse that only kept half the adapter
-lands at `INCONCLUSIVE` — parity not confirmed — rather than a misleading pass.
+top-token predictions. If the fused model tracks base+adapter the verdict is
+`pass`; if it fell back to the base and lost the adapter, `fail_tracks_base`; if
+it matches neither, `fail_gross`; and if the difference is within measurement
+noise, `inconclusive`. A default 4-bit fuse that only kept half the adapter lands
+at `inconclusive` — parity not confirmed — rather than a misleading pass.
 The exit code is `0` for a confirmed pass, `1` for a determined regression, and
 `2` when the run can't decide (inconclusive or a setup problem).
 
@@ -160,7 +160,7 @@ and scored over the completion tokens — so you measure parity on text that
 matters for your model. Use examples the adapter should have changed. The check
 needs the optional `[mlx-lm]` extra, a base repository that ships a
 `tokenizer.json`, and loads each model in its own memory-capped subprocess (one
-at a time), so it's safe on a laptop. If your fuse comes out `INCONCLUSIVE` or
+at a time), so it's safe on a laptop. If your fuse comes out `inconclusive` or
 worse, re-fuse with `--dequantize` (a float fuse), which preserves the adapter.
 
 Point `--base`, `--adapter`, and `--fused` at model directories of real files —

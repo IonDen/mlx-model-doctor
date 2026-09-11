@@ -17,9 +17,9 @@ until now you had no cheap way to tell before shipping the fused model.
   `check_adapter_parity` Python API. It runs the same teacher-forced input
   through three models — the base alone, the base with the adapter loaded, and
   the fused model — and compares their top-token predictions. The verdict says
-  whether the fused model tracks base+adapter (`PASS`), fell back to the base
-  and lost the adapter (`FAIL_TRACKS_BASE`), matches neither (`FAIL_GROSS`), or
-  can't be told apart within measurement noise (`INCONCLUSIVE`). Each model
+  whether the fused model tracks base+adapter (`pass`), fell back to the base
+  and lost the adapter (`fail_tracks_base`), matches neither (`fail_gross`), or
+  can't be told apart within measurement noise (`inconclusive`). Each model
   loads in its own memory-capped subprocess, one at a time, so the check is
   safe to run on a laptop.
 - `parity mlx --prompts <file>` builds the comparison fixture from your own
@@ -40,13 +40,16 @@ until now you had no cheap way to tell before shipping the fused model.
   symlinks the checker does not yet follow.
 
 ### Changed
-- Fusing a LoRA adapter with mlx-lm's **default** path re-quantizes the merged
-  weights back to the base's format, and that round-trip erases part of the
-  adapter's contribution. On a small text-to-SQL LoRA the default 4-bit fuse
-  kept only about half the adapter's effect; fusing with `--dequantize` (a
-  float fuse) kept nearly all of it. The verifier reports the degraded 4-bit
-  fuse as `INCONCLUSIVE` rather than a false `PASS`. If you fuse for
-  distribution, prefer `--dequantize`, or run this check first.
+- The verifier reports a degraded 4-bit fuse as `inconclusive` rather than a
+  false `pass`. The reason it needs to: mlx-lm's default fuse re-quantizes the
+  merged weights back to the base's format, and that round-trip erases part of
+  the adapter's contribution. On a small text-to-SQL LoRA the default 4-bit fuse
+  kept only about half the adapter's effect, while fusing with `--dequantize` (a
+  float fuse) kept nearly all of it. If you fuse for distribution, prefer
+  `--dequantize`, or run this check first.
+- The optional `[mlx-lm]` extra now pins `mlx-lm>=0.31.3,<0.32` and
+  `mlx>=0.32,<0.33` — the versions the parity check was verified against. This
+  also backs the existing `--smoke` runtime check.
 
 ## [0.8.0] — 2026-08-11
 
