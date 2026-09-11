@@ -5,7 +5,7 @@ as priorities change.
 
 ## Released
 
-- **v0.9.0** (2026-09-10) — the adapter-parity verifier. A new `parity mlx`
+- **v0.9.0** (2026-09-11) — the adapter-parity verifier. A new `parity mlx`
   command and `check_adapter_parity` API check whether fusing a LoRA adapter
   into a base model kept the behavior the adapter learned, by comparing the
   top-token predictions of the base, the base with the adapter loaded, and the

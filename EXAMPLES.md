@@ -604,15 +604,17 @@ Failing checks:
   WARN [parity] parity/tokenizer.identity: The base and fused targets' tokenizer vocabularies match, but their special-tokens/chat-template metadata differs (special_tokens_differ); the parity oracle's fixed-id comparison is still valid and will run.
 
 Delta map: 628 tensors (336 changed, 292 unchanged)
+  changed model.layers.10.mlp.down_proj.biases
+  changed model.layers.10.mlp.down_proj.scales
   changed model.layers.10.mlp.down_proj.weight
-  changed model.layers.10.self_attn.q_proj.weight
-  changed model.layers.10.self_attn.v_proj.weight
-  … (the summary is followed by the notable tensors, capped, then a "… (N more)" line)
 $ echo $?
 2
 ```
 
-The base+adapter reference disagrees with the base on 33.8% of the scored
+The text delta map prints the class counts, then the notable tensors — here the
+`changed` ones — capped at 20 with a `… (N more)` line for the rest; the full
+per-tensor list is in `--format json`. The base+adapter reference disagrees with
+the base on 33.8% of the scored
 tokens (`gap`), so the tool can measure how much of that the fuse kept: the
 `--dequantize` fuse holds 97% agreement with base+adapter, while the default
 4-bit fuse drops to 78% — about halfway back toward the plain base. When a fuse
