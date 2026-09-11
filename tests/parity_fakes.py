@@ -475,6 +475,30 @@ print(f"::PARITY_WORKER::ok role={role} fixture={fixture_id}")
 sys.exit(0)
 """
 
+_STUB_ABORT_WITH_MARKER_SOURCE = """
+import os
+import sys
+
+
+def _arg(flag):
+    return sys.argv[sys.argv.index(flag) + 1]
+
+
+out_path = _arg("--out")
+out_dir = os.path.dirname(out_path)
+marker_path = os.path.join(out_dir, "parity_worker_abort.txt")
+with open(marker_path, "w", encoding="utf-8") as handle:
+    handle.write("memory exceeded: 999999999 >= 100000000")
+sys.exit(3)
+"""
+
+_STUB_ABORT_NO_MARKER_SOURCE = """
+import sys
+
+sys.stderr.write("boom without a marker")
+sys.exit(3)
+"""
+
 _STUB_NONRESPONSIVE_SOURCE = """
 import signal
 import time
@@ -519,6 +543,16 @@ def write_missing_output_stub(path: Path) -> Path:
 def write_malformed_output_stub(path: Path) -> Path:
     """Stub that claims success but writes an invalid-JSON output file."""
     return write_stub_script(path, _STUB_MALFORMED_OUTPUT_SOURCE)
+
+
+def write_abort_with_marker_stub(path: Path) -> Path:
+    """Stub simulating the watchdog abort path: writes the marker file, exits 3."""
+    return write_stub_script(path, _STUB_ABORT_WITH_MARKER_SOURCE)
+
+
+def write_abort_no_marker_stub(path: Path) -> Path:
+    """Stub that exits 3 (the watchdog abort code) but never writes a marker file."""
+    return write_stub_script(path, _STUB_ABORT_NO_MARKER_SOURCE)
 
 
 def write_nonresponsive_stub(path: Path) -> Path:

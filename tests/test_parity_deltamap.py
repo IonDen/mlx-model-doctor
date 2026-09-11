@@ -204,6 +204,20 @@ class TestChangedIsThePositiveProof:
         delta = _find(deltas, f"{_TARGET_PREFIX}.weight")
         assert delta.tensor == f"{_TARGET_PREFIX}.weight"
         assert delta.klass == "changed"
+        assert delta.is_target is True
+
+    def test_non_target_tensor_records_is_target_false(
+        self, tiny_repos: Callable[[str], TinyRepoPair]
+    ) -> None:
+        pair = tiny_repos("changed")
+        deltas = delta_map(
+            pair.base,
+            pair.fused,
+            base_hdr=pair.base_hdr,
+            fused_hdr=pair.fused_hdr,
+            targets=pair.targets,
+        )
+        assert _find(deltas, f"{_OTHER_PREFIX}.weight").is_target is False
 
     def test_untouched_target_auxiliaries_stay_unchanged_alongside_the_change(
         self, tiny_repos: Callable[[str], TinyRepoPair]
@@ -257,6 +271,7 @@ class TestMissingTargetAbsent:
         assert delta.tensor == f"{_TARGET_PREFIX}.weight"
         assert delta.klass == "missing"
         assert delta.reason is not None
+        assert delta.is_target is True
 
 
 class TestUnexpectedNonTargetDiffers:
@@ -311,6 +326,10 @@ class TestNonComparableWholeModelDequantize:
         assert delta.tensor == f"{_TARGET_PREFIX}.weight"
         assert delta.klass == "non_comparable"
         assert delta.reason is not None
+        # An on-target non_comparable tensor is the case the text renderer's
+        # notable-tensor filter must still surface (a --dequantize fuse that
+        # hit a target is still worth a human's attention).
+        assert delta.is_target is True
 
     def test_non_target_weight_dtype_change_is_also_non_comparable(
         self, tiny_repos: Callable[[str], TinyRepoPair]
@@ -330,6 +349,7 @@ class TestNonComparableWholeModelDequantize:
         delta = _find(deltas, f"{_OTHER_PREFIX}.weight")
         assert delta.tensor == f"{_OTHER_PREFIX}.weight"
         assert delta.klass == "non_comparable"
+        assert delta.is_target is False
 
     def test_vanished_scales_are_non_comparable_not_missing(
         self, tiny_repos: Callable[[str], TinyRepoPair]

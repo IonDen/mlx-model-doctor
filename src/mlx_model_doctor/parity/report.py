@@ -13,11 +13,12 @@ no total run/result state that forces a stand-in verdict (F4).
 """
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
 from mlx_model_doctor.parity.context import TokenizerFingerprint
-from mlx_model_doctor.parity.deltamap import TensorDelta
+from mlx_model_doctor.parity.deltamap import TensorDelta, TensorDeltaKlass, aggregate_delta_summary
 from mlx_model_doctor.parity.fixtures import FixtureRef
 from mlx_model_doctor.parity.oracle import ParityVerdict
 from mlx_model_doctor.report import CheckResult, DoctorReport, render_json
@@ -107,6 +108,10 @@ class ParityReport:
     worker_status: dict[str, WorkerStatusValue]
     peak_bytes: dict[str, int | None]
     reasons: tuple[str, ...] = field(default_factory=tuple)
+    # Populated for exactly the roles whose worker_status is "error" -- the
+    # worker's captured cause (stderr, or the watchdog abort marker's reason),
+    # so a worker failure's cause is never silently dropped from the report.
+    worker_errors: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Copy caller-owned collections so the report is stable."""
@@ -116,6 +121,7 @@ class ParityReport:
         object.__setattr__(self, "phase_outcomes", dict(self.phase_outcomes))
         object.__setattr__(self, "worker_status", dict(self.worker_status))
         object.__setattr__(self, "peak_bytes", dict(self.peak_bytes))
+        object.__setattr__(self, "worker_errors", dict(self.worker_errors))
 
 
 def _identity_to_dict(identity: ResolvedIdentity) -> dict[str, object]:
@@ -219,6 +225,7 @@ def parity_report_to_dict(report: ParityReport) -> dict[str, object]:
         "worker_status": dict(report.worker_status),
         "peak_bytes": dict(report.peak_bytes),
         "reasons": list(report.reasons),
+        "worker_errors": dict(report.worker_errors),
     }
 
 
@@ -235,6 +242,11 @@ def _fmt_float(value: float | None) -> str:
 def _fmt_int(value: int | None) -> str:
     """Format an optional integer position for display, or 'none' when there isn't one."""
     return "none" if value is None else str(value)
+
+
+def _fmt_bool(value: bool | None) -> str:
+    """Format an optional boolean for display, or 'n/a' when unmeasured."""
+    return "n/a" if value is None else str(value).lower()
 
 
 def _verdict_label(verdict: ParityVerdict | None) -> str:
@@ -266,12 +278,82 @@ def _failing_static_checks(report: ParityReport) -> list[tuple[str, CheckResult]
     return failing
 
 
+# The summary line's class breakdown -- deliberately excludes "missing" (always
+# named individually below, never bulk-summarized: a dropped tensor is rare and
+# always worth a human's attention, unlike the routinely-large other classes).
+_DELTA_SUMMARY_KLASSES: tuple[TensorDeltaKlass, ...] = (
+    "changed",
+    "unchanged",
+    "non_comparable",
+    "unexpected",
+)
+
+# Cap on individually-named delta-map lines in the text render, so a real
+# model's few dozen adapter targets stay readable even if every one of them
+# is notable.
+_MAX_NOTABLE_DELTA_LINES = 20
+
+
+def _delta_map_summary_line(deltas: Sequence[TensorDelta]) -> str:
+    """Return the one-line ``Delta map: N tensors (...)`` count summary."""
+    counts = aggregate_delta_summary(deltas).counts_by_klass
+    parts: list[str] = []
+    for klass in _DELTA_SUMMARY_KLASSES:
+        count = counts.get(klass, 0)
+        if count:
+            parts.append(f"{count} {klass}")
+    breakdown = f" ({', '.join(parts)})" if parts else ""
+    return f"Delta map: {len(deltas)} tensors{breakdown}"
+
+
+def _delta_map_notable(deltas: Sequence[TensorDelta]) -> list[TensorDelta]:
+    """Return the delta-map tensors worth naming individually in the text render.
+
+    ``changed``/``unexpected``/``missing`` are always worth surfacing -- each is
+    a small, meaningful signal (a target that changed, an out-of-scope byte
+    difference, a tensor that vanished). A bulk ``non_comparable`` sweep (e.g.
+    every weight after a ``--dequantize`` fuse) is noise unless it landed on an
+    adapter target, which is still worth a second look.
+    """
+    return [
+        delta
+        for delta in deltas
+        if delta.klass in ("changed", "unexpected", "missing")
+        or (delta.klass == "non_comparable" and delta.is_target)
+    ]
+
+
+def _delta_map_lines(report: ParityReport) -> list[str]:
+    """Return the text-render lines for the delta map.
+
+    A count summary plus the notable tensors, capped so a large model's
+    routine bulk never floods the report. The complete per-tensor list stays
+    in ``render_parity_json``.
+    """
+    if not report.delta_map:
+        return []
+    lines = ["", _delta_map_summary_line(report.delta_map)]
+    notable = _delta_map_notable(report.delta_map)
+    if notable:
+        lines.append("")
+        shown = notable[:_MAX_NOTABLE_DELTA_LINES]
+        for delta in shown:
+            suffix = f" -- {delta.reason}" if delta.reason else ""
+            lines.append(f"  {delta.klass} {delta.tensor}{suffix}")
+        remaining = len(notable) - len(shown)
+        if remaining > 0:
+            lines.append(f"  … ({remaining} more)")
+    return lines
+
+
 def render_parity_text(report: ParityReport) -> str:
     """Render a ParityReport as plain text.
 
     Foregrounds the verdict (or its null state plus ``reasons``), the
-    agreement rates, gap, noise, and first divergence, any failing static or
-    embedded checks (the failure class), and the named delta-map tensors.
+    agreement rates, gap, noise, first divergence, flip count, and
+    adapter-applied signal, any failing static or embedded checks (the
+    failure class), any worker failure's captured cause, and a summary of the
+    delta map plus the notable tensors within it.
     """
     lines = [
         f"MLX Model Doctor (parity): {report.adapter.original_ref} -> {report.fused.original_ref}",
@@ -289,6 +371,8 @@ def render_parity_text(report: ParityReport) -> str:
             f"  gap:                         {_fmt_float(report.gap)}",
             f"  noise:                       {_fmt_float(report.noise)}",
             f"  first divergence:            {_fmt_int(report.first_divergence)}",
+            f"  flip count:                  {_fmt_int(report.flip_count)}",
+            f"  adapter applied:             {_fmt_bool(report.adapter_applied)}",
         ]
     )
     failing = _failing_static_checks(report)
@@ -298,11 +382,11 @@ def render_parity_text(report: ParityReport) -> str:
             lines.append(
                 f"  {result.status.upper()} [{source}] {result.check_id}: {result.message}"
             )
-    if report.delta_map:
-        lines.extend(["", "Delta map:"])
-        for delta in report.delta_map:
-            suffix = f" -- {delta.reason}" if delta.reason else ""
-            lines.append(f"  {delta.klass} {delta.tensor}{suffix}")
+    if report.worker_errors:
+        lines.extend(["", "Worker errors:"])
+        for role, error in sorted(report.worker_errors.items()):
+            lines.append(f"  {role}: {error}")
+    lines.extend(_delta_map_lines(report))
     return "\n".join(lines)
 
 
@@ -342,6 +426,11 @@ def render_parity_markdown(report: ParityReport) -> str:
                     "",
                 ]
             )
+    if report.worker_errors:
+        lines.extend(["## Worker errors", ""])
+        for role, error in sorted(report.worker_errors.items()):
+            lines.append(f"- **{role}:** {error}")
+        lines.append("")
     if report.delta_map:
         lines.extend(["## Delta map", "", "| Tensor | Class | Reason |", "|---|---|---|"])
         lines.extend(

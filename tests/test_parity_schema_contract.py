@@ -73,6 +73,7 @@ EXPECTED_PARITY_TOP_LEVEL_KEYS = frozenset(
         "worker_status",
         "peak_bytes",
         "reasons",
+        "worker_errors",
     }
 )
 EXPECTED_IDENTITY_KEYS = frozenset({"path", "original_ref", "source"})
@@ -227,6 +228,9 @@ REPORTS = {
         worker_status={"base": "ok", "adapter": "ok", "fused": "error", "base_repeat": "skipped"},
         peak_bytes={"base": 1024, "adapter": 512, "fused": None, "base_repeat": None},
         reasons=("fused worker crashed; verdict cannot be computed",),
+        worker_errors={
+            "fused": "worker subprocess for role 'fused' exited with code 3: memory exceeded"
+        },
     ),
     # A tokenizer-mismatch void-skip: unsupported adapter reference (F4).
     "null_verdict_unsupported_adapter": _report(

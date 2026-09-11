@@ -17,6 +17,8 @@ from mlx_model_doctor.parity.worker import WorkerSpec, _parse_token_id_sequences
 from tests.parity_fakes import (
     RaisingLauncher,
     TrackingLauncher,
+    write_abort_no_marker_stub,
+    write_abort_with_marker_stub,
     write_exit_nonzero_stub,
     write_malformed_output_stub,
     write_missing_output_stub,
@@ -357,6 +359,43 @@ sys.exit(0)
 
     assert outcome.status == "error"
     assert outcome.error is not None
+
+
+def test_subprocess_launcher_returncode_3_surfaces_the_abort_marker_reason(
+    tmp_path: Path,
+) -> None:
+    """A watchdog abort (``os._exit(3)``, see ``watchdog._do_abort``) writes
+    ``parity_worker_abort.txt`` next to the worker's ``--out`` file; the launcher
+    must fold that reason into the error, not just the bare exit code.
+    """
+    stub = write_abort_with_marker_stub(tmp_path / "stub.py")
+    launcher = SubprocessLauncher(
+        vocab_size=10, timeout_s=10.0, argv_prefix=(sys.executable, str(stub))
+    )
+
+    outcome = launcher.run_one(_spec())
+
+    assert outcome.status == "error"
+    assert outcome.error is not None
+    assert "memory exceeded: 999999999 >= 100000000" in outcome.error
+
+
+def test_subprocess_launcher_returncode_3_without_a_marker_falls_back_to_stderr(
+    tmp_path: Path,
+) -> None:
+    """A missing abort marker (e.g. the write itself failed) must never crash the
+    launcher -- it falls back to the captured stderr, same as any other nonzero exit.
+    """
+    stub = write_abort_no_marker_stub(tmp_path / "stub.py")
+    launcher = SubprocessLauncher(
+        vocab_size=10, timeout_s=10.0, argv_prefix=(sys.executable, str(stub))
+    )
+
+    outcome = launcher.run_one(_spec())
+
+    assert outcome.status == "error"
+    assert outcome.error is not None
+    assert "boom without a marker" in outcome.error
 
 
 def test_subprocess_launcher_launch_failure_returns_error() -> None:

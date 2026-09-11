@@ -17,6 +17,11 @@ _SENTINEL_PREFIX = "::PARITY_WORKER::ok"
 _DEFAULT_TIMEOUT_S = 330.0
 _DEFAULT_TERMINATE_GRACE_S = 5.0
 
+# The exact filename ``watchdog._do_abort`` writes into a worker's ``--out`` directory
+# on its ``os._exit(3)`` abort path (memory ceiling or wall-deadline exceeded).
+_ABORT_MARKER_FILENAME = "parity_worker_abort.txt"
+_WATCHDOG_ABORT_RETURNCODE = 3
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class WorkerOutcome:
@@ -150,8 +155,7 @@ class SubprocessLauncher:
             if process.returncode != 0:
                 return _error_outcome(
                     spec.role,
-                    f"worker subprocess for role {spec.role!r} exited with code "
-                    f"{process.returncode}: {stderr.strip()}",
+                    self._nonzero_exit_message(spec, process.returncode, stderr, Path(tmp_dir)),
                 )
             if _SENTINEL_PREFIX not in stdout:
                 return _error_outcome(
@@ -179,6 +183,35 @@ class SubprocessLauncher:
                 status="ok",
                 error=None,
             )
+
+    def _nonzero_exit_message(
+        self, spec: WorkerSpec, returncode: int, stderr: str, out_dir: Path
+    ) -> str:
+        """Build the error message for a nonzero worker exit.
+
+        Folds in the abort marker's reason when the exit code is the watchdog's
+        (F2's memory/wall abort). Missing marker (a plain crash, or the marker
+        write itself failing) falls back to the captured stderr, exactly like
+        any other nonzero exit.
+        """
+        detail = stderr.strip()
+        if returncode == _WATCHDOG_ABORT_RETURNCODE:
+            abort_reason = self._read_abort_marker(out_dir)
+            if abort_reason is not None:
+                detail = abort_reason if not detail else f"{abort_reason} (stderr: {detail})"
+        return f"worker subprocess for role {spec.role!r} exited with code {returncode}: {detail}"
+
+    @staticmethod
+    def _read_abort_marker(out_dir: Path) -> str | None:
+        """Read the watchdog's abort-reason marker file.
+
+        Returns ``None`` if it is absent or unreadable; never raises -- a
+        missing marker must not crash the launcher.
+        """
+        try:
+            return (out_dir / _ABORT_MARKER_FILENAME).read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
 
     def _terminate_and_reap(self, process: "subprocess.Popen[str]") -> None:
         """Escalate TERM -> KILL against a bounded wait and reap the process either way (F2)."""

@@ -63,11 +63,19 @@ _QUANT_PAYLOAD_SUFFIXES = (".weight", ".scales", ".biases")
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TensorDelta:
-    """One tensor's classification between a base repo and its fused counterpart."""
+    """One tensor's classification between a base repo and its fused counterpart.
+
+    ``is_target`` records whether the tensor's owning module is in the
+    resolver's expected-change target set (see :func:`delta_map`'s
+    ``targets``) -- internal bookkeeping for the text renderer's notable-
+    tensor filter (:mod:`mlx_model_doctor.parity.report`); it is not part of
+    the published ``parity.v1`` JSON contract.
+    """
 
     tensor: str
     klass: TensorDeltaKlass
     reason: str | None = None
+    is_target: bool = False
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -213,6 +221,7 @@ def _classify(
                     f"{tensor_name} is absent from the fused repository, and its module's "
                     "weight representation changed (quantization is no longer comparable)"
                 ),
+                is_target=is_target,
             )
         return TensorDelta(
             tensor=tensor_name,
@@ -220,6 +229,7 @@ def _classify(
             reason=(
                 f"{tensor_name} is present in the base repository but absent from the fused one"
             ),
+            is_target=is_target,
         )
 
     if base_entry.dtype != fused_entry.dtype or base_entry.shape != fused_entry.shape:
@@ -230,11 +240,14 @@ def _classify(
                 f"representation changed: {base_entry.dtype}{list(base_entry.shape)} in base "
                 f"vs {fused_entry.dtype}{list(fused_entry.shape)} in fused"
             ),
+            is_target=is_target,
         )
 
     if _bytes_differ(tensor_name, base, fused, base_hdr, fused_hdr):
-        return TensorDelta(tensor=tensor_name, klass="changed" if is_target else "unexpected")
-    return TensorDelta(tensor=tensor_name, klass="unchanged")
+        return TensorDelta(
+            tensor=tensor_name, klass="changed" if is_target else "unexpected", is_target=is_target
+        )
+    return TensorDelta(tensor=tensor_name, klass="unchanged", is_target=is_target)
 
 
 def delta_map(

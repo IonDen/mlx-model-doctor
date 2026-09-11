@@ -2,7 +2,7 @@
 
 import platform
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib import metadata, util
 from pathlib import Path
 from typing import cast
@@ -304,6 +304,7 @@ def check_adapter_parity(
         worker_status=runtime.worker_status,
         peak_bytes=runtime.peak_bytes,
         reasons=tuple(reasons),
+        worker_errors=runtime.worker_errors,
     )
 
 
@@ -322,6 +323,7 @@ class _RuntimeOutcome:
     worker_status: dict[str, WorkerStatusValue]
     peak_bytes: dict[str, int | None]
     phase_outcomes: dict[str, PhaseOutcome]
+    worker_errors: dict[str, str] = field(default_factory=dict)
 
 
 _ALL_ROLES = (ROLE_BASE, ROLE_NOISE, ROLE_REFERENCE, ROLE_FUSED)
@@ -361,6 +363,7 @@ def _voided_runtime(
     worker_status: dict[str, WorkerStatusValue],
     peak_bytes: dict[str, int | None],
     phases: dict[str, PhaseOutcome],
+    worker_errors: dict[str, str] | None = None,
 ) -> _RuntimeOutcome:
     """Build a runtime outcome whose oracle was not computed (null verdict/metrics)."""
     return _RuntimeOutcome(
@@ -375,6 +378,7 @@ def _voided_runtime(
         worker_status=worker_status,
         peak_bytes=peak_bytes,
         phase_outcomes=phases,
+        worker_errors=worker_errors if worker_errors is not None else {},
     )
 
 
@@ -405,6 +409,15 @@ def _run_runtime(
 
     if any(outcome.status == "error" for outcome in outcomes):
         reasons.append("one or more parity workers failed; the oracle could not be computed.")
+        # Surface each failed worker's captured cause (F2/F9): stderr, a timeout, an
+        # artifact-validation reason, or the watchdog's memory/wall abort marker --
+        # never silently dropped behind the generic "one or more workers failed" line.
+        worker_errors = {
+            outcome.role: outcome.error
+            for outcome in outcomes
+            if outcome.status == "error" and outcome.error is not None
+        }
+        reasons.extend(f"{role}: {error}" for role, error in sorted(worker_errors.items()))
         # Keep the reference-derived signal: a crash in a non-reference worker
         # (base_repeat/fused) must not erase a valid reference verdict (F1). The
         # run is still cannot-determine (exit 2) via the worker-status error.
@@ -413,6 +426,7 @@ def _run_runtime(
             worker_status=worker_status,
             peak_bytes=peak_bytes,
             phases={"reference": "ok" if reference_ok else "error", "oracle": "error"},
+            worker_errors=worker_errors,
         )
     if adapter_applied is None:
         reasons.append(

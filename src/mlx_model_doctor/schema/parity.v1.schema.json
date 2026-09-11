@@ -11,7 +11,7 @@
     "base_report", "fused_report", "results",
     "verdict", "agree_fa", "agree_fb", "gap", "noise", "first_divergence", "flip_count",
     "adapter_applied", "delta_map",
-    "phase_outcomes", "worker_status", "peak_bytes", "reasons"
+    "phase_outcomes", "worker_status", "peak_bytes", "reasons", "worker_errors"
   ],
   "properties": {
     "schema_version": { "type": "string" },
@@ -58,7 +58,12 @@
       "type": "object",
       "additionalProperties": { "type": ["integer", "null"], "minimum": 0 }
     },
-    "reasons": { "type": "array", "items": { "type": "string" } }
+    "reasons": { "type": "array", "items": { "type": "string" } },
+    "worker_errors": {
+      "type": "object",
+      "description": "Keyed by role, for exactly the roles whose worker_status is \"error\".",
+      "additionalProperties": { "type": "string" }
+    }
   },
   "$defs": {
     "identity": {

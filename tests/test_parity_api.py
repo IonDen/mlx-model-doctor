@@ -32,6 +32,7 @@ from mlx_model_doctor.parity.fixtures import (
 )
 from mlx_model_doctor.parity.oracle import ROLE_BASE, ROLE_FUSED, ROLE_NOISE, ROLE_REFERENCE
 from mlx_model_doctor.parity.orchestrator import WorkerOutcome
+from mlx_model_doctor.parity.report import render_parity_json, render_parity_text
 from mlx_model_doctor.parity.worker import WorkerSpec
 from tests.parity_fakes import lora_tensor, safetensors_header_bytes, write_safetensors_file
 
@@ -740,6 +741,25 @@ def test_worker_crash_returns_report_with_error_status_exit_2(tiny_local_repos: 
     # adapter-applied signal (True here) must survive the crash, not be erased.
     assert report.adapter_applied is True
     assert parity_exit_code(report) == 2
+
+
+def test_worker_crash_surfaces_the_worker_error_cause(tiny_local_repos: _Repos) -> None:
+    """A worker failure's captured cause (WorkerOutcome.error) must reach the report's
+    ``worker_errors``, ``reasons``, the rendered text, and validate in the JSON --
+    never silently dropped behind the generic "one or more workers failed" line.
+    """
+    report = check_adapter_parity(
+        base=tiny_local_repos.base,
+        adapter=tiny_local_repos.adapter,
+        fused=tiny_local_repos.fused_diff,
+        options=_opts(_fused_crash_launcher()),
+    )
+
+    assert report.worker_errors == {ROLE_FUSED: "boom"}
+    assert any("boom" in reason for reason in report.reasons)
+    assert "boom" in render_parity_text(report)
+    payload = json.loads(render_parity_json(report))
+    assert payload["worker_errors"] == {ROLE_FUSED: "boom"}
 
 
 def test_inconclusive_verdict_carries_an_honest_reason(tiny_local_repos: _Repos) -> None:
