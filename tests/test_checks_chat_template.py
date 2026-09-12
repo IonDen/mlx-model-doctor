@@ -35,6 +35,37 @@ def test_presence_warns_when_template_absent_in_both() -> None:
     assert "base" in result.message.lower() or "non-chat" in result.message.lower()
 
 
+def test_presence_passes_when_template_only_in_chat_template_json() -> None:
+    # A VLM repo (e.g. mlx-community/Mistral-Small-3.1-24B-Instruct-2503-6bit) stores its
+    # template in chat_template.json -- the file transformers processors / mlx-vlm actually
+    # use -- with no chat_template in tokenizer_config.json. The check must recognize it and
+    # not false-warn "no chat template found".
+    files = {
+        "tokenizer_config.json": json.dumps({"eos_token": "</s>"}).encode(),
+        "chat_template.json": json.dumps({"chat_template": "{{ messages }}"}).encode(),
+    }
+    result = ChatTemplatePresenceCheck().run(_ctx(files))
+    assert result.status == "pass"
+
+
+def test_special_tokens_prefers_chat_template_json_over_tokenizer_config() -> None:
+    # SmolVLM-Instruct-4bit ships a stale Llama-3 template in tokenizer_config.chat_template
+    # (unregistered <|eot_id|>), but the correct template lives in chat_template.json, which
+    # the processor uses. The check must scan the runtime template, not false-warn on the stale one.
+    files = {
+        "tokenizer_config.json": json.dumps(
+            {
+                "chat_template": "{{ '<|eot_id|>' }}",
+                "eos_token": "<end_of_utterance>",
+                "added_tokens_decoder": {"49279": {"content": "<end_of_utterance>"}},
+            }
+        ).encode(),
+        "chat_template.json": json.dumps({"chat_template": "{{ '<end_of_utterance>' }}"}).encode(),
+    }
+    result = ChatTemplateSpecialTokensCheck().run(_ctx(files))
+    assert result.status == "pass"
+
+
 def test_presence_skips_when_no_tokenizer_metadata() -> None:
     result = ChatTemplatePresenceCheck().run(_ctx({}))
     assert result.status == "skip"

@@ -111,7 +111,10 @@ class TiedEmbeddingCheck:
                 remediation="Drop the duplicate lm_head weight or set tie_word_embeddings to false.",
                 details={"stored_both_distinct": True},
             )
-        if not tied and not has_output:
+        if "tie_word_embeddings" in config and not tied and not has_output:
+            # Only flag an explicit "not tied" declaration with no stored head. An *absent*
+            # key is not an inconsistency: transformers defaults tie_word_embeddings to true,
+            # and tie-by-default families (e.g. Gemma) legitimately ship no lm_head weight.
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,

@@ -50,6 +50,14 @@ class CheckContext:
         """Return parsed preprocessor_config.json, or None when absent/unusable."""
         return self._read_json_file("preprocessor_config.json")
 
+    def chat_template_json(self) -> dict[str, object] | None:
+        """Return parsed chat_template.json, or None when absent/unusable.
+
+        Transformers processors (and mlx-vlm) store the chat template here for
+        multi-component repos, separate from tokenizer_config.json.
+        """
+        return self._read_json_file("chat_template.json")
+
     def chat_template_text(self) -> str | None:
         """Return the sibling chat_template.jinja text, or None when absent/unusable."""
         key = "text:chat_template.jinja"

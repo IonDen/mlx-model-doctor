@@ -46,6 +46,47 @@ def test_safetensors_index_check_passes_when_referenced_shard_exists() -> None:
     assert result.details["shards"] == ("model-00001-of-00001.safetensors",)
 
 
+def test_safetensors_index_check_resolves_nested_index_shard_paths() -> None:
+    # A component index in a subdirectory (e.g. a diffusion text_encoder) names its shards
+    # relative to the index file's own directory: `0.safetensors` here means
+    # `text_encoder/0.safetensors`, not a repo-root file. Resolving it against the root instead
+    # is the bug this catches -- it makes a valid repo FAIL as "missing shard 0.safetensors".
+    index = {"weight_map": {"encoder.layer.weight": "0.safetensors"}}
+
+    result = SafetensorsIndexCheck().run(
+        context_for_files(
+            {
+                "text_encoder/model.safetensors.index.json": json.dumps(index).encode(),
+                "text_encoder/0.safetensors": b"weights",
+            }
+        )
+    )
+
+    assert result.status == "pass"
+    assert result.details["shards"] == ("text_encoder/0.safetensors",)
+
+
+def test_safetensors_index_check_fails_when_nested_shard_missing_at_resolved_path() -> None:
+    # A real miss must still fail: the referenced shard resolves to text_encoder/1.safetensors,
+    # which is absent (only 0.safetensors exists). The failure is reported at the resolved path,
+    # not the bare weight_map value -- so the fix cannot mask a genuinely broken nested index.
+    index = {"weight_map": {"encoder.layer.weight": "1.safetensors"}}
+
+    result = SafetensorsIndexCheck().run(
+        context_for_files(
+            {
+                "text_encoder/model.safetensors.index.json": json.dumps(index).encode(),
+                "text_encoder/0.safetensors": b"weights",
+            }
+        )
+    )
+
+    assert result.status == "fail"
+    assert result.severity == "high"
+    assert "text_encoder/1.safetensors" in result.message
+    assert result.details["missing_shards"] == ("text_encoder/1.safetensors",)
+
+
 def test_safetensors_index_check_sorts_discovered_indexes_and_shards() -> None:
     first_index = {"weight_map": {"a.weight": "z-shard.safetensors"}}
     second_index = {"weight_map": {"b.weight": "a-shard.safetensors"}}

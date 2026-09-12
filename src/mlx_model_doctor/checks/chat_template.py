@@ -14,6 +14,13 @@ def _template_string(ctx: CheckContext) -> str | None:
     jinja = ctx.chat_template_text()
     if jinja is not None and jinja.strip():
         return jinja
+    # chat_template.json is the dedicated template file transformers processors / mlx-vlm use;
+    # it takes precedence over an embedded tokenizer_config.chat_template (which may be stale).
+    chat_template_json = ctx.chat_template_json()
+    if chat_template_json is not None:
+        template = chat_template_json.get("chat_template")
+        if isinstance(template, str) and template.strip():
+            return template
     tokenizer_config = ctx.tokenizer_config_json()
     if tokenizer_config is not None:
         template = tokenizer_config.get("chat_template")
@@ -53,7 +60,8 @@ class ChatTemplatePresenceCheck:
         """Return whether a chat template is present (or expected-but-absent)."""
         has_tokenizer_config = ctx.target.exists("tokenizer_config.json")
         has_jinja = ctx.target.exists("chat_template.jinja")
-        if not has_tokenizer_config and not has_jinja:
+        has_chat_template_json = ctx.target.exists("chat_template.json")
+        if not has_tokenizer_config and not has_jinja and not has_chat_template_json:
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,
@@ -71,6 +79,7 @@ class ChatTemplatePresenceCheck:
                 details={
                     "tokenizer_config": has_tokenizer_config,
                     "chat_template_jinja": has_jinja,
+                    "chat_template_json": has_chat_template_json,
                 },
             )
         if has_tokenizer_config and ctx.tokenizer_config_json() is None:
@@ -88,11 +97,14 @@ class ChatTemplatePresenceCheck:
             status="warn",
             severity="low",
             message=(
-                "No chat template found in tokenizer_config.json or chat_template.jinja; "
-                "apply_chat_template() will fail for a chat/instruct model "
+                "No chat template found in tokenizer_config.json, chat_template.json, or "
+                "chat_template.jinja; apply_chat_template() will fail for a chat/instruct model "
                 "(for a base/non-chat model this is expected)."
             ),
-            remediation="Add a chat_template to tokenizer_config.json or a chat_template.jinja file.",
+            remediation=(
+                "Add a chat_template to tokenizer_config.json, a chat_template.json, or a "
+                "chat_template.jinja file."
+            ),
         )
 
 

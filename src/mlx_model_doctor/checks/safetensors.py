@@ -1,6 +1,7 @@
 """Checks for safetensors index metadata."""
 
 import json
+import posixpath
 from dataclasses import dataclass
 from typing import cast
 
@@ -73,6 +74,18 @@ class SafetensorsIndexCheck:
             message="Safetensors indexes reference shard files that are present.",
             details=details,
         )
+
+
+def _resolve_shard_path(index_path: str, value: str) -> str:
+    """Resolve a weight_map shard value relative to the index file's directory.
+
+    Safetensors index ``weight_map`` values name shards relative to the directory that
+    contains the index, so a component index at ``text_encoder/model.safetensors.index.json``
+    that lists ``0.safetensors`` refers to ``text_encoder/0.safetensors``. A root-level index
+    (empty directory) leaves the value unchanged.
+    """
+    index_dir = posixpath.dirname(index_path)
+    return posixpath.join(index_dir, value) if index_dir else value
 
 
 def _validate_index(
@@ -163,7 +176,15 @@ def _validate_index(
             details={"index_path": index_path},
         )
 
-    shard_names = tuple(sorted({value for value in weight_map.values() if isinstance(value, str)}))
+    shard_names = tuple(
+        sorted(
+            {
+                _resolve_shard_path(index_path, value)
+                for value in weight_map.values()
+                if isinstance(value, str)
+            }
+        )
+    )
     if not shard_names:
         return CheckResult(
             check_id=check_id,

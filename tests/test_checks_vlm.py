@@ -201,6 +201,19 @@ def test_image_token_numeric_id_maps_to_actual_placeholder():
     assert r.details["image_token"] == "<|image_pad|>"
 
 
+def test_image_token_numeric_id_maps_to_pixtral_img_placeholder():
+    # Pixtral / Mistral3 use [IMG] as the real image placeholder token. It was missing from
+    # the actual-image-token set, so valid repos like mlx-community/pixtral-12b-4bit
+    # false-warned "does not map it to an actual image placeholder".
+    r = _run_token(
+        config={"vision_config": {}, "image_token_id": 10},
+        tokenizer_config={"added_tokens_decoder": {"10": {"content": "[IMG]"}}},
+    )
+
+    assert r.status == "pass"
+    assert r.details["image_token"] == "[IMG]"
+
+
 def test_image_token_numeric_id_mapping_to_wrapper_warns():
     r = _run_token(
         config={"vision_config": {}, "image_token_id": 151652},
