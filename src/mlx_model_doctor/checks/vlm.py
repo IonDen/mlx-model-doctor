@@ -23,7 +23,10 @@ _VLM_CONFIG_KEYS: tuple[str, ...] = (
     "image_token_index",
     "image_token",
 )
-_ACTUAL_IMAGE_TOKENS = frozenset(("<image>", "<|image|>", "<|image_pad|>", "<IMG_CONTEXT>"))
+# Real image-placeholder tokens across model families. `[IMG]` is Pixtral / Mistral3's placeholder.
+_ACTUAL_IMAGE_TOKENS = frozenset(
+    ("<image>", "<|image|>", "<|image_pad|>", "<IMG_CONTEXT>", "[IMG]")
+)
 _WRAPPER_IMAGE_TOKENS = frozenset(("<|vision_start|>", "<|vision_end|>"))
 _MAX_SPECIAL_TOKEN_SCAN_DEPTH = 256
 _MAX_SPECIAL_TOKEN_SCAN_NODES = 4096
@@ -402,7 +405,7 @@ class VlmImageTokenWiringCheck:
                 "it to an actual image placeholder.",
                 remediation=(
                     "Ensure tokenizer_config.json added_tokens_decoder maps the image "
-                    "token ID to <image>, <|image|>, <|image_pad|>, or <IMG_CONTEXT>."
+                    "token ID to <image>, <|image|>, <|image_pad|>, <IMG_CONTEXT>, or [IMG]."
                 ),
                 details={"image_token_id": token_id, "mapped_token": mapped or ""},
             )

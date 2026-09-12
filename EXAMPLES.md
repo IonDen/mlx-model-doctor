@@ -2,7 +2,7 @@
 
 Mostly real output from `mlx-model-doctor`, captured by running the tool — so you can see exactly what you get before installing it. Captured transcript sections show a command, its actual response, and a short read of what the result means. Command-only examples are marked.
 
-> Most transcripts were captured with **mlx-model-doctor 0.9.0** on **2026-09-10**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 5 and 6 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
+> Most transcripts were captured with **mlx-model-doctor 0.9.1** on **2026-09-12**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 5 and 6 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
 
 ## Producer pre-upload workflow
 
@@ -96,7 +96,7 @@ PASS info vlm/quantization.shape
 
 ```console
 $ mlx-model-doctor version
-mlx-model-doctor 0.9.0
+mlx-model-doctor 0.9.1
 Python: 3.14.5
 Executable: /path/to/.venv/bin/python3
 Virtualenv: /path/to/.venv
@@ -453,44 +453,44 @@ CHECKED mlx-community/Cydonia-24B-v3.1-4bit
   Signal: tag:mlx
   Results: pass=10 warn=1 fail=0 skip=3
 
-CHECKED mlx-community/DeepSeek-OCR-8bit
+CHECKED mlx-community/DeepSeek-V4-Flash
   Signal: tag:mlx
-  Results: pass=12 warn=1 fail=0 skip=1
+  Results: pass=9 warn=2 fail=0 skip=3
 
-CHECKED mlx-community/DeepSeek-R1-Distill-Llama-70B-4bit
-  Signal: tag:mlx
-  Results: pass=12 warn=0 fail=0 skip=2
+CHECKED mlx-community/FLUX.2-Klein-4B-4bit
+  Signal: author:mlx-community
+  Results: pass=3 warn=1 fail=2 skip=8
 
 CHECKED mlx-community/Hermes-4-70B-8bit
   Signal: tag:mlx
   Results: pass=11 warn=1 fail=0 skip=2
 
-CHECKED mlx-community/Josiefied-Qwen3-1.7B-abliterated-v1-bf16
+CHECKED mlx-community/Hy-MT2-7B-Abliterated-bf16
   Signal: tag:mlx
-  Results: pass=10 warn=1 fail=0 skip=3
+  Results: pass=10 warn=2 fail=0 skip=2
 
 CHECKED mlx-community/Kimi-K2.5
   Signal: tag:mlx
   Results: pass=11 warn=2 fail=0 skip=1
 
-CHECKED mlx-community/LFM2.5-1.2B-Instruct-4bit
-  Signal: tag:mlx
-  Results: pass=13 warn=0 fail=0 skip=1
-
 CHECKED mlx-community/LFM2.5-1.2B-Thinking-8bit
   Signal: tag:mlx
   Results: pass=12 warn=1 fail=0 skip=1
 
-CHECKED mlx-community/LFM2.5-2.6B-4bit
+CHECKED mlx-community/LFM2.5-8B-A1B-MLX-8bit
   Signal: tag:mlx
-  Results: pass=12 warn=2 fail=0 skip=0
+  Results: pass=12 warn=1 fail=0 skip=1
 
-CHECKED mlx-community/Llama-3.2-3B-Instruct-bf16
+CHECKED mlx-community/Llama-3.3-70B-Instruct-4bit
   Signal: tag:mlx
-  Results: pass=10 warn=1 fail=0 skip=3
+  Results: pass=12 warn=0 fail=0 skip=2
+
+CHECKED mlx-community/MiniCPM-o-4_5-4bit
+  Signal: tag:mlx
+  Results: pass=12 warn=1 fail=0 skip=1
 ```
 
-**Result:** exit code `0`. Ten MLX repos checked, all clean. Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
+**Result:** exit code `0`. Nine of the ten candidates come back with no failures (most carry a warning or two), but `mlx-community/FLUX.2-Klein-4B-4bit` fails two checks. It's a diffusion repo pulled in by the weaker `author:mlx-community` signal rather than an `mlx` tag, so under the `text` plugin there's no top-level `config.json` to validate, and the tool correctly flags it as a diffusion repo scanned under the text profile. The survey still exits `0`, because it gates on tool errors (`tool-error: 0`) rather than per-model check results. Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
 
 ## 8. `sample hf` with `--max-candidates` and `--signal-filter`
 
@@ -510,6 +510,10 @@ Summary:
   checked: 5
   tool-error: 0
 
+CHECKED mlx-community/35b-beta-long-8bit
+  Signal: tag:mlx
+  Results: pass=13 warn=0 fail=0 skip=1
+
 CHECKED mlx-community/ALMA-13B-R-4bit-mlx
   Signal: tag:mlx
   Results: pass=10 warn=1 fail=0 skip=3
@@ -525,13 +529,9 @@ CHECKED mlx-community/AlphaMonarch-7B-mlx
 CHECKED mlx-community/AlphaMonarch-7B-mlx-4bit
   Signal: tag:mlx
   Results: pass=12 warn=0 fail=0 skip=2
-
-CHECKED mlx-community/BB-L-01-7B-mlx-4bit
-  Signal: tag:mlx
-  Results: pass=10 warn=1 fail=0 skip=3
 ```
 
-**Result:** exit code `0`. With `--max-candidates 500`, the survey scans deeper into the catalog (500 repos instead of the default window), and `--signal-filter tag:mlx` keeps only repos whose primary signal is the `mlx` tag. The deeper scan reaches earlier repos alphabetically (starting with ALMA instead of DeepSeek). Use `--no-cache` to bypass the listing cache, or `--cache-ttl` to change its TTL (default: 1 hour).
+**Result:** exit code `0`. With `--max-candidates 500`, the survey scans deeper into the catalog (500 repos instead of the default window), and `--signal-filter tag:mlx` keeps only repos whose primary signal is the `mlx` tag. The deeper scan reaches earlier repos alphabetically (starting with 35b-beta-long instead of Cydonia). Use `--no-cache` to bypass the listing cache, or `--cache-ttl` to change its TTL (default: 1 hour).
 
 ## 9. `parity mlx` — did fusing the adapter keep its behavior?
 

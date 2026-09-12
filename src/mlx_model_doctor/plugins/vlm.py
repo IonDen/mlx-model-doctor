@@ -47,7 +47,9 @@ class VlmModelPlugin:
                 TokenizerFilesCheck(check_id="vlm/tokenizer.files"),
                 SpecialTokensCheck(check_id="vlm/tokenizer.special_tokens"),
                 ChatTemplatePresenceCheck(check_id="vlm/chat_template.presence"),
-                ChatTemplateSpecialTokensCheck(check_id="vlm/chat_template.special_tokens"),
+                ChatTemplateSpecialTokensCheck(
+                    check_id="vlm/chat_template.special_tokens", prefer_processor_template=True
+                ),
                 SafetensorsIndexCheck(check_id="vlm/safetensors.index"),
                 QuantizationMetadataCheck(check_id="vlm/quantization.metadata"),
                 MlxQuantizationModeCheck(check_id="vlm/quantization.mode"),

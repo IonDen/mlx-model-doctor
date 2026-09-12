@@ -70,7 +70,8 @@ _OUTPUT_HEAD_NAMES = (
 )
 
 
-# tie_word_embeddings interpretation verified against transformers v4.x-v5.x.
+# tie_word_embeddings default verified against mlx-lm model configs (llama/qwen2 default to true);
+# for an MLX repo an absent key means "tied", so a missing output head is expected, not an error.
 @dataclass(frozen=True, slots=True)
 class TiedEmbeddingCheck:
     """Cross-check tie_word_embeddings against stored embedding/head tensors."""
@@ -111,7 +112,11 @@ class TiedEmbeddingCheck:
                 remediation="Drop the duplicate lm_head weight or set tie_word_embeddings to false.",
                 details={"stored_both_distinct": True},
             )
-        if not tied and not has_output:
+        if "tie_word_embeddings" in config and not tied and not has_output:
+            # Only flag an explicit "not tied" declaration with no stored head. An *absent* key is
+            # not an inconsistency for an MLX repo: mlx-lm's model configs default
+            # tie_word_embeddings to true (e.g. llama, qwen2), and tie-by-default families like
+            # Gemma ship no separate lm_head weight and load fine without one.
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,

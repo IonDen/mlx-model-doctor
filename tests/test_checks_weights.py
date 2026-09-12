@@ -143,3 +143,13 @@ def test_tied_treats_nonbool_truthy_as_untied() -> None:
     result = TiedEmbeddingCheck().run(_ctx(header, {"tie_word_embeddings": 1}))
     assert result.status == "warn"
     assert result.details["missing_output_head"] is True
+
+
+def test_tied_no_warn_when_flag_absent_and_head_missing() -> None:
+    # An absent tie_word_embeddings key with an input embedding and no output head is a
+    # tie-by-default model (e.g. Gemma): consistent, not the "declared untied, no head"
+    # inconsistency. The check must not warn merely because the key is missing -- that
+    # false-positive fired on valid, popular repos like mlx-community/gemma-2-9b-it-4bit.
+    header = _names_header({"model.embed_tokens.weight"})
+    result = TiedEmbeddingCheck().run(_ctx(header, {"model_type": "gemma2"}))
+    assert result.status == "pass"

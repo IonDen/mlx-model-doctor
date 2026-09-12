@@ -5,6 +5,13 @@ as priorities change.
 
 ## Released
 
+- **v0.9.1** (2026-09-12) — a false-positive cleanup. Four checks were flagging
+  valid, real-world repositories and now pass: a safetensors index kept in a
+  subdirectory (shard names resolve relative to the index file, not the
+  repository root); a model with `tie_word_embeddings` absent and no separate
+  output head (Gemma); a Pixtral/Mistral-3 `[IMG]` image token; and a
+  vision-language repository whose chat template lives in `chat_template.json`.
+  The genuine problems these checks catch still fail.
 - **v0.9.0** (2026-09-11) — the adapter-parity verifier. A new `parity mlx`
   command and `check_adapter_parity` API check whether fusing a LoRA adapter
   into a base model kept the behavior the adapter learned, by comparing the

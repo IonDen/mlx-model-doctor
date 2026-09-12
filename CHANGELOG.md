@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] — 2026-09-12
+
+A false-positive cleanup. Four checks were flagging valid, popular repositories;
+each now passes, while the genuine problems they were meant to catch still fail.
+
+### Fixed
+- The safetensors index check no longer reports a false "missing shard" for a
+  repository whose weight index sits in a subdirectory. An index at
+  `text_encoder/model.safetensors.index.json` names its shards relative to its
+  own directory, so `0.safetensors` there means `text_encoder/0.safetensors`.
+  The check had instead looked for those names at the repository root and failed
+  a valid repository (for example a diffusion model's text encoder). Shard names
+  are now resolved relative to the index file, so a multi-component repository
+  passes, while a genuinely missing shard still fails and is reported at its
+  full path.
+- The tied-embedding check no longer warns when `tie_word_embeddings` is absent
+  from `config.json`. mlx-lm's model configs default that setting to true (llama
+  and qwen2, for example), and tie-by-default families like Gemma ship no
+  separate output head, so an MLX repo with the key absent loads fine and its
+  absence is not an inconsistency. An explicit `tie_word_embeddings: false` with
+  no stored output head still warns.
+- The VLM image-token check now recognizes `[IMG]`, the image placeholder used
+  by Pixtral and Mistral-3, so those repositories no longer warn that their
+  image token is not an actual placeholder.
+- The chat-template checks now read `chat_template.json`, the file transformers
+  processors and mlx-vlm actually use. A repository that keeps its template
+  there (common for vision-language models) is no longer reported as having no
+  chat template, and the end-of-turn-token check reads the template the runtime
+  will use rather than a stale copy in `tokenizer_config.json`.
+
 ## [0.9.0] — 2026-09-11
 
 Adds an adapter-parity verifier: a way to check whether fusing a LoRA adapter

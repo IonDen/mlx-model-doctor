@@ -9,24 +9,55 @@ from mlx_model_doctor.report import CheckResult
 _TOKEN_RE = re.compile(r"<\|[^\s|>]+\|?>")
 
 
-def _template_string(ctx: CheckContext) -> str | None:
-    """Return the effective chat-template string from either location, if available."""
-    jinja = ctx.chat_template_text()
-    if jinja is not None and jinja.strip():
-        return jinja
+def _tokenizer_config_template(ctx: CheckContext) -> str | None:
     tokenizer_config = ctx.tokenizer_config_json()
-    if tokenizer_config is not None:
-        template = tokenizer_config.get("chat_template")
-        if isinstance(template, str) and template.strip():
+    if tokenizer_config is None:
+        return None
+    template = tokenizer_config.get("chat_template")
+    if isinstance(template, str) and template.strip():
+        return template
+    if isinstance(template, list):
+        bodies = [
+            entry["template"]
+            for entry in template
+            if isinstance(entry, dict) and isinstance(entry.get("template"), str)
+        ]
+        if bodies:
+            return "\n".join(bodies)
+    return None
+
+
+def _chat_template_json_template(ctx: CheckContext) -> str | None:
+    chat_template_json = ctx.chat_template_json()
+    if chat_template_json is None:
+        return None
+    template = chat_template_json.get("chat_template")
+    return template if isinstance(template, str) and template.strip() else None
+
+
+def _jinja_template(ctx: CheckContext) -> str | None:
+    jinja = ctx.chat_template_text()
+    return jinja if jinja is not None and jinja.strip() else None
+
+
+def _template_string(ctx: CheckContext, *, prefer_processor_template: bool = False) -> str | None:
+    """Return the effective chat-template string from the source the runtime actually loads.
+
+    Text profile: mlx-lm's tokenizer loads chat_template.jinja then tokenizer_config.chat_template
+    (AutoTokenizer ignores chat_template.json), so scan jinja -> tokenizer_config, with
+    chat_template.json last so presence still detects a template that lives only there. VLM
+    profile: the processor renders chat_template.json when present and otherwise falls back to its
+    tokenizer, so scan chat_template.json -> jinja -> tokenizer_config.
+    """
+    getters = (
+        (_chat_template_json_template, _jinja_template, _tokenizer_config_template)
+        if prefer_processor_template
+        else (_jinja_template, _tokenizer_config_template, _chat_template_json_template)
+    )
+    for getter in getters:
+        template = getter(ctx)
+        if template is not None:
             return template
-        if isinstance(template, list):
-            bodies = [
-                entry["template"]
-                for entry in template
-                if isinstance(entry, dict) and isinstance(entry.get("template"), str)
-            ]
-            if bodies:
-                return "\n".join(bodies)
     return None
 
 
@@ -41,7 +72,8 @@ def _has_template(ctx: CheckContext) -> bool:
     return False
 
 
-# Chat-template convention (tokenizer_config.json / .jinja) verified against transformers v4.x.
+# Chat-template sources (tokenizer_config.json / chat_template.json / chat_template.jinja) and their
+# load precedence verified against transformers 5.15, mlx-lm 0.31.3, and mlx-vlm 0.6.x.
 @dataclass(frozen=True, slots=True)
 class ChatTemplatePresenceCheck:
     """Check that a chat template is present in either supported location."""
@@ -53,7 +85,8 @@ class ChatTemplatePresenceCheck:
         """Return whether a chat template is present (or expected-but-absent)."""
         has_tokenizer_config = ctx.target.exists("tokenizer_config.json")
         has_jinja = ctx.target.exists("chat_template.jinja")
-        if not has_tokenizer_config and not has_jinja:
+        has_chat_template_json = ctx.target.exists("chat_template.json")
+        if not has_tokenizer_config and not has_jinja and not has_chat_template_json:
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,
@@ -71,6 +104,7 @@ class ChatTemplatePresenceCheck:
                 details={
                     "tokenizer_config": has_tokenizer_config,
                     "chat_template_jinja": has_jinja,
+                    "chat_template_json": has_chat_template_json,
                 },
             )
         if has_tokenizer_config and ctx.tokenizer_config_json() is None:
@@ -88,11 +122,14 @@ class ChatTemplatePresenceCheck:
             status="warn",
             severity="low",
             message=(
-                "No chat template found in tokenizer_config.json or chat_template.jinja; "
-                "apply_chat_template() will fail for a chat/instruct model "
+                "No chat template found in tokenizer_config.json, chat_template.json, or "
+                "chat_template.jinja; apply_chat_template() will fail for a chat/instruct model "
                 "(for a base/non-chat model this is expected)."
             ),
-            remediation="Add a chat_template to tokenizer_config.json or a chat_template.jinja file.",
+            remediation=(
+                "Add a chat_template to tokenizer_config.json, a chat_template.json, or a "
+                "chat_template.jinja file."
+            ),
         )
 
 
@@ -123,10 +160,11 @@ class ChatTemplateSpecialTokensCheck:
 
     check_id: str = "text/chat_template.special_tokens"
     title: str = "Chat template tokens"
+    prefer_processor_template: bool = False
 
     def run(self, ctx: CheckContext) -> CheckResult:
         """Return whether template-emitted literals match registered special tokens."""
-        template = _template_string(ctx)
+        template = _template_string(ctx, prefer_processor_template=self.prefer_processor_template)
         if template is None:
             return CheckResult(
                 check_id=self.check_id,
