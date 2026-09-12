@@ -6,7 +6,7 @@ as priorities change.
 ## Released
 
 - **v0.9.1** (2026-09-12) — a false-positive cleanup. Four checks were flagging
-  valid, popular repositories and now pass: a safetensors index kept in a
+  valid, real-world repositories and now pass: a safetensors index kept in a
   subdirectory (shard names resolve relative to the index file, not the
   repository root); a model with `tie_word_embeddings` absent and no separate
   output head (Gemma); a Pixtral/Mistral-3 `[IMG]` image token; and a

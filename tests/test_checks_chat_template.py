@@ -48,21 +48,54 @@ def test_presence_passes_when_template_only_in_chat_template_json() -> None:
     assert result.status == "pass"
 
 
-def test_special_tokens_prefers_chat_template_json_over_tokenizer_config() -> None:
-    # SmolVLM-Instruct-4bit ships a stale Llama-3 template in tokenizer_config.chat_template
-    # (unregistered <|eot_id|>), but the correct template lives in chat_template.json, which
-    # the processor uses. The check must scan the runtime template, not false-warn on the stale one.
+_STALE_TOKENIZER_CONFIG_WITH_CLEAN_JSON = {
+    # SmolVLM-Instruct-4bit's shape: a stale Llama-3 template in tokenizer_config.chat_template
+    # (unregistered <|eot_id|>), and the correct template in chat_template.json.
+    "tokenizer_config.json": json.dumps(
+        {
+            "chat_template": "{{ '<|eot_id|>' }}",
+            "eos_token": "<end_of_utterance>",
+            "added_tokens_decoder": {"49279": {"content": "<end_of_utterance>"}},
+        }
+    ).encode(),
+    "chat_template.json": json.dumps({"chat_template": "{{ '<end_of_utterance>' }}"}).encode(),
+}
+
+
+def test_special_tokens_text_profile_warns_on_stale_tokenizer_config_template() -> None:
+    # Under the TEXT profile, mlx-lm loads tokenizer_config.chat_template (AutoTokenizer ignores
+    # chat_template.json), so the stale template IS the one the runtime uses -- the check must still
+    # warn about its unregistered <|eot_id|>, or generation would never stop.
+    result = ChatTemplateSpecialTokensCheck().run(_ctx(_STALE_TOKENIZER_CONFIG_WITH_CLEAN_JSON))
+    assert result.status == "warn"
+    assert "<|eot_id|>" in result.message
+
+
+def test_special_tokens_vlm_profile_prefers_chat_template_json() -> None:
+    # Under the VLM profile the processor loads chat_template.json, so the check scans that clean
+    # template and does not warn on the stale tokenizer_config copy.
+    result = ChatTemplateSpecialTokensCheck(
+        check_id="vlm/chat_template.special_tokens", prefer_processor_template=True
+    ).run(_ctx(_STALE_TOKENIZER_CONFIG_WITH_CLEAN_JSON))
+    assert result.status == "pass"
+
+
+def test_presence_passes_with_only_chat_template_json_and_reports_it() -> None:
+    # Only chat_template.json present (no tokenizer_config.json, no .jinja): the presence gate must
+    # rely on chat_template.json, and its detail flag must reflect that.
+    files = {"chat_template.json": json.dumps({"chat_template": "{{ messages }}"}).encode()}
+    result = ChatTemplatePresenceCheck().run(_ctx(files))
+    assert result.status == "pass"
+    assert result.details["chat_template_json"] is True
+
+
+def test_presence_falls_back_to_tokenizer_config_when_chat_template_json_malformed() -> None:
+    # A present-but-unparseable chat_template.json must not hide a real tokenizer_config template.
     files = {
-        "tokenizer_config.json": json.dumps(
-            {
-                "chat_template": "{{ '<|eot_id|>' }}",
-                "eos_token": "<end_of_utterance>",
-                "added_tokens_decoder": {"49279": {"content": "<end_of_utterance>"}},
-            }
-        ).encode(),
-        "chat_template.json": json.dumps({"chat_template": "{{ '<end_of_utterance>' }}"}).encode(),
+        "tokenizer_config.json": json.dumps({"chat_template": "{{ x }}"}).encode(),
+        "chat_template.json": b"{not json",
     }
-    result = ChatTemplateSpecialTokensCheck().run(_ctx(files))
+    result = ChatTemplatePresenceCheck().run(_ctx(files))
     assert result.status == "pass"
 
 

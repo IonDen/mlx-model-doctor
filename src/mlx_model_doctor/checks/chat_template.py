@@ -9,31 +9,52 @@ from mlx_model_doctor.report import CheckResult
 _TOKEN_RE = re.compile(r"<\|[^\s|>]+\|?>")
 
 
-def _template_string(ctx: CheckContext) -> str | None:
-    """Return the effective chat-template string from either location, if available."""
+def _tokenizer_config_template(ctx: CheckContext) -> str | None:
+    tokenizer_config = ctx.tokenizer_config_json()
+    if tokenizer_config is None:
+        return None
+    template = tokenizer_config.get("chat_template")
+    if isinstance(template, str) and template.strip():
+        return template
+    if isinstance(template, list):
+        bodies = [
+            entry["template"]
+            for entry in template
+            if isinstance(entry, dict) and isinstance(entry.get("template"), str)
+        ]
+        if bodies:
+            return "\n".join(bodies)
+    return None
+
+
+def _chat_template_json_template(ctx: CheckContext) -> str | None:
+    chat_template_json = ctx.chat_template_json()
+    if chat_template_json is None:
+        return None
+    template = chat_template_json.get("chat_template")
+    return template if isinstance(template, str) and template.strip() else None
+
+
+def _template_string(ctx: CheckContext, *, prefer_processor_template: bool = False) -> str | None:
+    """Return the effective chat-template string, preferring the source the runtime loads.
+
+    Under the text profile mlx-lm loads tokenizer_config.chat_template (AutoTokenizer ignores
+    chat_template.json), so that source is scanned first. Under the VLM profile the processor
+    loads chat_template.json, so it is preferred there. chat_template.jinja wins in both, and
+    whichever source remains is still consulted last so presence detection stays correct.
+    """
     jinja = ctx.chat_template_text()
     if jinja is not None and jinja.strip():
         return jinja
-    # chat_template.json is the dedicated template file transformers processors / mlx-vlm use;
-    # it takes precedence over an embedded tokenizer_config.chat_template (which may be stale).
-    chat_template_json = ctx.chat_template_json()
-    if chat_template_json is not None:
-        template = chat_template_json.get("chat_template")
-        if isinstance(template, str) and template.strip():
+    getters = (
+        (_chat_template_json_template, _tokenizer_config_template)
+        if prefer_processor_template
+        else (_tokenizer_config_template, _chat_template_json_template)
+    )
+    for getter in getters:
+        template = getter(ctx)
+        if template is not None:
             return template
-    tokenizer_config = ctx.tokenizer_config_json()
-    if tokenizer_config is not None:
-        template = tokenizer_config.get("chat_template")
-        if isinstance(template, str) and template.strip():
-            return template
-        if isinstance(template, list):
-            bodies = [
-                entry["template"]
-                for entry in template
-                if isinstance(entry, dict) and isinstance(entry.get("template"), str)
-            ]
-            if bodies:
-                return "\n".join(bodies)
     return None
 
 
@@ -135,10 +156,11 @@ class ChatTemplateSpecialTokensCheck:
 
     check_id: str = "text/chat_template.special_tokens"
     title: str = "Chat template tokens"
+    prefer_processor_template: bool = False
 
     def run(self, ctx: CheckContext) -> CheckResult:
         """Return whether template-emitted literals match registered special tokens."""
-        template = _template_string(ctx)
+        template = _template_string(ctx, prefer_processor_template=self.prefer_processor_template)
         if template is None:
             return CheckResult(
                 check_id=self.check_id,

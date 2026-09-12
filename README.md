@@ -57,7 +57,7 @@ loaded.
 - **Required files** — `config.json` is present and readable.
 - **Config consistency** — `config.json` parses, and its `model_type` is set.
 - **Tokenizer** — the tokenizer files a text model needs are present, and the special-token configuration is coherent.
-- **Chat template** — a chat/instruct model declares a chat template (in `tokenizer_config.json` or a `chat_template.jinja`), and the end-of-turn token its template emits is a registered special token. A typo'd stop token loads fine and then never stops generating.
+- **Chat template** — a chat/instruct model declares a chat template (in `tokenizer_config.json`, `chat_template.json`, or a `chat_template.jinja`), and the end-of-turn token its template emits is a registered special token. A typo'd stop token loads fine and then never stops generating.
 - **Safetensors index** — when the weights are sharded, `model.safetensors.index.json` is valid and every shard it references exists.
 - **Tensor header** — read the safetensors header itself (the tensor map: dtypes, shapes, byte-offsets; no weight download) to catch a corrupt header (overlapping or out-of-bounds tensor offsets), a weight map that points at tensors no shard contains, a declared tied embedding that contradicts the stored weights, and an MLX-quantized layer whose packed-weight and scales shapes don't agree. These run by default; pass `--skip-weights` to skip them for a faster config-only pass.
 - **Quantization metadata** — quantization fields are present and use a valid MLX mode with a valid group size and bit width (`affine`, `mxfp4`, `mxfp8`, `nvfp4`). This reads the metadata, not the tensors.

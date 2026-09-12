@@ -490,7 +490,7 @@ CHECKED mlx-community/MiniCPM-o-4_5-4bit
   Results: pass=12 warn=1 fail=0 skip=1
 ```
 
-**Result:** exit code `0`. Nine of the ten candidates come back with no failures (most carry a warning or two), but `mlx-community/FLUX.2-Klein-4B-4bit` fails two checks. It's a diffusion repo pulled in by the weaker `author:mlx-community` signal rather than an `mlx` tag, so under the `text` plugin there's no top-level `config.json` to validate — the tool correctly flagging a diffusion repo scanned under the text profile. The survey still exits `0`, because it gates on tool errors (`tool-error: 0`) rather than per-model check results. Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
+**Result:** exit code `0`. Nine of the ten candidates come back with no failures (most carry a warning or two), but `mlx-community/FLUX.2-Klein-4B-4bit` fails two checks. It's a diffusion repo pulled in by the weaker `author:mlx-community` signal rather than an `mlx` tag, so under the `text` plugin there's no top-level `config.json` to validate, and the tool correctly flags it as a diffusion repo scanned under the text profile. The survey still exits `0`, because it gates on tool errors (`tool-error: 0`) rather than per-model check results. Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
 
 ## 8. `sample hf` with `--max-candidates` and `--signal-filter`
 

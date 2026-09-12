@@ -21,10 +21,11 @@ each now passes, while the genuine problems they were meant to catch still fail.
   passes, while a genuinely missing shard still fails and is reported at its
   full path.
 - The tied-embedding check no longer warns when `tie_word_embeddings` is absent
-  from `config.json`. Transformers defaults that setting to true, and families
-  like Gemma always tie and ship no separate output head, so an absent key is
-  not an inconsistency. An explicit `tie_word_embeddings: false` with no stored
-  output head still warns.
+  from `config.json`. mlx-lm's model configs default that setting to true (llama
+  and qwen2, for example), and tie-by-default families like Gemma ship no
+  separate output head, so an MLX repo with the key absent loads fine and its
+  absence is not an inconsistency. An explicit `tie_word_embeddings: false` with
+  no stored output head still warns.
 - The VLM image-token check now recognizes `[IMG]`, the image placeholder used
   by Pixtral and Mistral-3, so those repositories no longer warn that their
   image token is not an actual placeholder.
