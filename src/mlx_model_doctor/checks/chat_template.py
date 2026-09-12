@@ -35,21 +35,24 @@ def _chat_template_json_template(ctx: CheckContext) -> str | None:
     return template if isinstance(template, str) and template.strip() else None
 
 
-def _template_string(ctx: CheckContext, *, prefer_processor_template: bool = False) -> str | None:
-    """Return the effective chat-template string, preferring the source the runtime loads.
-
-    Under the text profile mlx-lm loads tokenizer_config.chat_template (AutoTokenizer ignores
-    chat_template.json), so that source is scanned first. Under the VLM profile the processor
-    loads chat_template.json, so it is preferred there. chat_template.jinja wins in both, and
-    whichever source remains is still consulted last so presence detection stays correct.
-    """
+def _jinja_template(ctx: CheckContext) -> str | None:
     jinja = ctx.chat_template_text()
-    if jinja is not None and jinja.strip():
-        return jinja
+    return jinja if jinja is not None and jinja.strip() else None
+
+
+def _template_string(ctx: CheckContext, *, prefer_processor_template: bool = False) -> str | None:
+    """Return the effective chat-template string from the source the runtime actually loads.
+
+    Text profile: mlx-lm's tokenizer loads chat_template.jinja then tokenizer_config.chat_template
+    (AutoTokenizer ignores chat_template.json), so scan jinja -> tokenizer_config, with
+    chat_template.json last so presence still detects a template that lives only there. VLM
+    profile: the processor renders chat_template.json when present and otherwise falls back to its
+    tokenizer, so scan chat_template.json -> jinja -> tokenizer_config.
+    """
     getters = (
-        (_chat_template_json_template, _tokenizer_config_template)
+        (_chat_template_json_template, _jinja_template, _tokenizer_config_template)
         if prefer_processor_template
-        else (_tokenizer_config_template, _chat_template_json_template)
+        else (_jinja_template, _tokenizer_config_template, _chat_template_json_template)
     )
     for getter in getters:
         template = getter(ctx)
@@ -69,7 +72,8 @@ def _has_template(ctx: CheckContext) -> bool:
     return False
 
 
-# Chat-template convention (tokenizer_config.json / .jinja) verified against transformers v4.x.
+# Chat-template sources (tokenizer_config.json / chat_template.json / chat_template.jinja) and their
+# load precedence verified against transformers 5.15, mlx-lm 0.31.3, and mlx-vlm 0.6.x.
 @dataclass(frozen=True, slots=True)
 class ChatTemplatePresenceCheck:
     """Check that a chat template is present in either supported location."""
