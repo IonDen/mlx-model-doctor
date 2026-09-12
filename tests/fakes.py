@@ -41,6 +41,10 @@ class FakeTarget:
     _safetensors_header: SafetensorsHeader | None = None
     tags: frozenset[str] = frozenset()
     library_name: str | None = None
+    # Declared sizes independent of a path's actual byte length -- lets a test pin
+    # a file's reported size (e.g. to exercise a byte-size cap) without writing
+    # that many real bytes.
+    size_overrides: dict[str, int] | None = None
 
     @property
     def source(self) -> Literal["local", "hf"]:
@@ -56,6 +60,8 @@ class FakeTarget:
         return tuple(sorted(self.files))
 
     def size(self, path: str) -> int | None:
+        if self.size_overrides is not None and path in self.size_overrides:
+            return self.size_overrides[path]
         data = self.files.get(path)
         return None if data is None else len(data)
 

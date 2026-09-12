@@ -139,6 +139,25 @@ def test_sdist_ships_the_sample_batch_schema(built_artifacts: tuple[Path, Path])
     )
 
 
+def test_wheel_ships_the_parity_schema(built_artifacts: tuple[Path, Path]) -> None:
+    _sdist, wheel = built_artifacts
+    with zipfile.ZipFile(wheel) as zf:
+        names = zf.namelist()
+    assert "mlx_model_doctor/schema/parity.v1.schema.json" in names, (
+        f"parity schema missing from wheel: {names}"
+    )
+
+
+def test_sdist_ships_the_parity_schema(built_artifacts: tuple[Path, Path]) -> None:
+    sdist, _wheel = built_artifacts
+    with tarfile.open(sdist) as tf:
+        # sdist members are prefixed with "<name>-<version>/"; strip it.
+        members = [name.split("/", 1)[1] for name in tf.getnames() if "/" in name]
+    assert "src/mlx_model_doctor/schema/parity.v1.schema.json" in members, (
+        f"parity schema missing from sdist: {members}"
+    )
+
+
 def test_development_status_is_beta() -> None:
     data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     classifiers = data["project"]["classifiers"]

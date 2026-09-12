@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-09-11
+
+Adds an adapter-parity verifier: a way to check whether fusing a LoRA adapter
+into a base model actually kept the behavior the adapter learned. Fusing is
+supposed to be lossless, but with mlx-lm's default path it often is not, and
+until now you had no cheap way to tell before shipping the fused model.
+
+### Added
+- `mlx-model-doctor parity mlx --base <B> --adapter <A> --fused <F>` and the
+  `check_adapter_parity` Python API. It runs the same teacher-forced input
+  through three models — the base alone, the base with the adapter loaded, and
+  the fused model — and compares their top-token predictions. The verdict says
+  whether the fused model tracks base+adapter (`pass`), fell back to the base
+  and lost the adapter (`fail_tracks_base`), matches neither (`fail_gross`), or
+  can't be told apart within measurement noise (`inconclusive`). Each model
+  loads in its own memory-capped subprocess, one at a time, so the check is
+  safe to run on a laptop.
+- `parity mlx --prompts <file>` builds the comparison fixture from your own
+  examples. Pass a JSON list of `{"prompt", "completion"}` pairs and the tool
+  tokenizes them with the base model's own tokenizer and scores the completion
+  tokens — so you check parity on text that matters for your model, not a
+  stand-in. Without it, the built-in fixture only fits its reference tokenizer
+  and a real model is refused with a message pointing you at `--prompts`.
+- `parity.v1` JSON schema for `parity mlx --format json` (shipped in the wheel,
+  validated against real output in the test suite), plus `text` and `markdown`
+  renderers. Exit codes: `0` parity confirmed, `1` a determined regression
+  (the fuse reverted to base, or a static incompatibility), `2` can't determine
+  (inconclusive, a worker failure, or a setup error).
+- Requires the optional `[mlx-lm]` extra for the runtime comparison, and a base
+  repository that ships a `tokenizer.json`. Point `--base`/`--adapter`/`--fused`
+  at directories of real files (a converted/fused model, or `hf download <repo>
+  --local-dir ./dir`), not the raw Hugging Face cache snapshot path, whose
+  symlinks the checker does not yet follow.
+
+### Changed
+- The verifier reports a degraded 4-bit fuse as `inconclusive` rather than a
+  false `pass`. The reason it needs to: mlx-lm's default fuse re-quantizes the
+  merged weights back to the base's format, and that round-trip erases part of
+  the adapter's contribution. On a small text-to-SQL LoRA the default 4-bit fuse
+  kept only about half the adapter's effect, while fusing with `--dequantize` (a
+  float fuse) kept nearly all of it. If you fuse for distribution, prefer
+  `--dequantize`, or run this check first.
+- The optional `[mlx-lm]` extra now pins `mlx-lm>=0.31.3,<0.32` and
+  `mlx>=0.32,<0.33` — the versions the parity check was verified against. This
+  also backs the existing `--smoke` runtime check.
+
 ## [0.8.0] — 2026-08-11
 
 A trust-and-depth release. Version-bound check tables now warn rather than

@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/IonDen/mlx-model-doctor/v0/src/mlx_model_doctor/schema/parity.v1.schema.json",
+  "title": "mlx-model-doctor adapter parity report",
+  "description": "Schema for the `--format json` output of `mlx-model-doctor parity mlx`. Versioned by the payload's schema_version (the literal prefix `parity/` followed by MAJOR.MINOR); this file describes the 1.x major line. `verdict` and the runtime metrics are nullable: a blocking phase short-circuit (a blocking static failure, a tokenizer mismatch, a worker error, an unsupported/incomplete adapter reference) leaves them null, with `reasons` and `phase_outcomes`/`worker_status` recording why. `base_report`/`fused_report` each embed a full report.v1-conformant report. `phase_outcomes`/`worker_status`/`peak_bytes` are keyed by dynamic phase/role names, not a fixed schema, so their values (not their key sets) are constrained.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "base", "adapter", "fused", "tokenizer_fingerprint", "fixture",
+    "tool_version", "mlx_version", "mlx_lm_version", "provenance",
+    "base_report", "fused_report", "results",
+    "verdict", "agree_fa", "agree_fb", "gap", "noise", "first_divergence", "flip_count",
+    "adapter_applied", "delta_map",
+    "phase_outcomes", "worker_status", "peak_bytes", "reasons", "worker_errors"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "base": { "$ref": "#/$defs/identity" },
+    "adapter": { "$ref": "#/$defs/identity" },
+    "fused": { "$ref": "#/$defs/identity" },
+    "tokenizer_fingerprint": { "$ref": "#/$defs/tokenizer_fingerprint" },
+    "fixture": { "$ref": "#/$defs/fixture" },
+    "tool_version": { "type": "string" },
+    "mlx_version": { "type": ["string", "null"] },
+    "mlx_lm_version": { "type": ["string", "null"] },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "base_report": {
+      "$ref": "https://raw.githubusercontent.com/IonDen/mlx-model-doctor/v0/src/mlx_model_doctor/schema/report.v1.schema.json"
+    },
+    "fused_report": {
+      "$ref": "https://raw.githubusercontent.com/IonDen/mlx-model-doctor/v0/src/mlx_model_doctor/schema/report.v1.schema.json"
+    },
+    "results": { "type": "array", "items": { "$ref": "#/$defs/result" } },
+    "verdict": {
+      "type": ["string", "null"],
+      "enum": ["pass", "fail_tracks_base", "fail_gross", "inconclusive", null]
+    },
+    "agree_fa": { "type": ["number", "null"] },
+    "agree_fb": { "type": ["number", "null"] },
+    "gap": { "type": ["number", "null"] },
+    "noise": { "type": ["number", "null"] },
+    "first_divergence": { "type": ["integer", "null"], "minimum": 0 },
+    "flip_count": { "type": ["integer", "null"], "minimum": 0 },
+    "adapter_applied": { "type": ["boolean", "null"] },
+    "delta_map": { "type": "array", "items": { "$ref": "#/$defs/tensor_delta" } },
+    "phase_outcomes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "enum": ["ok", "blocking_fail", "skipped", "error", "unsupported"]
+      }
+    },
+    "worker_status": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "enum": ["ok", "error", "skipped"] }
+    },
+    "peak_bytes": {
+      "type": "object",
+      "additionalProperties": { "type": ["integer", "null"], "minimum": 0 }
+    },
+    "reasons": { "type": "array", "items": { "type": "string" } },
+    "worker_errors": {
+      "type": "object",
+      "description": "Keyed by role, for exactly the roles whose worker_status is \"error\".",
+      "additionalProperties": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "original_ref", "source"],
+      "properties": {
+        "path": { "type": "string" },
+        "original_ref": { "type": "string" },
+        "source": { "type": "string", "enum": ["local", "hf"] }
+      }
+    },
+    "tokenizer_fingerprint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "vocab_size", "special_tokens_digest", "token_id_map_digest", "chat_template_digest"
+      ],
+      "properties": {
+        "vocab_size": { "type": ["integer", "null"], "minimum": 0 },
+        "special_tokens_digest": { "type": ["string", "null"] },
+        "token_id_map_digest": { "type": ["string", "null"] },
+        "chat_template_digest": { "type": ["string", "null"] }
+      }
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "input_digest", "max_length", "scored_positions"],
+      "properties": {
+        "id": { "type": "string" },
+        "input_digest": { "type": "string" },
+        "max_length": { "type": "integer", "minimum": 0 },
+        "scored_positions": { "type": "array", "items": { "type": "integer", "minimum": 0 } }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chip", "os", "backend", "weight_dtype", "compute_note"],
+      "properties": {
+        "chip": { "type": ["string", "null"] },
+        "os": { "type": ["string", "null"] },
+        "backend": { "type": ["string", "null"] },
+        "weight_dtype": { "type": ["string", "null"] },
+        "compute_note": { "type": ["string", "null"] }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "check_id", "title", "status", "severity", "message",
+        "remediation", "details", "duration_s"
+      ],
+      "properties": {
+        "check_id": { "type": "string", "pattern": "^[^/]+/.+$" },
+        "title": { "type": "string" },
+        "status": { "type": "string", "enum": ["pass", "warn", "fail", "skip"] },
+        "severity": { "type": "string", "enum": ["info", "low", "medium", "high"] },
+        "message": { "type": "string" },
+        "remediation": { "type": ["string", "null"] },
+        "details": { "type": "object", "additionalProperties": true },
+        "duration_s": { "type": ["number", "null"] }
+      }
+    },
+    "tensor_delta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tensor", "klass", "reason"],
+      "properties": {
+        "tensor": { "type": "string" },
+        "klass": {
+          "type": "string",
+          "enum": ["changed", "unchanged", "missing", "unexpected", "non_comparable"]
+        },
+        "reason": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

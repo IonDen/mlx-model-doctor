@@ -9,7 +9,12 @@ from importlib import metadata
 from pathlib import Path
 from typing import Literal, cast
 
-from mlx_model_doctor.api import check_hf_model, check_local_model
+from mlx_model_doctor.api import (
+    ParityOptions,
+    check_adapter_parity,
+    check_hf_model,
+    check_local_model,
+)
 from mlx_model_doctor.cache import ListingCache
 from mlx_model_doctor.compat import LISTING_VISIBLE_SIGNALS
 from mlx_model_doctor.context import CheckOptions
@@ -17,6 +22,15 @@ from mlx_model_doctor.environment import detect_venv, package_status
 from mlx_model_doctor.errors import ModelDoctorError
 from mlx_model_doctor.exit_codes import exit_code_for, exit_code_for_error
 from mlx_model_doctor.memory import parse_memory
+from mlx_model_doctor.parity.exit_codes import parity_exit_code
+from mlx_model_doctor.parity.fixtures import DEFAULT_FIXTURE_ID
+from mlx_model_doctor.parity.prompts import build_prompts_fixture
+from mlx_model_doctor.parity.report import (
+    ParityReport,
+    render_parity_json,
+    render_parity_markdown,
+    render_parity_text,
+)
 from mlx_model_doctor.plugins import BUILTIN_PLUGINS
 from mlx_model_doctor.report import (
     DoctorReport,
@@ -74,11 +88,20 @@ def _cmd_man(_args: argparse.Namespace) -> int:
                 "  mlx-model-doctor check local ./model",
                 "  mlx-model-doctor check hf mlx-community/Llama-3.2-3B-Instruct-4bit",
                 "  mlx-model-doctor sample hf --author mlx-community --limit 5",
+                "  mlx-model-doctor parity mlx --base <B> --adapter <A> --fused <F>",
+                "  mlx-model-doctor parity mlx --base <B> --adapter <A> --fused <F>"
+                " --prompts <examples.json>",
                 "",
                 "Exit codes:",
                 "  0: checks passed or informational command completed",
                 "  1: checks found failures under the selected fail policy",
                 "  2: tool error, bad target, missing dependency, or zero checks",
+                "",
+                "parity mlx exit codes:",
+                "  0: PASS -- the fused model tracks the adapter-applied reference",
+                "  1: a determined defect (tokenizer mismatch, uncovered LoRA target,",
+                "     or a confirmed regression/gross-divergence verdict)",
+                "  2: a tool/setup error or a runtime cannot-determine outcome",
             )
         )
     )
@@ -136,6 +159,31 @@ def _append_github_file(path: Path, content: str) -> None:
             handle.write(content)
     except OSError as exc:
         raise ModelDoctorError(f"Could not write to {path}: {exc}") from exc
+
+
+def _cmd_parity_mlx(args: argparse.Namespace) -> int:
+    if args.prompts is not None:
+        # --prompts wins over --fixture when both are given.
+        try:
+            fixture = build_prompts_fixture(args.base, args.prompts)
+        except ValueError as exc:
+            raise ModelDoctorError(str(exc)) from exc
+        options = ParityOptions(fixture=fixture)
+    else:
+        options = ParityOptions(fixture_id=args.fixture)
+    report = check_adapter_parity(
+        base=args.base, adapter=args.adapter, fused=args.fused, options=options
+    )
+    print(_render_parity_report(report, args.format))
+    return parity_exit_code(report)
+
+
+def _render_parity_report(report: ParityReport, output_format: str) -> str:
+    if output_format == "json":
+        return render_parity_json(report)
+    if output_format == "markdown":
+        return render_parity_markdown(report)
+    return render_parity_text(report)
 
 
 def _cmd_sample_hf(args: argparse.Namespace) -> int:
@@ -320,6 +368,39 @@ def build_parser() -> argparse.ArgumentParser:
     hf.add_argument("repo_id", help="Hugging Face model repository ID")
     _add_check_options(hf)
     hf.set_defaults(func=_cmd_check_hf)
+
+    parity = subparsers.add_parser("parity", help="verify adapter/fused-model parity")
+    parity_subparsers = parity.add_subparsers(dest="parity_command", required=True)
+    parity_mlx = parity_subparsers.add_parser(
+        "mlx", help="verify a fused model preserved a LoRA adapter's behavior"
+    )
+    parity_mlx.add_argument("--base", required=True, help="path to a local base model directory")
+    parity_mlx.add_argument(
+        "--adapter", required=True, help="path to a local LoRA adapter directory"
+    )
+    parity_mlx.add_argument("--fused", required=True, help="path to a local fused model directory")
+    parity_mlx.add_argument(
+        "--format",
+        choices=("text", "json", "markdown"),
+        default="text",
+        help="report output format",
+    )
+    parity_mlx.add_argument(
+        "--fixture",
+        default=DEFAULT_FIXTURE_ID,
+        help="pinned token-id fixture id used for the teacher-forced worker loads",
+    )
+    parity_mlx.add_argument(
+        "--prompts",
+        default=None,
+        help=(
+            "JSON file of [{prompt, completion}] examples; builds a fixture bound to "
+            "the base model's own tokenizer instead of the built-in default (overrides "
+            "--fixture when set). Requires --base to be an existing local directory; "
+            "this flag never downloads a Hugging Face repository on its own."
+        ),
+    )
+    parity_mlx.set_defaults(func=_cmd_parity_mlx)
     return parser
 
 

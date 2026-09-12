@@ -2,7 +2,7 @@
 
 Mostly real output from `mlx-model-doctor`, captured by running the tool — so you can see exactly what you get before installing it. Captured transcript sections show a command, its actual response, and a short read of what the result means. Command-only examples are marked.
 
-> Most transcripts were captured with **mlx-model-doctor 0.8.0** on **2026-08-11**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 6 and 7 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
+> Most transcripts were captured with **mlx-model-doctor 0.9.0** on **2026-09-10**. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 5 and 6 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
 
 ## Producer pre-upload workflow
 
@@ -96,15 +96,16 @@ PASS info vlm/quantization.shape
 
 ```console
 $ mlx-model-doctor version
-mlx-model-doctor 0.8.0
-Python: 3.13.12
+mlx-model-doctor 0.9.0
+Python: 3.14.5
 Executable: /path/to/.venv/bin/python3
 Virtualenv: /path/to/.venv
 Dependencies:
   huggingface-hub: 1.19.0
-  safetensors: not installed
-  mlx: not installed
-  mlx-lm: not installed
+  safetensors: 0.8.0
+  mlx: 0.32.0
+  mlx-lm: 0.31.3
+  mlx-vlm: not installed
 ```
 
 **Result:** exit code `0`. The version report shows the Python environment, the tool's own version, and each dependency it knows about. `safetensors` is the serialization format (the tool parses headers itself); `mlx` and `mlx-lm` are needed only for the optional `--smoke` runtime check.
@@ -121,11 +122,19 @@ Examples:
   mlx-model-doctor check local ./model
   mlx-model-doctor check hf mlx-community/Llama-3.2-3B-Instruct-4bit
   mlx-model-doctor sample hf --author mlx-community --limit 5
+  mlx-model-doctor parity mlx --base <B> --adapter <A> --fused <F>
+  mlx-model-doctor parity mlx --base <B> --adapter <A> --fused <F> --prompts <examples.json>
 
 Exit codes:
   0: checks passed or informational command completed
   1: checks found failures under the selected fail policy
   2: tool error, bad target, missing dependency, or zero checks
+
+parity mlx exit codes:
+  0: PASS -- the fused model tracks the adapter-applied reference
+  1: a determined defect (tokenizer mismatch, uncovered LoRA target,
+     or a confirmed regression/gross-divergence verdict)
+  2: a tool/setup error or a runtime cannot-determine outcome
 ```
 
 **Result:** exit code `0`.
@@ -440,45 +449,45 @@ Summary:
   checked: 10
   tool-error: 0
 
-CHECKED mlx-community/DeepSeek-R1-Distill-Llama-8B
+CHECKED mlx-community/Cydonia-24B-v3.1-4bit
   Signal: tag:mlx
   Results: pass=10 warn=1 fail=0 skip=3
 
-CHECKED mlx-community/DeepSeek-R1-Distill-Qwen-14B-4bit
+CHECKED mlx-community/DeepSeek-OCR-8bit
+  Signal: tag:mlx
+  Results: pass=12 warn=1 fail=0 skip=1
+
+CHECKED mlx-community/DeepSeek-R1-Distill-Llama-70B-4bit
   Signal: tag:mlx
   Results: pass=12 warn=0 fail=0 skip=2
 
-CHECKED mlx-community/DeepSeek-R1-Distill-Qwen-32B-6bit
+CHECKED mlx-community/Hermes-4-70B-8bit
   Signal: tag:mlx
-  Results: pass=12 warn=0 fail=0 skip=2
+  Results: pass=11 warn=1 fail=0 skip=2
 
-CHECKED mlx-community/DeepSeek-R1-Distill-Qwen-7B
+CHECKED mlx-community/Josiefied-Qwen3-1.7B-abliterated-v1-bf16
   Signal: tag:mlx
   Results: pass=10 warn=1 fail=0 skip=3
 
-CHECKED mlx-community/DeepSeek-V4-Flash-0731-2.4bit-mixed
+CHECKED mlx-community/Kimi-K2.5
   Signal: tag:mlx
-  Results: pass=9 warn=2 fail=0 skip=3
+  Results: pass=11 warn=2 fail=0 skip=1
 
-CHECKED mlx-community/DeepSeek-V4-Flash-0731-OptiQ-2bit
+CHECKED mlx-community/LFM2.5-1.2B-Instruct-4bit
   Signal: tag:mlx
-  Results: pass=11 warn=1 fail=0 skip=2
+  Results: pass=13 warn=0 fail=0 skip=1
 
-CHECKED mlx-community/DeepSeek-V4-Flash-2bit-DQ
+CHECKED mlx-community/LFM2.5-1.2B-Thinking-8bit
   Signal: tag:mlx
-  Results: pass=11 warn=1 fail=0 skip=2
-
-CHECKED mlx-community/Kokoro-82M-bf16
-  Signal: tag:mlx
-  Results: pass=4 warn=3 fail=0 skip=7
+  Results: pass=12 warn=1 fail=0 skip=1
 
 CHECKED mlx-community/LFM2.5-2.6B-4bit
   Signal: tag:mlx
   Results: pass=12 warn=2 fail=0 skip=0
 
-CHECKED mlx-community/LFM2.5-2.6B-8bit
+CHECKED mlx-community/Llama-3.2-3B-Instruct-bf16
   Signal: tag:mlx
-  Results: pass=12 warn=2 fail=0 skip=0
+  Results: pass=10 warn=1 fail=0 skip=3
 ```
 
 **Result:** exit code `0`. Ten MLX repos checked, all clean. Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
@@ -524,7 +533,94 @@ CHECKED mlx-community/BB-L-01-7B-mlx-4bit
 
 **Result:** exit code `0`. With `--max-candidates 500`, the survey scans deeper into the catalog (500 repos instead of the default window), and `--signal-filter tag:mlx` keeps only repos whose primary signal is the `mlx` tag. The deeper scan reaches earlier repos alphabetically (starting with ALMA instead of DeepSeek). Use `--no-cache` to bypass the listing cache, or `--cache-ttl` to change its TTL (default: 1 hour).
 
-## 9. `--format github` — annotations for CI
+## 9. `parity mlx` — did fusing the adapter keep its behavior?
+
+`parity mlx` compares three models on the same teacher-forced input — the base
+alone, the base with the LoRA adapter loaded, and the fused model — and reports
+whether the fused model still tracks base+adapter. `--prompts` builds the
+comparison from your own `{"prompt", "completion"}` examples, tokenized with the
+base model's own tokenizer. Point `--base`/`--adapter`/`--fused` at directories
+of real files (a converted/fused model, or `hf download <repo> --local-dir`), not
+the raw Hugging Face cache path.
+
+A faithful fuse (`mlx_lm.fuse --dequantize`, which keeps the merged weights in
+float) preserves the adapter — `pass`, exit `0`:
+
+```console
+$ mlx-model-doctor parity mlx \
+    --base ./Qwen2.5-0.5B-Instruct-4bit \
+    --adapter ./wikisql-lora \
+    --fused ./qwen-fused-fp16 \
+    --prompts ./examples.json
+MLX Model Doctor (parity): ./wikisql-lora -> ./qwen-fused-fp16
+
+Verdict: pass
+
+Agreement:
+  fused vs adapter (agree_fa): 0.9740
+  fused vs base    (agree_fb): 0.6364
+  gap:                         0.3377
+  noise:                       0.0000
+  first divergence:            267
+  flip count:                  2
+  adapter applied:             true
+
+Failing checks:
+  WARN [parity] parity/tokenizer.identity: The base and fused targets' tokenizer vocabularies match, but their special-tokens/chat-template metadata differs (special_tokens_differ); the parity oracle's fixed-id comparison is still valid and will run.
+
+Delta map: 628 tensors (121 unchanged, 507 non_comparable)
+$ echo $?
+0
+```
+
+A `--dequantize` fuse turns every quantized weight into float, so a byte
+comparison against the 4-bit base does not apply — every tensor is
+`non_comparable`, and the summary is all you need here.
+
+The default fuse re-quantizes the merged weights back to 4-bit, and that
+round-trip erases part of the adapter. The fused model then tracks neither the
+base nor base+adapter cleanly — `inconclusive`, exit `2` (parity not confirmed):
+
+```console
+$ mlx-model-doctor parity mlx \
+    --base ./Qwen2.5-0.5B-Instruct-4bit \
+    --adapter ./wikisql-lora \
+    --fused ./qwen-fused-q4 \
+    --prompts ./examples.json
+MLX Model Doctor (parity): ./wikisql-lora -> ./qwen-fused-q4
+
+Verdict: inconclusive
+
+Agreement:
+  fused vs adapter (agree_fa): 0.7792
+  fused vs base    (agree_fb): 0.8182
+  gap:                         0.3377
+  noise:                       0.0000
+  first divergence:            43
+  flip count:                  17
+  adapter applied:             true
+
+Failing checks:
+  WARN [parity] parity/tokenizer.identity: The base and fused targets' tokenizer vocabularies match, but their special-tokens/chat-template metadata differs (special_tokens_differ); the parity oracle's fixed-id comparison is still valid and will run.
+
+Delta map: 628 tensors (336 changed, 292 unchanged)
+  changed model.layers.10.mlp.down_proj.biases
+  changed model.layers.10.mlp.down_proj.scales
+  changed model.layers.10.mlp.down_proj.weight
+$ echo $?
+2
+```
+
+The text delta map prints the class counts, then the notable tensors — here the
+`changed` ones — capped at 20 with a `… (N more)` line for the rest; the full
+per-tensor list is in `--format json`. The base+adapter reference disagrees with
+the base on 33.8% of the scored
+tokens (`gap`), so the tool can measure how much of that the fuse kept: the
+`--dequantize` fuse holds 97% agreement with base+adapter, while the default
+4-bit fuse drops to 78% — about halfway back toward the plain base. When a fuse
+comes out `inconclusive` or worse, re-fuse with `--dequantize`.
+
+## 10. `--format github` — annotations for CI
 
 **Model:** any `check` run with `--format github`, shown here on a directory with no `config.json` so the failure annotations are visible. GitHub renders the `::error` / `::warning` lines as inline annotations on the changed files and the `::notice` line as a run summary. The [GitHub Action](README.md#use-it-in-ci) wraps this format for you.
 
