@@ -5,6 +5,14 @@ as priorities change.
 
 ## Released
 
+- **v0.9.2** (2026-10-24) — a stale safetensors index no longer reads as
+  missing weights. When an index names shards that are absent but the repository
+  ships other shards that mlx-lm and mlx-vlm load, `check` now warns that the
+  index is stale instead of failing, and the weight checks read the shipped
+  shards. An index with genuinely missing shards fails with a full report and
+  exit 1 on `check hf`, where it used to stop with a Hub 404 and exit 2. Local
+  and Hub checks now agree on repositories with nested component indexes, and
+  `check hf` no longer prints a progress bar on stderr.
 - **v0.9.1** (2026-09-12) — a false-positive cleanup. Four checks were flagging
   valid, real-world repositories and now pass: a safetensors index kept in a
   subdirectory (shard names resolve relative to the index file, not the
@@ -12,7 +20,7 @@ as priorities change.
   output head (Gemma); a Pixtral/Mistral-3 `[IMG]` image token; and a
   vision-language repository whose chat template lives in `chat_template.json`.
   The genuine problems these checks catch still fail.
-- **v0.9.0** (2026-09-11) — the adapter-parity verifier. A new `parity mlx`
+- **v0.9.0** (2026-09-12) — the adapter-parity verifier. A new `parity mlx`
   command and `check_adapter_parity` API check whether fusing a LoRA adapter
   into a base model kept the behavior the adapter learned, by comparing the
   top-token predictions of the base, the base with the adapter loaded, and the
