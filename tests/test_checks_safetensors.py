@@ -397,3 +397,384 @@ def test_offset_scan_reports_leading_gap() -> None:
     result = _run_offsets(header)
     assert result.status == "warn"
     assert "model.safetensors:w" in result.details["gaps"]
+
+
+# ---------------------------------------------------------------------------
+# Stale vs missing root index (0082)
+# ---------------------------------------------------------------------------
+
+_STALE_INDEX = {
+    "weight_map": {
+        "old.y": "model-00002-of-00002.safetensors",
+        "old.x": "model-00001-of-00002.safetensors",
+    }
+}
+_SHIPPED = (
+    "model-00001-of-00003.safetensors",
+    "model-00002-of-00003.safetensors",
+    "model-00003-of-00003.safetensors",
+)
+
+
+def _index_ctx(index: dict[str, object], shards: tuple[str, ...]) -> CheckContext:
+    files = {"model.safetensors.index.json": json.dumps(index).encode()}
+    files.update(dict.fromkeys(shards, b"shard"))
+    return context_for_files(files)
+
+
+def test_stale_index_with_shipped_shards_warns_medium_and_names_the_cause() -> None:
+    # Bug caught: the 0082 false fail (FAIL high on a repo MLX loaders load), or a warn
+    # that does not say why (no counts, no "stale").
+    result = SafetensorsIndexCheck().run(_index_ctx(_STALE_INDEX, _SHIPPED))
+
+    assert result.status == "warn"
+    assert result.severity == "medium"
+    assert result.message == (
+        "Safetensors index model.safetensors.index.json is stale: it names 2 shards that are "
+        "absent from the repository, while 3 other shards ship. mlx-lm never reads the index "
+        "and loads model*.safetensors; mlx-vlm falls back to the shipped shards when none of "
+        "the named ones exist. Loaders that follow the index, and huggingface_hub's "
+        "get_safetensors_metadata, fail."
+    )
+    assert result.remediation == (
+        "Regenerate model.safetensors.index.json from the shipped shards, or remove the "
+        "stale index."
+    )
+
+
+def test_stale_index_details_list_sorted_absent_and_shipped_shards() -> None:
+    # Bug caught: details missing the classification that tells a stale index from
+    # missing weights, or the absent and shipped lists swapped.
+    result = SafetensorsIndexCheck().run(_index_ctx(_STALE_INDEX, tuple(reversed(_SHIPPED))))
+
+    assert result.details["shard_layout"] == "stale_all_absent_with_shipped"
+    assert result.details["missing_shards"] == (
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
+    )
+    assert result.details["shipped_shards"] == _SHIPPED
+    assert result.details["index_path"] == "model.safetensors.index.json"
+
+
+def test_partly_missing_index_still_fails_with_the_current_message() -> None:
+    # Bug caught: excusing a partly missing index as stale because another shard ships.
+    index = {
+        "weight_map": {
+            "a": "model-00001-of-00003.safetensors",
+            "b": "model-00002-of-00003.safetensors",
+            "c": "model-00003-of-00003.safetensors",
+        }
+    }
+
+    result = SafetensorsIndexCheck().run(
+        _index_ctx(index, ("model-00002-of-00003.safetensors", "extra.safetensors"))
+    )
+
+    assert result.status == "fail"
+    assert result.severity == "high"
+    assert result.message == (
+        "Safetensors index model.safetensors.index.json references invalid or missing shard "
+        "model-00001-of-00003.safetensors."
+    )
+    assert result.details["shard_layout"] == "partial_missing"
+    assert result.details["missing_shards"] == (
+        "model-00001-of-00003.safetensors",
+        "model-00003-of-00003.safetensors",
+    )
+
+
+def test_all_absent_index_with_only_nested_shards_fails() -> None:
+    # Bug caught: a nested component shard counted as "shipped", excusing an index whose
+    # weights are all gone.
+    result = SafetensorsIndexCheck().run(_index_ctx(_STALE_INDEX, ("vae/model.safetensors",)))
+
+    assert result.status == "fail"
+    assert result.details["shard_layout"] == "all_missing"
+
+
+def test_all_absent_index_with_only_a_non_model_shard_fails() -> None:
+    # Bug caught: a top-level shard mlx-lm would not glob (not model*.safetensors)
+    # excusing an index whose named weights are all gone.
+    result = SafetensorsIndexCheck().run(_index_ctx(_STALE_INDEX, ("weights.safetensors",)))
+
+    assert result.status == "fail"
+    assert result.details["shard_layout"] == "all_missing"
+
+
+def test_nested_index_with_absent_shards_fails_even_when_root_shards_ship() -> None:
+    # Bug caught: the stale excuse applied to a nested component index, which MLX loaders
+    # never fall back for.
+    files = {
+        "model.safetensors": b"root",
+        "text_encoder/model.safetensors.index.json": json.dumps(
+            {"weight_map": {"enc.w": "0.safetensors"}}
+        ).encode(),
+    }
+
+    result = SafetensorsIndexCheck().run(context_for_files(files))
+
+    assert result.status == "fail"
+    assert result.details["missing_shards"] == ("text_encoder/0.safetensors",)
+
+
+def test_invalid_shard_reference_is_not_excused_as_stale() -> None:
+    # Bug caught: an index naming a path outside the repo treated as merely stale; the
+    # reference is invalid, and a loader that follows it may read outside the model.
+    index = {"weight_map": {"w": "../outside.safetensors"}}
+    files = {"model.safetensors.index.json": json.dumps(index).encode(), "model.safetensors": b"w"}
+    target = InvalidShardPathTarget(files=files)
+
+    result = SafetensorsIndexCheck().run(CheckContext(target=target, options=check_options()))
+
+    assert result.status == "fail"
+    assert result.details["invalid_shards"] == ("../outside.safetensors",)
+    # Bug caught (C2): the fail tagged "stale_all_absent_with_shipped" for a details reader.
+    assert result.details["shard_layout"] == "all_missing"
+
+
+def test_stale_root_warning_does_not_hide_a_later_failing_index() -> None:
+    # Bug caught: returning the root index's stale warn at once, so a nested component
+    # index (sorted after it) with genuinely missing shards is never reported.
+    files = {
+        "model.safetensors.index.json": json.dumps(_STALE_INDEX).encode(),
+        "model-00001-of-00003.safetensors": b"shard",
+        "text_encoder/model.safetensors.index.json": json.dumps(
+            {"weight_map": {"enc.w": "0.safetensors"}}
+        ).encode(),
+    }
+
+    result = SafetensorsIndexCheck().run(context_for_files(files))
+
+    assert result.status == "fail"
+    assert result.details["index_path"] == "text_encoder/model.safetensors.index.json"
+
+
+def test_stale_root_warning_survives_a_passing_nested_index() -> None:
+    # Bug caught: a later passing index overwriting the stale warn with a pass.
+    files = {
+        "model.safetensors.index.json": json.dumps(_STALE_INDEX).encode(),
+        "model-00001-of-00003.safetensors": b"shard",
+        "text_encoder/model.safetensors.index.json": json.dumps(
+            {"weight_map": {"enc.w": "0.safetensors"}}
+        ).encode(),
+        "text_encoder/0.safetensors": b"enc",
+    }
+
+    result = SafetensorsIndexCheck().run(context_for_files(files))
+
+    assert result.status == "warn"
+    assert result.details["shard_layout"] == "stale_all_absent_with_shipped"
+
+
+def test_stale_index_does_not_hide_a_later_top_level_index_with_an_invalid_reference() -> None:
+    # Bug caught (C2): run() keeping the first stale-tagged result, so an earlier stale
+    # warn swallows a later index that fails on an out-of-repo reference.
+    files = {
+        "model.safetensors.index.json": json.dumps(_STALE_INDEX).encode(),
+        "z.safetensors.index.json": json.dumps(
+            {"weight_map": {"w": "../outside.safetensors"}}
+        ).encode(),
+        "model-00001-of-00003.safetensors": b"shard",
+    }
+    target = InvalidShardPathTarget(files=files)
+
+    result = SafetensorsIndexCheck().run(CheckContext(target=target, options=check_options()))
+
+    assert result.status == "fail"
+    assert result.details["index_path"] == "z.safetensors.index.json"
+
+
+def test_stale_index_message_uses_singular_forms_for_one_shard() -> None:
+    # Bug caught (C3): "names 1 shard that are absent ... while 1 other shard ship".
+    index = {"weight_map": {"old": "model-00001-of-00002.safetensors"}}
+
+    result = SafetensorsIndexCheck().run(_index_ctx(index, ("model-00001-of-00001.safetensors",)))
+
+    assert result.message == (
+        "Safetensors index model.safetensors.index.json is stale: it names 1 shard that is "
+        "absent from the repository, while 1 other shard ships. mlx-lm never reads the index "
+        "and loads model*.safetensors; mlx-vlm falls back to the shipped shards when none of "
+        "the named ones exist. Loaders that follow the index, and huggingface_hub's "
+        "get_safetensors_metadata, fail."
+    )
+
+
+def test_index_check_accepts_a_dot_prefixed_shard_value() -> None:
+    # Bug caught (C1): "./model-00002..." checked verbatim, so a present shard reads
+    # as missing.
+    index = {
+        "weight_map": {
+            "a": "model-00001-of-00002.safetensors",
+            "b": "./model-00002-of-00002.safetensors",
+        }
+    }
+    shards = ("model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors")
+
+    result = SafetensorsIndexCheck().run(_index_ctx(index, shards))
+
+    assert result.status == "pass"
+    assert result.details["shards"] == shards
+
+
+class CaseInsensitiveTarget(FakeTarget):
+    def exists(self, path: str) -> bool:
+        return path.lower() in {name.lower() for name in self.files}
+
+
+def test_case_mismatched_shard_counts_as_present_in_the_classification() -> None:
+    # Bug caught (C1): the classification using listing membership while the check uses
+    # target.exists, so a case-mismatched present shard plus one absent shard is called
+    # stale (warn) instead of partly missing (fail), unlike the local header.
+    index = {
+        "weight_map": {
+            "a": "Model-00001-of-00002.safetensors",
+            "b": "model-00002-of-00002.safetensors",
+        }
+    }
+    files = {"model.safetensors.index.json": json.dumps(index).encode()}
+    files.update(
+        dict.fromkeys(
+            ("model-00001-of-00002.safetensors", "model-00003-of-00003.safetensors"), b"s"
+        )
+    )
+    target = CaseInsensitiveTarget(files=files)
+
+    result = SafetensorsIndexCheck().run(CheckContext(target=target, options=check_options()))
+
+    assert result.status == "fail"
+    assert result.details["shard_layout"] == "partial_missing"
+    assert result.details["missing_shards"] == ("model-00002-of-00002.safetensors",)
+
+
+def test_missing_shard_message_replaces_control_characters() -> None:
+    # Bug caught (S2): a "\n" in a shard name faking a line in the text report; the raw
+    # name must still reach details.
+    index = {"weight_map": {"w": "evil\nFAIL x.safetensors"}}
+
+    result = SafetensorsIndexCheck().run(_index_ctx(index, ()))
+
+    assert result.status == "fail"
+    assert result.message == (
+        "Safetensors index model.safetensors.index.json references invalid or missing shard "
+        "evil?FAIL x.safetensors."
+    )
+    assert result.details["missing_shards"] == ("evil\nFAIL x.safetensors",)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["../outside.safetensors", "sub/../../outside.safetensors", "/abs/outside.safetensors"],
+    ids=["dotdot", "dotdot-after-normalizing", "absolute"],
+)
+def test_escaping_shard_value_is_invalid_whatever_the_target_says(value: str) -> None:
+    # Bug caught (RC3): a value outside the repository judged by target.exists alone, so a
+    # target that just answers False (HF) calls it stale while the local target fails it.
+    index = {"weight_map": {"w": value}}
+
+    result = SafetensorsIndexCheck().run(_index_ctx(index, ("model.safetensors",)))
+
+    assert result.status == "fail"
+    assert result.details["invalid_shards"] == (value.replace("sub/../", ""),)
+    assert result.details["shard_layout"] == "all_missing"
+
+
+def test_dotdot_named_file_inside_the_repo_is_not_an_escape() -> None:
+    # Bug caught (RC3 over-reach): "..x.safetensors" is an ordinary file name inside the
+    # repository, not a parent-directory reference.
+    index = {"weight_map": {"w": "..x.safetensors"}}
+
+    result = SafetensorsIndexCheck().run(_index_ctx(index, ("..x.safetensors",)))
+
+    assert result.status == "pass"
+
+
+def _named_index_ctx(index_path: str, index: dict[str, object], shards: tuple[str, ...]):
+    files = {index_path: json.dumps(index).encode()}
+    files.update(dict.fromkeys(shards, b"shard"))
+    return context_for_files(files)
+
+
+def test_stale_message_replaces_control_characters_in_the_index_path() -> None:
+    # Bug caught (RC4): a "\n" in the index file name faking a report line in the stale
+    # warning; details keep the raw path.
+    index_path = "evil\nFAIL.safetensors.index.json"
+    index = {"weight_map": {"old": "model-00001-of-00002.safetensors"}}
+
+    result = SafetensorsIndexCheck().run(
+        _named_index_ctx(index_path, index, ("model-00001-of-00001.safetensors",))
+    )
+
+    assert result.status == "warn"
+    assert result.message.startswith(
+        "Safetensors index evil?FAIL.safetensors.index.json is stale: it names 1 shard"
+    )
+    assert "\n" not in result.message
+    assert result.remediation == (
+        "Regenerate evil?FAIL.safetensors.index.json from the shipped shards, or remove the "
+        "stale index."
+    )
+    assert result.details["index_path"] == index_path
+
+
+def test_fail_message_replaces_control_characters_in_the_index_path() -> None:
+    # Bug caught (RC4): the same raw index path in the missing-shard failure.
+    index_path = "evil\nFAIL.safetensors.index.json"
+    index = {"weight_map": {"w": "model-00001-of-00001.safetensors"}}
+
+    result = SafetensorsIndexCheck().run(_named_index_ctx(index_path, index, ()))
+
+    assert result.status == "fail"
+    assert result.message == (
+        "Safetensors index evil?FAIL.safetensors.index.json references invalid or missing "
+        "shard model-00001-of-00001.safetensors."
+    )
+    assert result.details["index_path"] == index_path
+
+
+def test_stale_index_message_agrees_with_mixed_counts() -> None:
+    # Bug caught (RT2): the verb for the shipped count taken from the absent count
+    # ("while 2 other shards ships"), or the noun swapped between the two counts.
+    index = {"weight_map": {"old": "model-00001-of-00002.safetensors"}}
+
+    result = SafetensorsIndexCheck().run(
+        _index_ctx(index, ("model-00001-of-00003.safetensors", "model-00002-of-00003.safetensors"))
+    )
+
+    assert result.message == (
+        "Safetensors index model.safetensors.index.json is stale: it names 1 shard that is "
+        "absent from the repository, while 2 other shards ship. mlx-lm never reads the index "
+        "and loads model*.safetensors; mlx-vlm falls back to the shipped shards when none of "
+        "the named ones exist. Loaders that follow the index, and huggingface_hub's "
+        "get_safetensors_metadata, fail."
+    )
+
+
+class RaisingExistsTarget(FakeTarget):
+    error: Exception | None = None
+
+    def exists(self, path: str) -> bool:
+        if path == "link.safetensors" and self.error is not None:
+            raise self.error
+        return super().exists(path)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [TargetError("outside model root", target="link.safetensors", source="local"), UnicodeError()],
+    ids=["target-error", "unicode-error"],
+)
+def test_target_rejected_in_repo_name_is_invalid_not_stale(error: Exception) -> None:
+    # Bug caught: a name the target itself rejects (a symlink leaving the root, an
+    # unencodable name) counted as merely absent, so the shipped shard excuses it as stale.
+    index = {"weight_map": {"w": "link.safetensors"}}
+    files = {
+        "model.safetensors.index.json": json.dumps(index).encode(),
+        "model-00001-of-00001.safetensors": b"w",
+    }
+    target = RaisingExistsTarget(files=files)
+    target.error = error
+
+    result = SafetensorsIndexCheck().run(CheckContext(target=target, options=check_options()))
+
+    assert result.status == "fail"
+    assert result.details["invalid_shards"] == ("link.safetensors",)
