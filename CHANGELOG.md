@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] — 2026-10-24
+
+The safetensors index check now tells a stale index apart from missing weights,
+and `check hf` and `check local` agree on repositories with nested component
+indexes.
+
+### Fixed
+- A stale safetensors index now gets a medium warning, not a failure. Some
+  repositories ship a `model.safetensors.index.json` naming shards that are
+  absent, next to other shards that ship
+  (`mlx-community/Mistral-Small-3.1-24B-Instruct-2503-6bit`: 10 absent,
+  4 shipped). The warning gives both counts and suggests regenerating or
+  removing the index; the weight checks then read the shipped shards. A shard
+  counts as shipped only if both loaders would take it: a top-level
+  `model*.safetensors` other than `consolidated.safetensors`.
+  `weights.safetensors` and `consolidated.safetensors` still fail, since
+  mlx-lm's glob matches neither. No load was run. mlx-lm (0.31.3) globs
+  `model*.safetensors` and never reads the index; mlx-vlm (0.6.12, 0.7.x) keeps
+  the named shards that exist, else globs `*.safetensors` minus
+  `consolidated.safetensors`. [mlx-vlm issue 624](https://github.com/Blaizzy/mlx-vlm/issues/624),
+  fixed by [PR 638](https://github.com/Blaizzy/mlx-vlm/pull/638), has an opener
+  who writes: "Model loads and works correctly in mlx-lm/mlx-vlm despite index
+  mismatch."
+- An index whose named shards are some or all missing, with no loader-eligible
+  shard shipped, now produces a full report on `check hf`. `text/safetensors.index`
+  and `text/safetensors.offsets` fail and the command exits 1. The index check
+  names the first missing shard, and the full sorted list is in its details.
+  Only the offsets message lists the absent shards: up to 8 names, then
+  "and N more". It used to stop with a bare Hub 404 and exit 2.
+  Other Hub errors, such as an auth failure or a dropped connection, still exit 2.
+- `check local` and `check hf` now give the same result on a repository with a
+  nested component index, such as `text_encoder/model.safetensors.index.json`.
+  Both read only the root index for the header, as the Hub client does, so
+  `check local` no longer warns `text/weights.param_count` about a component's
+  tensors. The nested index is still validated by `text/safetensors.index`.
+  On `check local`, a root index with some or all of its named shards missing
+  and no loader-eligible shard shipped now reports a header error
+  (`text/safetensors.offsets` fails and `text/weights.param_count` is skipped),
+  which matches `check hf`. A stale index still reads its shipped shards, as
+  in the first item.
+- `check hf` no longer prints the `Parse safetensors files` progress bar on stderr.
+
+### Behavior changes
+On `check hf`, a stale index used to exit 2 by default (exit 1 with
+`--skip-weights`). It now passes with a warning under the default `--fail-on error`
+and exits 0. If your CI should still fail on it, use `--fail-on warn`. A
+repository whose index names missing shards, with no loader-eligible shard
+shipped, now exits 1 with a report where it used to exit 2 with a 404, so a script that treated exit 2 as "could not check"
+will now see a failed check instead.
+
 ## [0.9.1] — 2026-09-12
 
 A false-positive cleanup. Four checks were flagging valid, popular repositories;
@@ -35,7 +85,7 @@ each now passes, while the genuine problems they were meant to catch still fail.
   chat template, and the end-of-turn-token check reads the template the runtime
   will use rather than a stale copy in `tokenizer_config.json`.
 
-## [0.9.0] — 2026-09-11
+## [0.9.0] — 2026-09-12
 
 Adds an adapter-parity verifier: a way to check whether fusing a LoRA adapter
 into a base model actually kept the behavior the adapter learned. Fusing is
@@ -122,10 +172,6 @@ A reach/readiness minor release plus the first explicit non-text validation
 profile. It adds a non-runtime `vlm` plugin for vision-language repositories
 while keeping `text` as the default, preserving existing `text/...` check IDs,
 leaving JSON schemas unchanged, and not adding runtime smoke/load behavior.
-
-Release gate: after the `v0.7.0` semver release publishes successfully, move the
-moving `v0` Action tag to the release commit, confirm the remote `v0` SHA matches
-that commit, and confirm the release workflow did not run from the bare `v0` tag.
 
 ### Added
 - Explicit `vlm` plugin (`--plugin vlm`) for vision-language repositories. It

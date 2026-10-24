@@ -10,6 +10,7 @@ from mlx_model_doctor.context import CheckOptions
 from mlx_model_doctor.errors import TargetError
 from mlx_model_doctor.report import CheckResult, DoctorReport
 from mlx_model_doctor.targets import HfSiblingProtocol
+from tests.fakes import FakeShardHub, shard_repo
 
 
 def test_version_command_prints_executable(capsys) -> None:
@@ -988,3 +989,68 @@ class DownloadErrorHub:
         if filename == "config.json":
             raise RuntimeError("network unavailable")
         return b"{}"
+
+
+# --- stale / partial root index through the CLI (0080, 0082) -----------------------------
+
+
+def _serve(monkeypatch: pytest.MonkeyPatch, hub: FakeShardHub) -> None:
+    monkeypatch.setattr(targets, "DefaultHfHub", lambda: hub)
+
+
+def test_check_hf_stale_index_exits_zero_under_the_default_policy(monkeypatch, capsys) -> None:
+    # Bug caught (0082): the stale index still failing (exit 1) or killing the run (exit 2).
+    files, shards = shard_repo("stale")
+    _serve(monkeypatch, FakeShardHub(files=files, shards=shards))
+
+    code = cli.main(["check", "hf", "org/stale", "--format", "json"])
+    captured = capsys.readouterr()
+
+    assert code == 0
+    results = {r["check_id"]: r for r in json.loads(captured.out)["results"]}
+    assert results["text/safetensors.index"]["status"] == "warn"
+    assert captured.err == ""
+
+
+def test_check_hf_stale_index_exits_one_under_fail_on_warn(monkeypatch, capsys) -> None:
+    # Bug caught: the stale finding downgraded below warn, so --fail-on warn passes it.
+    files, shards = shard_repo("stale")
+    _serve(monkeypatch, FakeShardHub(files=files, shards=shards))
+
+    assert cli.main(["check", "hf", "org/stale", "--fail-on", "warn"]) == 1
+    assert "WARN medium text/safetensors.index" in capsys.readouterr().out
+
+
+def test_check_hf_partial_index_prints_the_report_and_exits_one(monkeypatch, capsys) -> None:
+    # Bug caught (0080): the default run exiting 2 with a bare 404 and no report.
+    files, shards = shard_repo("partial")
+    hub = FakeShardHub(files=files, shards=shards)
+    _serve(monkeypatch, hub)
+
+    code = cli.main(["check", "hf", "org/partial"])
+    captured = capsys.readouterr()
+
+    assert code == 1
+    assert "FAIL high text/safetensors.index" in captured.out
+    assert "model-00001-of-00003.safetensors" in captured.out
+    assert captured.err == ""
+    # Bug caught (T3): HfTarget not classifying, leaving the fake's 404 as the backstop.
+    assert hub.safetensors_metadata_calls == []
+
+
+def test_check_hf_header_network_failure_still_exits_two(monkeypatch, capsys) -> None:
+    # Bug caught: the soft header path swallowing a genuine Hub failure into a report.
+    files, shards = shard_repo("consistent")
+    hub = FakeShardHub(
+        files=files,
+        shards=shards,
+        metadata_error=TargetError("connection refused", target="org/ok", source="hf"),
+    )
+    _serve(monkeypatch, hub)
+
+    code = cli.main(["check", "hf", "org/ok"])
+    captured = capsys.readouterr()
+
+    assert code == 2
+    assert "connection refused" in captured.err
+    assert captured.out == ""

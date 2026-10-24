@@ -7,8 +7,7 @@ from typing import Protocol
 
 # Calibrated 2026-09-09 against mlx 0.32.0 / mlx-lm 0.31.3 on Qwen2.5-0.5B-Instruct-4bit +
 # a wikisql LoRA; fp16 (--dequantize) fuse fa~0.97 -> PASS, default-q4 fuse fa~0.78/fb~0.82
-# -> INCONCLUSIVE (partial degradation), fused==base -> FAIL_TRACKS_BASE (see
-# docs/superpowers/reviews/2026-09-09-mlx-model-doctor-0049-fuse-degradation-calibration.md).
+# -> INCONCLUSIVE (partial degradation), fused==base -> FAIL_TRACKS_BASE.
 PARITY_K = 0.3  # margin fraction of the base-vs-adapter gap
 PARITY_PASS_FLOOR = 0.9  # min fused-vs-adapter agreement for PASS
 PARITY_GROSS_FLOOR = 0.5  # max fused-vs-{adapter,base} agreement for FAIL_GROSS

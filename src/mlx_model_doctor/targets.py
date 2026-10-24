@@ -1,16 +1,22 @@
 """Model target abstractions."""
 
-import json
+import posixpath
 import struct
-from collections.abc import Mapping, Sequence
+import sys
+import warnings
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from stat import S_ISREG
 from typing import Literal, Protocol, cast, runtime_checkable
+from urllib.parse import urlparse
 
 from mlx_model_doctor.errors import TargetError
 from mlx_model_doctor.safetensors_header import (
     _MAX_HEADER_BYTES,
     FileHeader,
+    HfFileMetadata,
     HfSafetensorsRepoMetadata,
     SafetensorsHeader,
     SafetensorsHeaderError,
@@ -18,6 +24,18 @@ from mlx_model_doctor.safetensors_header import (
     map_hf_repo_metadata,
     parse_file_header,
 )
+from mlx_model_doctor.shard_layout import (
+    ShardLayout,
+    ShardLayoutKind,
+    classify_shard_layout,
+    parse_index_weight_map,
+    resolve_shard_path,
+    root_index_path,
+)
+
+# Same bound as context._MAX_METADATA_BYTES (context imports this module, so the value
+# is repeated rather than imported): an index larger than this is not read.
+_MAX_INDEX_BYTES = 16 * 1024 * 1024
 
 
 def _canonical_shard_paths(
@@ -36,6 +54,15 @@ def _canonical_shard_paths(
         if selected:
             return sorted(selected)
     return sorted(path for path in all_shards if "/" not in path)
+
+
+@dataclass(slots=True, kw_only=True)
+class _ShippedShardsMetadata:
+    """Repo metadata assembled from per-file headers, shaped like huggingface_hub's."""
+
+    weight_map: Mapping[str, str]
+    sharded: bool
+    files_metadata: Mapping[str, HfFileMetadata]
 
 
 class ModelTarget(Protocol):
@@ -108,6 +135,73 @@ class HfHubProtocol(Protocol):
     def safetensors_metadata(self, repo_id: str) -> HfSafetensorsRepoMetadata | None:
         """Return safetensors header metadata via Range requests, or None when absent."""
 
+    def safetensors_file_metadata(self, repo_id: str, filename: str) -> HfFileMetadata:
+        """Return one safetensors file's header metadata via a Range request."""
+
+
+@contextmanager
+def _hub_progress_bars_disabled() -> Iterator[None]:
+    """Silence huggingface_hub progress bars for the block, then restore the prior state.
+
+    ``get_safetensors_metadata`` draws a "Parse safetensors files" bar on stderr
+    (huggingface_hub 1.19.0 ``hf_api.py:6688``). Helpers verified in
+    ``huggingface_hub/utils/tqdm.py``: ``progress_bar_states`` (:105, the per-group
+    mapping that both helpers clear), ``disable_progress_bars`` (:108),
+    ``enable_progress_bars`` (:158), ``are_progress_bars_disabled`` (:190). The mapping is
+    snapshotted and restored, so a caller's per-group settings survive.
+    """
+    from huggingface_hub.utils.tqdm import (
+        are_progress_bars_disabled,
+        disable_progress_bars,
+        enable_progress_bars,
+    )
+
+    # The module itself: ``huggingface_hub.utils.tqdm`` as an attribute is the tqdm class.
+    states = cast(
+        "dict[str, bool]", sys.modules[disable_progress_bars.__module__].progress_bar_states
+    )
+    snapshot = dict(states)
+    was_disabled = are_progress_bars_disabled()
+    if not was_disabled:
+        with warnings.catch_warnings():
+            # HF_HUB_DISABLE_PROGRESS_BARS=0 has priority and makes this a warning no-op.
+            warnings.simplefilter("ignore")
+            disable_progress_bars()
+    try:
+        yield
+    finally:
+        if not was_disabled:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                enable_progress_bars()
+            states.clear()
+            states.update(snapshot)
+
+
+def _missing_safetensors_entry(exc: BaseException) -> str | None:
+    """Return the missing ``.safetensors`` filename when ``exc`` is the Hub's entry 404.
+
+    Only ``RemoteEntryNotFoundError`` (huggingface_hub 1.19.0 ``errors.py:367``, raised by
+    ``hf_raise_for_status`` for ``X-Error-Code: EntryNotFound``) on a ``.safetensors``
+    URL qualifies. ``LocalEntryNotFoundError`` (``errors.py:394``) is a connection
+    problem and every other error stays a tool error.
+    """
+    from huggingface_hub.errors import RemoteEntryNotFoundError
+
+    if not isinstance(exc, RemoteEntryNotFoundError):
+        return None
+    response = getattr(exc, "response", None)
+    if response is None:
+        return None
+    try:
+        url = response.url
+    except RuntimeError:  # httpx: a response with no request has no URL
+        return None
+    path = urlparse(str(url)).path
+    if not path.endswith(".safetensors"):
+        return None
+    return path.rsplit("/", 1)[-1]
+
 
 class DefaultHfHub:
     """Hugging Face Hub adapter using targeted metadata and file reads."""
@@ -134,13 +228,45 @@ class DefaultHfHub:
         from huggingface_hub.errors import NotASafetensorsRepoError, SafetensorsParsingError
 
         try:
-            return cast("HfSafetensorsRepoMetadata", HfApi().get_safetensors_metadata(repo_id))
+            with _hub_progress_bars_disabled():
+                return cast("HfSafetensorsRepoMetadata", HfApi().get_safetensors_metadata(repo_id))
         except (NotASafetensorsRepoError, SafetensorsParsingError):
             return None
         except Exception as exc:
+            missing = _missing_safetensors_entry(exc)
+            if missing is not None:
+                raise SafetensorsHeaderError(
+                    f"safetensors shard {missing} is absent from the repository"
+                ) from exc
             raise TargetError(
                 f"Could not read safetensors metadata for {repo_id}: {exc}",
                 target=repo_id,
+                source="hf",
+            ) from exc
+
+    def safetensors_file_metadata(self, repo_id: str, filename: str) -> HfFileMetadata:
+        """Read one file's safetensors header from huggingface_hub (Range, no download)."""
+        from huggingface_hub import HfApi
+        from huggingface_hub.errors import SafetensorsParsingError
+
+        try:
+            with _hub_progress_bars_disabled():
+                # huggingface_hub 1.19.0 hf_api.py:6704 parse_safetensors_file_metadata.
+                return cast(
+                    "HfFileMetadata", HfApi().parse_safetensors_file_metadata(repo_id, filename)
+                )
+        except SafetensorsParsingError as exc:
+            raise SafetensorsHeaderError(f"{filename}: {exc}") from exc
+        except Exception as exc:
+            if _missing_safetensors_entry(exc) is not None:
+                # Only listed shards are read one by one, so this is a Hub inconsistency.
+                raise SafetensorsHeaderError(
+                    f"safetensors shard {filename} returned 404 although the repository "
+                    "listing includes it"
+                ) from exc
+            raise TargetError(
+                f"Could not read safetensors metadata for {repo_id}:{filename}: {exc}",
+                target=f"{repo_id}:{filename}",
                 source="hf",
             ) from exc
 
@@ -180,8 +306,16 @@ class LocalTarget:
         return "local"
 
     def exists(self, path: str) -> bool:
-        """Return whether a file exists at a model-relative path."""
-        return self._path(path).is_file()
+        """Return whether a file exists at a model-relative path.
+
+        A name the filesystem cannot stat (too long, no permission) is absent: on Python
+        3.11-3.13 ``Path.is_file`` raises ``OSError`` for it instead of returning False.
+        """
+        file_path = self._path(path)
+        try:
+            return file_path.is_file()
+        except OSError:
+            return False
 
     def list_files(self) -> Sequence[str]:
         """Return sorted relative POSIX paths for files under the model root."""
@@ -250,9 +384,37 @@ class LocalTarget:
         return self.read_bytes(path, max_bytes=max_bytes).decode("utf-8")
 
     def safetensors_header(self) -> SafetensorsHeader | None:
-        """Read and aggregate safetensors headers from disk without reading weights."""
-        weight_map = self._safetensors_index_weight_map()
-        shard_paths = _canonical_shard_paths(self.list_files(), weight_map)
+        """Read and aggregate safetensors headers from disk without reading weights.
+
+        Only the root index's weight map is used, as on the Hugging Face path, so a
+        nested component index never feeds tensors into the root header. A stale root
+        index is ignored (the shipped top-level shards are read and their weight map
+        synthesized); a root index with missing shards raises ``SafetensorsHeaderError``.
+        """
+        files = self.list_files()
+        index_path = root_index_path(files)
+        weight_map = self._index_weight_map(index_path) if index_path is not None else None
+        layout = classify_shard_layout(
+            files, weight_map, index_path=index_path, present=self._shard_present
+        )
+        if layout.kind.missing_weights:
+            raise SafetensorsHeaderError(layout.absent_message())
+        if layout.kind is ShardLayoutKind.CONSISTENT and weight_map and index_path:
+            # The shards the index names, at the paths the presence check resolved.
+            weight_map = {
+                key: resolve_shard_path(index_path, value) for key, value in weight_map.items()
+            }
+            shard_paths = list(layout.named)
+        elif layout.kind is ShardLayoutKind.STALE_ALL_ABSENT_WITH_SHIPPED:
+            limit = layout.shipped_limit_message()
+            if limit is not None:
+                raise SafetensorsHeaderError(limit)
+            # Same shard set the HF path reads: only the loader-eligible shipped shards.
+            weight_map = None
+            shard_paths = list(layout.shipped)
+        else:
+            weight_map = None
+            shard_paths = _canonical_shard_paths(files, weight_map)
         if not shard_paths:
             return None
         file_headers = [self._read_local_file_header(path) for path in shard_paths]
@@ -268,22 +430,21 @@ class LocalTarget:
         raw = self.read_bytes(path, max_bytes=8 + header_length)
         return parse_file_header(path, raw, file_size=self.size(path))
 
-    def _safetensors_index_weight_map(self) -> dict[str, str] | None:
-        index_paths = [p for p in self.list_files() if p.endswith(".safetensors.index.json")]
-        if not index_paths:
+    def _shard_present(self, path: str) -> bool:
+        """Presence as ``text/safetensors.index`` sees it; an escaping path is absent."""
+        try:
+            return self.exists(path)
+        except (TargetError, UnicodeError):
+            return False
+
+    def _index_weight_map(self, index_path: str) -> dict[str, str] | None:
+        try:
+            size = self.size(index_path)
+            if size is None or size > _MAX_INDEX_BYTES:
+                return None
+            return parse_index_weight_map(self.read_text(index_path))
+        except (UnicodeError, TargetError):
             return None
-        merged: dict[str, str] = {}
-        for index_path in index_paths:
-            try:
-                parsed = json.loads(self.read_text(index_path))
-            except (json.JSONDecodeError, UnicodeError, TargetError):
-                continue
-            weight_map = parsed.get("weight_map") if isinstance(parsed, dict) else None
-            if isinstance(weight_map, dict):
-                merged.update(
-                    {key: value for key, value in weight_map.items() if isinstance(value, str)}
-                )
-        return merged or None
 
     def _path(self, path: str) -> Path:
         try:
@@ -388,11 +549,60 @@ class HfTarget:
         return self.read_bytes(path, max_bytes=max_bytes).decode("utf-8")
 
     def safetensors_header(self) -> SafetensorsHeader | None:
-        """Map the Hugging Face safetensors header metadata, no weight download."""
+        """Map the Hugging Face safetensors header metadata, no weight download.
+
+        A stale root index (every named shard absent, other top-level shards shipped)
+        reads each shipped shard's own header; a root index with missing shards raises
+        ``SafetensorsHeaderError`` naming them, without asking the Hub to walk the index.
+        """
+        layout = self._root_shard_layout()
+        if layout.kind.missing_weights:
+            raise SafetensorsHeaderError(layout.absent_message())
+        if layout.kind is ShardLayoutKind.STALE_ALL_ABSENT_WITH_SHIPPED:
+            limit = layout.shipped_limit_message()
+            if limit is not None:
+                raise SafetensorsHeaderError(limit)
+            return self._shipped_shards_header(layout.shipped)
         repo_meta = self._hub.safetensors_metadata(self._repo_id)
         if repo_meta is None:
             return None
-        file_sizes = {name: self._metadata.get(name) for name in repo_meta.files_metadata}
+        # Root index values, normalized as the local target resolves them ("./x" is "x"),
+        # so the file names and listing sizes match the local header.
+        normalized = _ShippedShardsMetadata(
+            weight_map={key: posixpath.normpath(v) for key, v in repo_meta.weight_map.items()},
+            sharded=repo_meta.sharded,
+            files_metadata={
+                posixpath.normpath(name): meta for name, meta in repo_meta.files_metadata.items()
+            },
+        )
+        file_sizes = {name: self._metadata.get(name) for name in normalized.files_metadata}
+        return map_hf_repo_metadata(normalized, file_sizes=file_sizes)
+
+    def _root_shard_layout(self) -> ShardLayout:
+        files = self.list_files()
+        index_path = root_index_path(files)
+        weight_map: dict[str, str] | None = None
+        if index_path is not None:
+            size = self.size(index_path)
+            if size is not None and size <= _MAX_INDEX_BYTES:
+                try:
+                    weight_map = parse_index_weight_map(self.read_text(index_path))
+                except UnicodeError:
+                    weight_map = None
+        return classify_shard_layout(files, weight_map, index_path=index_path)
+
+    def _shipped_shards_header(self, shipped: Sequence[str]) -> SafetensorsHeader:
+        files_metadata = {
+            name: self._hub.safetensors_file_metadata(self._repo_id, name) for name in shipped
+        }
+        weight_map: dict[str, str] = {}
+        for name in shipped:
+            for tensor in files_metadata[name].tensors:
+                weight_map[tensor] = name
+        repo_meta = _ShippedShardsMetadata(
+            weight_map=weight_map, sharded=len(shipped) > 1, files_metadata=files_metadata
+        )
+        file_sizes = {name: self._metadata.get(name) for name in shipped}
         return map_hf_repo_metadata(repo_meta, file_sizes=file_sizes)
 
     def _target_error(self, message: str, path: str) -> TargetError:
