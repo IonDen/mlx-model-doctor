@@ -89,9 +89,10 @@ def _positive_number(value: object) -> float | None:
     return None
 
 
-# Verified against MLX 0.31.x (ml-explore/mlx, quantize.cpp).
+# Verified against MLX 0.32.4 (ml-explore/mlx, mlx/ops.cpp affine_quantize: "The supported
+# bits are 1, 2, 3, 4, 5, 6 and 8"), 2026-10-24. MLX 0.32.0 to 0.32.3 reject bits below 2.
 _AFFINE_GROUP_SIZES = frozenset({32, 64, 128})
-_AFFINE_BITS = frozenset({2, 3, 4, 5, 6, 8})
+_AFFINE_BITS = frozenset({1, 2, 3, 4, 5, 6, 8})
 _FIXED_MODES: dict[str, tuple[int, int]] = {"mxfp4": (32, 4), "mxfp8": (32, 8), "nvfp4": (16, 4)}
 _VALID_MODES = frozenset({"affine", *_FIXED_MODES})
 
@@ -236,7 +237,7 @@ class MlxQuantizationModeCheck:
                 title=self.title,
                 status="warn",
                 severity="medium",
-                message=f"Quantization mode {verdict.mode!r} is not recognized as of MLX 0.31.x.",
+                message=f"Quantization mode {verdict.mode!r} is not recognized as of MLX 0.32.4.",
                 remediation="Use one of: affine, mxfp4, mxfp8, nvfp4.",
                 details={"mode": verdict.mode},
             )
@@ -247,8 +248,8 @@ class MlxQuantizationModeCheck:
                 title=self.title,
                 status="warn",
                 severity="medium",
-                message=f"affine quantization has off-table values {bad} (valid as of MLX 0.31.x).",
-                remediation="Use affine group_size in {32,64,128} and bits in {2,3,4,5,6,8}.",
+                message=f"affine quantization has off-table values {bad} (valid as of MLX 0.32.4).",
+                remediation="Use affine group_size in {32,64,128} and bits in {1,2,3,4,5,6,8}.",
                 details={"mode": verdict.mode, **bad},
             )
         if verdict.kind == "fixed_mismatch":
@@ -326,8 +327,8 @@ class MlxQuantizationModeCheck:
                 title=self.title,
                 status="warn",
                 severity="medium",
-                message="Quantization mode has unrecognized, off-table, or non-canonical values for one or more layers (valid as of MLX 0.31.x).",
-                remediation="Use affine group_size in {32,64,128} and bits in {2,3,4,5,6,8}, or a fixed mode's canonical pair.",
+                message="Quantization mode has unrecognized, off-table, or non-canonical values for one or more layers (valid as of MLX 0.32.4).",
+                remediation="Use affine group_size in {32,64,128} and bits in {1,2,3,4,5,6,8}, or a fixed mode's canonical pair.",
                 details=details,
             )
         return CheckResult(
@@ -467,7 +468,7 @@ class MlxQuantShapeCheck:
                 severity="medium",
                 message=(
                     "Shape unverified for layer(s) with an unrecognized or undeterminable "
-                    "bit width (valid as of MLX 0.31.x)."
+                    "bit width (valid as of MLX 0.32.4)."
                 ),
                 remediation="Confirm the MLX version supports the quantization bit width(s) for these layers.",
                 details={"unverified_layers": tuple(sorted(unverified))},

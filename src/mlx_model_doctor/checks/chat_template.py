@@ -73,7 +73,10 @@ def _has_template(ctx: CheckContext) -> bool:
 
 
 # Chat-template sources (tokenizer_config.json / chat_template.json / chat_template.jinja) and their
-# load precedence verified against transformers 5.15, mlx-lm 0.31.3, and mlx-vlm 0.6.x.
+# load precedence verified against transformers 5.15, mlx-lm 0.31.3 and 0.32.2, mlx-vlm 0.6.12
+# and 0.7.10 (2026-10-24). mlx-lm 0.32.2 can supply a built-in template from model code when a
+# repo ships none (as of 2026-10-24 only `muse_spark` does); this check does not model that, nor
+# `tokenizer_config["chat_template_type"]`, so such a repo warns.
 @dataclass(frozen=True, slots=True)
 class ChatTemplatePresenceCheck:
     """Check that a chat template is present in either supported location."""

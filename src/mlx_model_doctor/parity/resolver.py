@@ -1,8 +1,8 @@
 """Loader-accurate LoRA target resolver (F5).
 
 Reproduces, as a pure function with no MLX/mlx-lm import, the module-selection
-logic of ``mlx_lm.tuner.utils.linear_to_lora_layers`` (pinned mlx-lm==0.31.3;
-source read directly 2026-09-07 from the installed package):
+logic of ``mlx_lm.tuner.utils.linear_to_lora_layers`` (verified against mlx-lm
+0.31.3 and 0.32.2; source read 2026-09-07 and 2026-10-24):
 
 - default per-block key discovery when ``lora_parameters.keys`` is absent or
   JSON ``null`` (mirrors ``config.get("keys", None)``);
@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from functools import cache
 from typing import Literal
 
-# Verified against pinned mlx-lm==0.31.3 model sources (2026-09-07,
+# Verified against mlx-lm 0.31.3 and 0.32.2 model sources (2026-09-07 and 2026-10-24,
 # `mlx_lm/models/llama.py` / `qwen2.py` / `gemma.py`): each of these
 # architectures wraps its transformer blocks at `model.layers` (the outer
 # `Model.layers` property proxies to it) and every block exposes exactly

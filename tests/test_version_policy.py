@@ -93,7 +93,7 @@ def _vlm_image_processor_unknown_fixture():
     processor name is not actually a warn case for this check. Its version-bound table is
     instead the *set of recognized resolution signals* (``image_processor_type``, a
     preprocessor-side ``auto_map``, ``feature_extractor_type``, or ``processor_class``),
-    verified against mlx-vlm 0.6.x / transformers v4.x. A repo that is VLM-gated (via
+    verified against mlx-vlm 0.6.12 and 0.7.10 / transformers 5.15 (2026-10-24). A repo that is VLM-gated (via
     ``vision_config``) but exposes none of those signals is this check's actual
     unknown-but-well-typed case, and is exactly what it warns on.
     """

@@ -34,6 +34,7 @@ from mlx_model_doctor.parity.oracle import ROLE_BASE, ROLE_FUSED, ROLE_NOISE, RO
 from mlx_model_doctor.parity.orchestrator import WorkerOutcome
 from mlx_model_doctor.parity.report import render_parity_json, render_parity_text
 from mlx_model_doctor.parity.worker import WorkerSpec
+from tests.fakes import write_hf_cache_snapshot
 from tests.parity_fakes import lora_tensor, safetensors_header_bytes, write_safetensors_file
 
 _F4 = struct.pack("<f", 1.0)
@@ -829,3 +830,28 @@ def test_parity_options_fixture_overrides_get_fixture(tiny_local_repos: _Repos) 
         assert launcher.specs_by_role[role].fixture_id == "custom-fixture"
         assert launcher.specs_by_role[role].token_ids == custom_token_ids
     assert report.fixture.id == "custom-fixture"
+
+
+def test_parity_static_phase_passes_with_cache_snapshot_base(
+    tiny_local_repos: _Repos, tmp_path: Path
+) -> None:
+    # Bug caught: a base given as a Hugging Face cache snapshot fails the static and
+    # tokenizer phases (its files are links into blobs/), so parity stops before the
+    # oracle, or the workers get a path other than the snapshot.
+    stage = _write_model_repo(tmp_path / "stage", q_bytes=_F4 * 64)
+    files = {path.name: path.read_bytes() for path in stage.iterdir()}
+    snapshot = write_hf_cache_snapshot(tmp_path / "hub", "org/base", files)
+    launcher = _pass_launcher()
+
+    report = check_adapter_parity(
+        base=str(snapshot),
+        adapter=tiny_local_repos.adapter,
+        fused=tiny_local_repos.fused_diff,
+        options=_opts(launcher),
+    )
+
+    assert report.phase_outcomes["static"] == "ok"
+    assert report.phase_outcomes["tokenizer_gate"] == "ok"
+    assert report.phase_outcomes["delta_map"] == "ok"
+    assert launcher.model_paths_by_role[ROLE_BASE] == str(snapshot.resolve())
+    assert launcher.model_paths_by_role[ROLE_BASE].endswith("/snapshots/" + "0" * 40)

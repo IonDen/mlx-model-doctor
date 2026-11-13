@@ -104,6 +104,26 @@ Exit codes: `0` checks passed (under the fail policy), `1` checks found failures
 
 `check hf` and `sample hf` talk to the Hub through `huggingface-hub`. They read repository metadata (the file list, sizes, the small text files, and the safetensors header over a range request) rather than downloading the weights, but they do need network access, and an auth or rate-limit problem surfaces as a clear tool error rather than a stack trace. `sample hf` is a survey: it lists an author's repos, keeps the ones that look like MLX models, validates a deterministic sample of them, and reports each as its own batch item — a per-model failure is recorded and the run continues.
 
+## Checking a model in your Hugging Face cache
+
+After `hf download <repo>`, the model sits in your cache under
+`~/.cache/huggingface/hub/models--ORG--NAME/snapshots/<commit>/`. You can point
+`check local` and `parity mlx --base` straight at that folder:
+
+```bash
+mlx-model-doctor check local ~/.cache/huggingface/hub/models--mlx-community--Qwen3.5-0.8B-4bit/snapshots/<commit>
+```
+
+The files in a snapshot are symlinks into the cache's own stored copies, and
+this works for snapshots downloaded with huggingface_hub 1.x or 2.x. Older
+versions link each file straight to a copy in the repository's own `blobs/`
+folder. Versions 1.32 and later keep large files once per cache in a shared
+store, and the repository's link leads on into it. The tool reads both layouts.
+Pass the snapshot folder itself (`.../snapshots/<commit>`), not a subfolder of
+it. The tool follows a symlink only when it leads to one of those stored copies.
+A symlink that points anywhere else outside the folder is still refused. See
+[EXAMPLES.md](EXAMPLES.md) for a real run.
+
 ## Validate before uploading to Hugging Face
 
 For a model you build or convert locally, run the static checks before upload and treat warnings as release blockers unless you have reviewed them:
@@ -165,12 +185,10 @@ needs the optional `[mlx-lm]` extra, a base repository that ships a
 at a time), so it's safe on a laptop. If your fuse comes out `inconclusive` or
 worse, re-fuse with `--dequantize` (a float fuse), which preserves the adapter.
 
-Point `--base`, `--adapter`, and `--fused` at model directories of real files —
-a locally converted or fused model, or one fetched with `hf download <repo>
---local-dir ./dir`. The raw Hugging Face cache path
-(`~/.cache/huggingface/hub/models--.../snapshots/...`) stores its files as
-symlinks into a sibling `blobs/` directory, which the checker does not yet
-follow.
+Point `--base`, `--adapter`, and `--fused` at model directories: a locally
+converted or fused model, a directory fetched with `hf download <repo>
+--local-dir ./dir`, or a snapshot in the Hugging Face cache (see
+[Checking a model in your Hugging Face cache](#checking-a-model-in-your-hugging-face-cache)).
 
 `parity mlx` also accepts `--format {text,json,markdown}`; the `json` output
 follows the published `parity.v1` schema.
@@ -198,14 +216,14 @@ For a vision-language model, opt into the VLM profile:
     plugin: vlm
 ```
 
-Add `version: "==0.9.2"` to pin the tool to a release; without it the action installs the latest published version.
+Add `version: "==0.10.0"` to pin the tool to a release; without it the action installs the latest published version.
 
 For a model directory you keep in git, validate it on every commit with the pre-commit hook:
 
 ```yaml
 repos:
   - repo: https://github.com/IonDen/mlx-model-doctor
-    rev: v0.9.2
+    rev: v0.10.0
     hooks:
       - id: mlx-model-doctor
         args: ["path/to/model"]
@@ -280,7 +298,7 @@ naming the upstream version it was verified against.
 
 ## Status
 
-**Beta (0.9.2).** Version 0.9.2 treats a stale safetensors index (one that names shards missing from the repository while other shards that both mlx-lm and mlx-vlm would load ship) as a warning rather than a failure. An index whose named shards are missing, with no such shard shipped, fails with a full report instead of a Hub 404. Version 0.9.1 was a false-positive cleanup: a safetensors index kept in a subdirectory, a model with `tie_word_embeddings` absent and no separate output head (Gemma), a Pixtral/Mistral-3 `[IMG]` image token, and a chat template in `chat_template.json` no longer fail valid repositories. The static `check local` path and the report/CLI surface are solid and well tested. Version 0.9.0 added the adapter-parity verifier (`parity mlx` / `check_adapter_parity`), which checks whether fusing a LoRA adapter into a base model kept the adapter's behavior — see [Check a fused adapter kept its behavior](#check-a-fused-adapter-kept-its-behavior); it needs the optional `[mlx-lm]` extra and a base repository that ships a `tokenizer.json`. Version-bound check tables (MLX quantization modes, safetensors dtypes) now warn rather than fail on a recognized-but-unlisted value, so a repository built against a newer upstream release is flagged as unverified instead of rejected outright — see [Version sensitivity](#version-sensitivity). The optional runtime smoke check now covers vision-language repositories too: `--smoke --plugin vlm` loads a model through `mlx-vlm` and generates from a dummy image under the same advisory memory caps as the text path, with remote code execution refused by default. `sample hf` gained a configurable scan depth (`--max-candidates`), a listing-signal filter (`--signal-filter`), and a local listing cache (`--no-cache` / `--cache-ttl`) for surveying more of an author's catalog without repeating Hub calls. The safetensors header (read without downloading weights) backs four tensor-level checks — offset corruption, weight-map parameter sanity, tied-embedding consistency, and MLX quantized-layer shape consistency — which run by default (`--skip-weights` opts out). A single `check` reports whether a repository looks like an MLX model and why; the VLM profile adds image-processor and image-token wiring checks for vision-language repositories. The quantized-shape and quantization-mode checks read each layer's own `bits`/`group_size`/`mode`, so a mixed-precision model (4-bit experts with 8-bit dense and router layers) is validated per layer rather than reported as broken. The memory estimate handles mixed precision the same way: when a model mixes bit widths it takes the weight figure from the stored file sizes instead of the model-level setting. The Hugging Face path (`check hf`, `sample hf`) is implemented and tested offline against fakes; its live behavior is exercised by opt-in network tests. It also ships a GitHub Action and a pre-commit hook. The public API and JSON output now have a documented, versioned stability contract — see [Output contract](#output-contract) and [Stability policy](#stability-policy). Pin a version if you depend on the schema or the API.
+**Beta (0.10.0).** Version 0.10.0 lets `check local` and `parity mlx` read a model straight from your Hugging Face cache, including snapshots downloaded with huggingface_hub 1.x or 2.x, and accepts 1-bit affine quantization as of MLX 0.32.4. Version 0.9.2 made a stale safetensors index a warning rather than a failure. Version 0.9.1 was a false-positive cleanup: a safetensors index kept in a subdirectory, a model with `tie_word_embeddings` absent and no separate output head (Gemma), a Pixtral/Mistral-3 `[IMG]` image token, and a chat template in `chat_template.json` no longer fail valid repositories. The static `check local` path and the report/CLI surface are solid and well tested. Version 0.9.0 added the adapter-parity verifier (`parity mlx` / `check_adapter_parity`), which checks whether fusing a LoRA adapter into a base model kept the adapter's behavior — see [Check a fused adapter kept its behavior](#check-a-fused-adapter-kept-its-behavior); it needs the optional `[mlx-lm]` extra and a base repository that ships a `tokenizer.json`. Version-bound check tables (MLX quantization modes, safetensors dtypes) now warn rather than fail on a recognized-but-unlisted value, so a repository built against a newer upstream release is flagged as unverified instead of rejected outright — see [Version sensitivity](#version-sensitivity). The optional runtime smoke check now covers vision-language repositories too: `--smoke --plugin vlm` loads a model through `mlx-vlm` and generates from a dummy image under the same advisory memory caps as the text path, with remote code execution refused by default. `sample hf` gained a configurable scan depth (`--max-candidates`), a listing-signal filter (`--signal-filter`), and a local listing cache (`--no-cache` / `--cache-ttl`) for surveying more of an author's catalog without repeating Hub calls. The safetensors header (read without downloading weights) backs four tensor-level checks — offset corruption, weight-map parameter sanity, tied-embedding consistency, and MLX quantized-layer shape consistency — which run by default (`--skip-weights` opts out). A single `check` reports whether a repository looks like an MLX model and why; the VLM profile adds image-processor and image-token wiring checks for vision-language repositories. The quantized-shape and quantization-mode checks read each layer's own `bits`/`group_size`/`mode`, so a mixed-precision model (4-bit experts with 8-bit dense and router layers) is validated per layer rather than reported as broken. The memory estimate handles mixed precision the same way: when a model mixes bit widths it takes the weight figure from the stored file sizes instead of the model-level setting. The Hugging Face path (`check hf`, `sample hf`) is implemented and tested offline against fakes; its live behavior is exercised by opt-in network tests. It also ships a GitHub Action and a pre-commit hook. The public API and JSON output now have a documented, versioned stability contract — see [Output contract](#output-contract) and [Stability policy](#stability-policy). Pin a version if you depend on the schema or the API.
 
 ## License
 

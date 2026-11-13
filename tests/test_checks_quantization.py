@@ -125,6 +125,33 @@ def test_quant_mode_warns_for_off_table_affine_bits() -> None:
     assert result.details == {"mode": "affine", "bits": 7}
 
 
+def test_affine_one_bit_is_on_table_as_of_mlx_0_32_4() -> None:
+    """MLX 0.32.4 ``affine_quantize`` accepts bits 1, 2, 3, 4, 5, 6 and 8.
+
+    Bug: the bits table lags MLX 0.32.4 and warns on a repo MLX loads.
+    bits=1, group_size=64: in=512 -> packed_last=512*1/32=16, scales_last=512/64=8.
+    """
+    header = _quant_header({"l.weight": _t("U32", (256, 16)), "l.scales": _t("BF16", (256, 8))})
+    ctx = _quant_ctx(header, {"mode": "affine", "bits": 1, "group_size": 64})
+    assert MlxQuantizationModeCheck().run(ctx).status == "pass"
+    assert MlxQuantShapeCheck().run(ctx).status == "pass"
+
+
+def test_affine_one_bit_with_a_wrong_packed_width_fails_the_shape_check() -> None:
+    """Bug: 1-bit layers skip the packed-width check, so any width passes.
+
+    bits=1, group_size=64, scales_last=8: in=512, so packed_last must be 512*1/32=16.
+    A width of 32 is the 2-bit packing of the same layer and must not pass.
+    """
+    header = _quant_header({"l.weight": _t("U32", (256, 32)), "l.scales": _t("BF16", (256, 8))})
+    ctx = _quant_ctx(header, {"mode": "affine", "bits": 1, "group_size": 64})
+
+    result = MlxQuantShapeCheck().run(ctx)
+
+    assert result.status == "fail"
+    assert result.details["inconsistent_layers"] == ("l",)
+
+
 def test_quant_mode_warns_for_noncanonical_fixed_mode() -> None:
     result = MlxQuantizationModeCheck().run(
         _context_for_config({"quantization": {"mode": "mxfp4", "bits": 8, "group_size": 32}})

@@ -144,15 +144,16 @@ class MlxLmSmokeCheck:
         )
 
 
+# Checked against mlx-vlm 0.6.12 with ``inspect.signature`` on the installed package, and
+# against the 0.7.10 source on 2026-10-24 (the same signatures).
 class MlxVlmModule(Protocol):
     """mlx-vlm API surface used by the VLM smoke backend.
 
-    Signatures verified against mlx-vlm==0.6.12 (via ``inspect.signature``
-    against the installed package): ``load`` and ``generate`` accept many
-    more parameters via ``**kwargs`` than declared here; only the ones this
-    backend passes are part of this Protocol. Notably ``apply_chat_template``
-    requires a model-config argument (``processor, config, prompt, ...``),
-    unlike the plan's initial assumption of a two-argument call.
+    Signatures verified against mlx-vlm 0.6.12 and 0.7.10: ``load`` and ``generate``
+    accept many more parameters via ``**kwargs`` than declared here; only the ones this
+    backend passes are part of this Protocol. ``apply_chat_template`` takes a
+    model-config argument (``processor, config, prompt, ...``), not just a processor
+    and a prompt.
     """
 
     def load(

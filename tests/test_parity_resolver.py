@@ -1,8 +1,8 @@
 """Tests for the loader-accurate LoRA target resolver (F5).
 
 Each test pins ``resolve_targets`` against a specific clause of mlx-lm's
-``tuner.utils.linear_to_lora_layers`` (pinned mlx-lm==0.31.3, source read
-2026-09-07): default key discovery, the ``layers[-max(num_layers, 0):]``
+``tuner.utils.linear_to_lora_layers`` (verified against mlx-lm 0.31.3 and
+0.32.2, source read 2026-09-07 and 2026-10-24): default key discovery, the ``layers[-max(num_layers, 0):]``
 slice, the second full-model pass for root/full-path keys, uncovered-key
 detection, and the unverified-architecture fallback.
 """

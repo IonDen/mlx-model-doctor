@@ -1,6 +1,7 @@
 """Model target abstractions."""
 
 import posixpath
+import re
 import struct
 import sys
 import warnings
@@ -36,6 +37,98 @@ from mlx_model_doctor.shard_layout import (
 # Same bound as context._MAX_METADATA_BYTES (context imports this module, so the value
 # is repeated rather than imported): an index larger than this is not read.
 _MAX_INDEX_BYTES = 16 * 1024 * 1024
+
+# A Hugging Face cache snapshot folder is named by the 40-hex commit hash; its files are
+# links into the repo's ``blobs/``, named by the git-sha1 (40-hex) or sha256 (64-hex).
+_HF_SNAPSHOT_NAME = re.compile(r"[0-9a-f]{40}")
+_HF_BLOB_NAME = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+
+def _hf_cache_blobs_dir(root: Path) -> Path | None:
+    """Return the real ``blobs/`` beside a resolved ``models--*/snapshots/<commit>`` root.
+
+    Returns None unless ``root`` has the Hugging Face cache snapshot shape and ``blobs``
+    is a real directory (not a symlink, nothing on its path resolving elsewhere).
+    """
+    if not _HF_SNAPSHOT_NAME.fullmatch(root.name):
+        return None
+    if root.parent.name != "snapshots" or not root.parent.parent.name.startswith("models--"):
+        return None
+    blobs = root.parent.parent / "blobs"
+    try:
+        if not blobs.is_dir() or blobs.is_symlink() or blobs.resolve(strict=True) != blobs:
+            return None
+    except OSError:
+        return None
+    return blobs
+
+
+# huggingface_hub 1.32 and later (layout checked against 2.0) add a second hop for Xet
+# files: the repo's ``blobs/<etag>`` is a relative link into the cache-wide store
+# ``<hub>/blobs/<xet[:2]>/<xet>``, whose entries are regular files named by a 64-hex Xet
+# hash and which holds the marker file ``.huggingface-shared-blobs`` with content
+# ``"1\n"``. Reimplemented from huggingface_hub 2.0 ``utils/_shared_blobs.py``
+# (``_XET_HASH_REGEX`` line 43, the marker constants lines 46-48, ``is_shared_blobs_dir``
+# line 114, ``_shared_blob_target`` line 264); the module is byte-identical in 1.32.0,
+# 1.33.0, 2.0.0 and 2.4.0, and absent from 1.31.0.
+_HF_XET_HASH_NAME = re.compile(r"[0-9a-f]{64}")
+_HF_SHARED_BLOBS_MARKER = ".huggingface-shared-blobs"
+_HF_SHARED_BLOBS_LAYOUT = b"1\n"
+
+
+def _hf_shared_blobs_store(snapshot: Path) -> Path | None:
+    r"""Return the marked shared blob store of a resolved cache snapshot's own cache root.
+
+    ``snapshot`` must already be a cache snapshot (``_hf_cache_blobs_dir`` accepted it).
+    Returns None unless ``<hub>/blobs`` is a real directory (not a symlink, nothing on its
+    path resolving elsewhere) holding a regular marker file whose content is exactly
+    ``"1\n"``.
+    """
+    store = snapshot.parent.parent.parent / "blobs"
+    marker = store / _HF_SHARED_BLOBS_MARKER
+    try:
+        if not store.is_dir() or store.is_symlink() or store.resolve(strict=True) != store:
+            return None
+        if not S_ISREG(marker.lstat().st_mode):
+            return None
+        with marker.open("rb") as file:
+            content = file.read(len(_HF_SHARED_BLOBS_LAYOUT) + 1)
+    except OSError:
+        return None
+    return store if content == _HF_SHARED_BLOBS_LAYOUT else None
+
+
+def _has_hf_shared_blob_shape(store: Path | None, candidate: Path) -> bool:
+    """Whether a fully resolved path names an entry directly in ``store`` (``<xx>/<hash>``)."""
+    return (
+        store is not None
+        and candidate.parent.parent == store
+        and candidate.parent.name == candidate.name[:2]
+        and _HF_XET_HASH_NAME.fullmatch(candidate.name) is not None
+    )
+
+
+def _is_hf_shared_blob(store: Path | None, candidate: Path) -> bool:
+    """Whether a fully resolved path is a regular-file entry directly in ``store``."""
+    if not _has_hf_shared_blob_shape(store, candidate):
+        return False
+    try:
+        return S_ISREG(candidate.lstat().st_mode)
+    except OSError:
+        return False
+
+
+def _is_missing_hf_shared_blob(store: Path | None, candidate: Path) -> bool:
+    """Whether a fully resolved path names an entry of ``store`` that does not exist."""
+    if not _has_hf_shared_blob_shape(store, candidate):
+        return False
+    try:
+        candidate.lstat()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
 
 
 def _canonical_shard_paths(
@@ -272,9 +365,28 @@ class DefaultHfHub:
 
 
 class LocalTarget:
-    """Readable target backed by a local model directory."""
+    """Readable target backed by a local model directory.
 
-    __slots__ = ("_root",)
+    Reads stay inside the directory: a symlink resolving outside it is rejected. The one
+    exception is a Hugging Face cache snapshot (``models--*/snapshots/<commit>``), whose
+    files are links into the repo's own ``blobs/``. Such a link is followed when it sits
+    directly in the snapshot tree and ends at a hash-named regular file directly in a
+    real ``blobs/`` directory.
+
+    huggingface_hub 1.32 and later store large (Xet) files once per cache, in the shared
+    blob store ``<cache>/blobs/<xx>/<hash>``, and link the repo's blob there. A link that
+    ends in that store is followed too, when the store is a real directory carrying the
+    ``.huggingface-shared-blobs`` marker of layout version 1 and the link ends at a
+    hash-named regular file in its two-character prefix directory. Store entries are
+    named by their content and shared by every repo in the cache, so any such entry in
+    the same cache is accepted, not only one this repo's blobs point to.
+
+    These allowances are fixed when the target is built, and files are then opened by
+    path. A cache that another process changes after that is outside what this check
+    promises.
+    """
+
+    __slots__ = ("_hf_blobs", "_hf_shared_store", "_root")
 
     def __init__(self, root: str | Path) -> None:
         """Initialize a local target rooted at an existing directory."""
@@ -294,6 +406,10 @@ class LocalTarget:
                 source="local",
             )
         self._root = resolved_root
+        self._hf_blobs: Path | None = _hf_cache_blobs_dir(resolved_root)
+        self._hf_shared_store: Path | None = (
+            _hf_shared_blobs_store(resolved_root) if self._hf_blobs is not None else None
+        )
 
     @property
     def name(self) -> str:
@@ -310,6 +426,11 @@ class LocalTarget:
 
         A name the filesystem cannot stat (too long, no permission) is absent: on Python
         3.11-3.13 ``Path.is_file`` raises ``OSError`` for it instead of returning False.
+        In a Hugging Face cache snapshot a file's blob link is followed, and a link whose
+        blob is missing (an incomplete download) is absent. A blob that links onward
+        into the cache's shared blob store is followed to its store entry. If that entry
+        is missing, this raises a target error saying so; the file is not reported as
+        absent.
         """
         file_path = self._path(path)
         try:
@@ -447,18 +568,61 @@ class LocalTarget:
             return None
 
     def _path(self, path: str) -> Path:
+        # RuntimeError: Python 3.11 and 3.12 raise it from resolve() for a symlink loop.
         try:
             candidate = (self._root / path).resolve(strict=False)
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, RuntimeError) as exc:
             raise self._target_error(f"Invalid local target path: {path}", path) from exc
         try:
             candidate.relative_to(self._root)
         except ValueError as exc:
+            # A Hugging Face cache snapshot's leaf link to a hash-named regular file
+            # directly in its own real blobs/ (a missing one is absent), or onward into
+            # its cache root's marked shared blob store; the requested path's lexical
+            # parent must stay in root.
+            if self._hf_blobs is not None:
+                accepted = self._hf_one_hop_blob(candidate) is not False or _is_hf_shared_blob(
+                    self._hf_shared_store, candidate
+                )
+                missing = not accepted and _is_missing_hf_shared_blob(
+                    self._hf_shared_store, candidate
+                )
+                if (accepted or missing) and self._lexical_parent_in_root(path):
+                    if accepted:
+                        return candidate
+                    raise self._target_error(
+                        f"{path} is missing from the Hugging Face cache store: "
+                        "its link points to a stored copy that does not exist",
+                        path,
+                    ) from exc
             raise self._target_error(
                 f"Local target path is outside the model root: {path}",
                 path,
             ) from exc
         return candidate
+
+    def _hf_one_hop_blob(self, candidate: Path) -> bool | None:
+        """Whether a resolved path is a one-hop blob: True, False, or None when missing.
+
+        The blob must be a hash-named regular file directly in the snapshot's own
+        ``blobs/``. A missing blob (an incomplete download) is None, so it reads as
+        absent; any other failure to inspect it refuses the path.
+        """
+        if candidate.parent != self._hf_blobs or not _HF_BLOB_NAME.fullmatch(candidate.name):
+            return False
+        try:
+            return S_ISREG(candidate.lstat().st_mode)
+        except FileNotFoundError:
+            return None
+        except OSError:
+            return False
+
+    def _lexical_parent_in_root(self, path: str) -> bool:
+        try:
+            parent = (self._root / path).parent.resolve(strict=False)
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise self._target_error(f"Invalid local target path: {path}", path) from exc
+        return parent.is_relative_to(self._root)
 
     def _target_error(self, message: str, path: str | Path) -> TargetError:
         return TargetError(message, target=str(path), source=self.source)

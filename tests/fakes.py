@@ -1,8 +1,9 @@
+import hashlib
 import json
 import math
 import posixpath
 import struct
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -160,6 +161,77 @@ def write_repo(root: Path, files: Mapping[str, bytes], shards: Mapping[str, Shar
         (root / name).parent.mkdir(parents=True, exist_ok=True)
         (root / name).write_bytes(safetensors_bytes(spec))
     return root
+
+
+def write_hf_cache_snapshot(
+    hub: Path,
+    repo_id: str,
+    files: Mapping[str, bytes],
+    shards: Mapping[str, ShardSpec] | None = None,
+    *,
+    commit: str = "0" * 40,
+    shared_blobs: bool = False,
+    store_files: Collection[str] | None = None,
+) -> Path:
+    """Write a Hugging Face cache snapshot whose files are relative links into ``blobs/``.
+
+    The layout is ``hub/models--<org>--<name>/{blobs/<sha256>, snapshots/<commit>/<rel>}``.
+    Each link is relative (``../../blobs/<hex>``, one more ``../`` per nested directory),
+    as ``huggingface_hub`` creates it. Returns the snapshot directory.
+
+    With ``shared_blobs`` the files named in ``store_files`` (default: every
+    ``*.safetensors`` file) take the second hop of huggingface_hub 1.32 and later
+    (``huggingface_hub/utils/_shared_blobs.py``, layout read in 2.0): the payload is a
+    regular file in the cache-wide store ``hub/blobs/<xet[:2]>/<xet>``
+    (``shared_blob_path``), the repo's ``blobs/<sha256>`` is a relative link to it
+    (``_make_temporary_symlink``), a ``<xet>.refs`` manifest lists that link, and
+    ``hub/blobs/.huggingface-shared-blobs`` holds ``"1\\n"``. The stand-in Xet hash is the
+    sha256 of ``b"xet:" + payload``. Every other file stays one hop, as small (non-Xet)
+    files do in a real cache: a regular file in ``blobs/`` named by its 40-hex git blob id.
+    """
+    repo_dir = hub / ("models--" + repo_id.replace("/", "--"))
+    blobs = repo_dir / "blobs"
+    snapshot = repo_dir / "snapshots" / commit
+    blobs.mkdir(parents=True, exist_ok=True)
+    snapshot.mkdir(parents=True, exist_ok=True)
+    store = hub / "blobs"
+    if shared_blobs:
+        store.mkdir(exist_ok=True)
+        (store / ".huggingface-shared-blobs").write_text("1\n", encoding="utf-8")
+    payloads = dict(files)
+    for name, spec in (shards or {}).items():
+        payloads[name] = safetensors_bytes(spec)
+    routed = (
+        set(store_files)
+        if store_files is not None
+        else {name for name in payloads if name.endswith(".safetensors")}
+    )
+    if not routed <= payloads.keys():
+        raise ValueError(f"store_files names unknown files: {sorted(routed - payloads.keys())}")
+    for name, data in payloads.items():
+        digest = hashlib.sha256(data).hexdigest()
+        if shared_blobs and name not in routed:
+            digest = _git_blob_id(data)
+            (blobs / digest).write_bytes(data)
+        elif shared_blobs:
+            xet = hashlib.sha256(b"xet:" + data).hexdigest()
+            (store / xet[:2]).mkdir(exist_ok=True)
+            (store / xet[:2] / xet).write_bytes(data)
+            if not (blobs / digest).is_symlink():
+                (blobs / digest).symlink_to(f"../../blobs/{xet[:2]}/{xet}")
+                with (store / xet[:2] / f"{xet}.refs").open("a", encoding="utf-8") as refs:
+                    refs.write(f"{repo_dir.name}/blobs/{digest}\n")
+        else:
+            (blobs / digest).write_bytes(data)
+        link = snapshot / name
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to("../" * (2 + name.count("/")) + "blobs/" + digest)
+    return snapshot
+
+
+def _git_blob_id(data: bytes) -> str:
+    """The 40-hex git blob id, which names a non-LFS file's blob in the cache."""
+    return hashlib.sha1(b"blob %d\x00" % len(data) + data, usedforsecurity=False).hexdigest()
 
 
 @dataclass(slots=True)

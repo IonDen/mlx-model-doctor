@@ -233,7 +233,8 @@ class LoadForbiddenMlxLm:
 # --- VLM smoke fakes (pure Python, no real MLX) ---
 #
 # apply_chat_template's `config` parameter was added after verifying the real
-# mlx-vlm==0.6.12 signature (inspect.signature); apply_chat_template requires
+# mlx-vlm 0.6.12 signature (inspect.signature), unchanged in 0.7.10 (source
+# read 2026-10-24); apply_chat_template requires
 # a model-config argument (`processor, config, prompt, ...`), unlike the
 # text-only mlx_lm.load()/generate() surface above.
 
