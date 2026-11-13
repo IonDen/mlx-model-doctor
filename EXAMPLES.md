@@ -2,7 +2,7 @@
 
 Mostly real output from `mlx-model-doctor`, captured by running the tool — so you can see exactly what you get before installing it. Captured transcript sections show a command, its actual response, and a short read of what the result means. Command-only examples are marked.
 
-> Most transcripts were captured with **mlx-model-doctor 0.9.2** on **2026-10-23**; section 11 was re-captured on **2026-10-24**. The `version` transcript (section 1) was captured with 0.9.1 on 2026-09-12, and the `parity mlx` transcripts (section 9) were captured with 0.9.0 on 2026-09-12. The parity logic is unchanged. It reads the local safetensors header, which this release changed for stale and partly missing root indexes, nested component indexes and unreadable paths; the parity fixture's single consistent index is affected by none of these, so section 9 keeps its 0.9.0 capture. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 5 and 6 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
+> Most transcripts were captured with **mlx-model-doctor 0.10.0** on **2026-11-13**. The `parity mlx` transcripts (section 9) were captured with 0.9.0 on 2026-09-12. They load models, so they were not re-run. The parity logic is unchanged for the directories of real files used there; this release only adds reading of Hugging Face cache snapshots (section 12), so section 9 keeps its 0.9.0 capture. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 5 and 6 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
 
 ## Producer pre-upload workflow
 
@@ -96,7 +96,7 @@ PASS info vlm/quantization.shape
 
 ```console
 $ mlx-model-doctor version
-mlx-model-doctor 0.9.1
+mlx-model-doctor 0.10.0
 Python: 3.14.5
 Executable: /path/to/.venv/bin/python3
 Virtualenv: /path/to/.venv
@@ -105,10 +105,10 @@ Dependencies:
   safetensors: 0.8.0
   mlx: 0.32.0
   mlx-lm: 0.31.3
-  mlx-vlm: not installed
+  mlx-vlm: 0.6.12
 ```
 
-**Result:** exit code `0`. The version report shows the Python environment, the tool's own version, and each dependency it knows about. `safetensors` is the serialization format (the tool parses headers itself); `mlx` and `mlx-lm` are needed only for the optional `--smoke` runtime check.
+**Result:** exit code `0`. The version report shows the Python environment, the tool's own version, and each dependency it knows about. `safetensors` is the serialization format (the tool parses headers itself); `mlx`, `mlx-lm` and `mlx-vlm` are needed only for the optional `--smoke` runtime check.
 
 ## 2. `man` — usage and exit codes
 
@@ -449,17 +449,37 @@ Summary:
   checked: 10
   tool-error: 0
 
-CHECKED mlx-community/DeepSeek-Coder-V2-Instruct-AQ4_1
+CHECKED mlx-community/Audio8-TTS-Realistic-0.6b-bf16
+  Signal: tag:mlx
+  Results: pass=8 warn=2 fail=0 skip=4
+
+CHECKED mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit
+  Signal: tag:mlx
+  Results: pass=11 warn=1 fail=0 skip=2
+
+CHECKED mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx
   Signal: tag:mlx
   Results: pass=12 warn=0 fail=0 skip=2
 
-CHECKED mlx-community/DeepSeek-Coder-V2-Lite-Instruct-8bit
+CHECKED mlx-community/DeepSeek-OCR-2-bf16
+  Signal: tag:mlx
+  Results: pass=10 warn=2 fail=0 skip=2
+
+CHECKED mlx-community/DeepSeek-OCR-4bit
+  Signal: tag:mlx
+  Results: pass=12 warn=1 fail=0 skip=1
+
+CHECKED mlx-community/DeepSeek-R1-0528-Qwen3-8B-8bit
   Signal: tag:mlx
   Results: pass=12 warn=0 fail=0 skip=2
 
-CHECKED mlx-community/DeepSeek-V4.1-Flash-1017-oQ2.5e-mtp
+CHECKED mlx-community/DeepSeek-R1-Distill-Qwen-32B-MLX-4Bit
   Signal: tag:mlx
-  Results: pass=9 warn=3 fail=0 skip=2
+  Results: pass=12 warn=0 fail=0 skip=2
+
+CHECKED mlx-community/DeepSeek-V4-Pro-Qwen3.5-9B-4bit
+  Signal: tag:mlx
+  Results: pass=13 warn=0 fail=0 skip=1
 
 CHECKED mlx-community/DeepSeek-V4.1-Flash-1017-oQ4e-mtp
   Signal: tag:mlx
@@ -468,29 +488,9 @@ CHECKED mlx-community/DeepSeek-V4.1-Flash-1017-oQ4e-mtp
 CHECKED mlx-community/DeepSeek-V4.1-Flash-1017-oQ4e-ngram-mtp
   Signal: tag:mlx
   Results: pass=9 warn=3 fail=0 skip=2
-
-CHECKED mlx-community/Devstral-Small-2-24B-Instruct-2512-4bit
-  Signal: tag:mlx
-  Results: pass=12 warn=1 fail=0 skip=1
-
-CHECKED mlx-community/GLM-5.3-Flash-4bit
-  Signal: tag:mlx
-  Results: pass=12 warn=1 fail=0 skip=1
-
-CHECKED mlx-community/Hermes-4-14B-4bit
-  Signal: tag:mlx
-  Results: pass=11 warn=1 fail=0 skip=2
-
-CHECKED mlx-community/Josiefied-Qwen3-30B-A3B-abliterated-v2-4bit
-  Signal: tag:mlx
-  Results: pass=12 warn=1 fail=0 skip=1
-
-CHECKED mlx-community/Josiefied-Qwen3-4B-Instruct-2507-abliterated-v1-8bit
-  Signal: tag:mlx
-  Results: pass=12 warn=1 fail=0 skip=1
 ```
 
-**Result:** exit code `0`. All ten candidates come back with no failures, and most carry a warning or two. The survey exits `0` because it gates on tool errors (`tool-error: 0`) rather than per-model check results. The Hub listing changes as authors upload, so a rerun picks a different sample. Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
+**Result:** exit code `0`. All ten candidates come back with no failures, and six of them carry at least one warning. The survey exits `0` because it gates on tool errors (`tool-error: 0`) rather than per-model check results. The Hub listing changes as authors upload, so a rerun picks a different sample. Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
 
 ## 8. `sample hf` with `--max-candidates` and `--signal-filter`
 
@@ -518,6 +518,10 @@ CHECKED mlx-community/ALMA-7B-R-4bit-mlx
   Signal: tag:mlx
   Results: pass=10 warn=1 fail=0 skip=3
 
+CHECKED mlx-community/AREX-2-6bit
+  Signal: tag:mlx
+  Results: pass=11 warn=1 fail=0 skip=2
+
 CHECKED mlx-community/AlphaMonarch-7B-mlx
   Signal: tag:mlx
   Results: pass=10 warn=1 fail=0 skip=3
@@ -525,13 +529,9 @@ CHECKED mlx-community/AlphaMonarch-7B-mlx
 CHECKED mlx-community/AlphaMonarch-7B-mlx-4bit
   Signal: tag:mlx
   Results: pass=12 warn=0 fail=0 skip=2
-
-CHECKED mlx-community/Astrea-R8-Chat-9B-OptiQ-4bit
-  Signal: tag:mlx
-  Results: pass=12 warn=1 fail=0 skip=1
 ```
 
-**Result:** exit code `0`. With `--max-candidates 500`, the survey scans deeper into the catalog (500 repos instead of the default window), and `--signal-filter tag:mlx` keeps only repos whose primary signal is the `mlx` tag. Compared with the run in section 7, the list starts at ALMA-13B-R-4bit-mlx instead of DeepSeek-Coder-V2-Instruct-AQ4_1. Use `--no-cache` to bypass the listing cache, or `--cache-ttl` to change its TTL (default: 1 hour).
+**Result:** exit code `0`. With `--max-candidates 500`, the survey scans deeper into the catalog (500 repos instead of the default window), and `--signal-filter tag:mlx` keeps only repos whose primary signal is the `mlx` tag. Compared with the run in section 7, the list starts at ALMA-13B-R-4bit-mlx instead of Audio8-TTS-Realistic-0.6b-bf16. Use `--no-cache` to bypass the listing cache, or `--cache-ttl` to change its TTL (default: 1 hour).
 
 ## 9. `parity mlx` — did fusing the adapter keep its behavior?
 
@@ -539,9 +539,9 @@ CHECKED mlx-community/Astrea-R8-Chat-9B-OptiQ-4bit
 alone, the base with the LoRA adapter loaded, and the fused model — and reports
 whether the fused model still tracks base+adapter. `--prompts` builds the
 comparison from your own `{"prompt", "completion"}` examples, tokenized with the
-base model's own tokenizer. Point `--base`/`--adapter`/`--fused` at directories
-of real files (a converted/fused model, or `hf download <repo> --local-dir`), not
-the raw Hugging Face cache path.
+base model's own tokenizer. Point `--base`/`--adapter`/`--fused` at model
+directories (a converted/fused model, `hf download <repo> --local-dir`, or a
+Hugging Face cache snapshot).
 
 A faithful fuse (`mlx_lm.fuse --dequantize`, which keeps the merged weights in
 float) preserves the adapter — `pass`, exit `0`:
@@ -706,3 +706,75 @@ PASS info text/quantization.shape
 ```
 
 **Result:** exit code `0`. The index names 10 shards that are not in the repository, the repository ships 4 other shards that both loaders read, and the weight checks (`text/safetensors.offsets`, `text/weights.param_count`, `text/quantization.shape`) read those shipped shards. The index is a stale file, so it gets a warning and not a failure. The second warning, `text/generation_config.tokens`, is unrelated. With `--fail-on warn` the same run exits `1`.
+
+## 12. `check local` on a model in your Hugging Face cache
+
+**Model:** `mlx-community/Qwen3.5-0.8B-4bit`, downloaded with `hf download` (here with huggingface_hub 2.x). The command points at the snapshot folder in the cache. Every file in it is a symlink into the cache's own stored copies, and the tool reads them without a copy to a separate folder. The last path segment is the snapshot's commit hash.
+
+```console
+$ mlx-model-doctor check local ~/.cache/huggingface/hub/models--mlx-community--Qwen3.5-0.8B-4bit/snapshots/da28692b5f139cb0ec58a356b437486b7dac7462
+MLX Model Doctor: ~/.cache/huggingface/hub/models--mlx-community--Qwen3.5-0.8B-4bit/snapshots/da28692b5f139cb0ec58a356b437486b7dac7462
+
+Summary:
+  pass: 14
+  warn: 1
+  fail: 0
+  skip: 3
+
+PASS info text/files.required
+  Required config file: config.json is present.
+
+PASS info text/config.json
+  Config JSON: config.json contains a valid JSON object.
+
+PASS info text/config.model_type
+  Model type: config.json declares model_type=qwen3_5.
+
+PASS info text/compat.mlx_signal
+  MLX compatibility signal: MLX-compatibility signals: config:quantization, weights:mlx-quant.
+
+PASS info text/tokenizer.files
+  Tokenizer files: Tokenizer artifacts are present.
+
+SKIP info text/tokenizer.special_tokens
+  Special token IDs: pad_token_id or eos_token_id is unavailable in config.json.
+
+PASS info text/chat_template.presence
+  Chat template: A chat template is present.
+
+WARN medium text/chat_template.special_tokens
+  Chat template tokens: Chat template uses token literal(s) ['<|im_start|>', '<|image_pad|>', '<|video_pad|>', '<|vision_end|>', '<|vision_start|>'] not registered as special tokens; a typo here (e.g. a missing delimiter) makes generation never stop. (A typo that is itself registered, or sub-word fragmentation, needs the full tokenizer.json — not checked here.)
+  Fix: Register the template's end-of-turn token, or fix the registered literal.
+
+PASS info text/safetensors.index
+  Safetensors index: Safetensors indexes reference shard files that are present.
+
+PASS info text/quantization.metadata
+  Quantization metadata: config.json contains MLX quantization metadata.
+
+PASS info text/quantization.mode
+  Quantization mode: MLX quantization mode 'affine' has valid group_size/bits.
+
+SKIP info text/generation_config.tokens
+  Generation-config tokens: No generation token IDs declared, so consistency cannot be checked.
+
+PASS info text/vlm.image_processor
+  VLM image processor: image_processor_type 'Qwen2VLImageProcessorFast' declared in preprocessor_config.json.
+
+PASS info text/memory.estimate
+  Memory estimate: Estimated lower bound memory is advisory and may be below runtime use.
+
+PASS info text/safetensors.offsets
+  Safetensors offsets: Safetensors header tensor offsets are well-formed and in bounds.
+
+PASS info text/weights.param_count
+  Weight parameter count: The weight map resolves to present tensors with non-zero parameters.
+
+SKIP info text/weights.tied_embedding
+  Tied embeddings: No recognized embedding or output-head tensor; cannot check tying.
+
+PASS info text/quantization.shape
+  Quantization shape: Quantized tensor shapes are consistent with config bits/group_size.
+```
+
+**Result:** exit code `0`. The tool found the tokenizer files, the weight shards and their headers through the cache's links, so the tokenizer, index and tensor-header checks all ran. The one warning and the three skips come from this repository's contents: its chat template uses token literals that its tokenizer config does not register as special tokens, it declares neither `pad_token_id` nor `eos_token_id` and ships no `generation_config.json`, and its embedding tensors carry a `language_model.` prefix that the tied-embedding check does not recognize. A symlink that leads anywhere other than the cache's own stored copies is still refused.

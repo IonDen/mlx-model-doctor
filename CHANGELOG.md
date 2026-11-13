@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] — 2026-11-13
+
+`check local` and `parity mlx` now read a model straight from your Hugging Face
+cache, and 1-bit affine quantization no longer draws a warning.
+
+### Added
+- `check local` and `parity mlx` accept a snapshot in the Hugging Face cache
+  (`~/.cache/huggingface/hub/models--ORG--NAME/snapshots/<commit>/`), so you can
+  check a model right after `hf download` without copying it first. Snapshots
+  downloaded with huggingface_hub 1.x or 2.x are now read, including the shared
+  store that 1.32 and later use for large files. Pass the snapshot folder
+  itself, not a subfolder of it. The files in a
+  snapshot are symlinks into the cache's own stored copies, and the tool follows
+  a symlink only when it leads to one of those. Any other symlink that points
+  outside the model directory is still refused. Before, a cache snapshot was
+  reported as having files outside the model root, or missing.
+
+### Changed
+- 1-bit affine quantization is accepted as of MLX 0.32.4, so a repository that
+  uses it no longer warns. MLX 0.32.0 through 0.32.3 reject it. The `[mlx-lm]`
+  extra's `mlx>=0.32,<0.33` range already admits 0.32.4.
+
 ## [0.9.2] — 2026-10-24
 
 The safetensors index check now tells a stale index apart from missing weights,
