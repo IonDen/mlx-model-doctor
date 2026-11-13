@@ -6,13 +6,17 @@ same shipped-shard set. One case differs on purpose: an index that fails for an 
 entry (a ``..`` or absolute value) still lets the header read the shipped shards.
 
 Why a stale root index is not missing weights: MLX loaders do not follow it.
-mlx-vlm v0.6.12 ``mlx_vlm/utils.py`` ``load_model`` keeps only the index-named shards
-that exist (``if (model_path / shard).exists()``) and, when none remain, falls back to
-a ``*.safetensors`` glob that skips ``consolidated.safetensors``. mlx-lm 0.31.3
-``mlx_lm/utils.py:316`` ``load_model`` globs ``model*.safetensors`` at the repo root and
-never reads the index. So a shard counts as shipped only when both globs pick it up.
-Index-following loaders and ``huggingface_hub``'s ``get_safetensors_metadata`` fail.
+mlx-vlm 0.6.12 and 0.7.10 ``load_model`` keeps only the index-named shards that exist
+and, when none remain, falls back to a ``*.safetensors`` glob that skips
+``consolidated.safetensors``. mlx-lm 0.31.3 and 0.32.2 ``load_model`` globs
+``model*.safetensors`` at the repo root and never reads the index. So a shard counts as
+shipped only when both globs pick it up. Index-following loaders and
+``huggingface_hub``'s ``get_safetensors_metadata`` fail.
 """
+
+# Sources, read 2026-10-24: mlx-vlm ``mlx_vlm/utils.py`` ``load_model`` keeps a shard when
+# ``(model_path / shard).exists()``; mlx-lm ``mlx_lm/utils.py`` ``load_model`` globs at
+# line 316 (0.31.3) and line 449 (0.32.2).
 
 import fnmatch
 import json
@@ -24,8 +28,8 @@ from enum import StrEnum
 SAFETENSORS_SUFFIX = ".safetensors"
 SAFETENSORS_INDEX_SUFFIX = ".safetensors.index.json"
 STANDARD_ROOT_INDEX = "model.safetensors.index.json"
-LOADER_SHARD_GLOB = "model*.safetensors"  # mlx-lm 0.31.3 load_model glob
-CONSOLIDATED_SHARD = "consolidated.safetensors"  # skipped by mlx-vlm 0.6.12's fallback
+LOADER_SHARD_GLOB = "model*.safetensors"  # mlx-lm 0.31.3 and 0.32.2 load_model glob
+CONSOLIDATED_SHARD = "consolidated.safetensors"  # skipped by mlx-vlm 0.6.12 and 0.7.10 fallback
 # The most shipped shards whose headers a stale-index read fetches (one request each).
 _MAX_SHIPPED_SHARDS = 512
 # The most absent shard names a message lists before summarizing the rest.
