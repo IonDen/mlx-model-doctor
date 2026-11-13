@@ -11,9 +11,15 @@ from mlx_model_doctor.checks.base import ModelCheck
 from mlx_model_doctor.context import CheckContext, CheckOptions
 from mlx_model_doctor.errors import ModelDoctorError, TargetError
 from mlx_model_doctor.exit_codes import exit_code_for
-from mlx_model_doctor.report import CheckResult, DoctorReport
+from mlx_model_doctor.report import CheckResult, DoctorReport, render_json
 from mlx_model_doctor.targets import HfTarget, LocalTarget
-from tests.fakes import STANDARD_INDEX, FakeShardHub, shard_repo, write_repo
+from tests.fakes import (
+    STANDARD_INDEX,
+    FakeShardHub,
+    shard_repo,
+    write_hf_cache_snapshot,
+    write_repo,
+)
 
 
 def test_check_local_model_returns_text_report_for_valid_local_model(tmp_path: Path) -> None:
@@ -781,3 +787,60 @@ def test_overlong_index_value_is_absent_not_a_crash(
     assert index.details["shard_layout"] == "stale_all_absent_with_shipped"
     assert index.details["missing_shards"] == (long_name,)
     assert result_by_id(report.results, "text/safetensors.offsets").status == "pass"
+
+
+def test_check_local_on_hf_cache_snapshot_matches_a_real_file_copy(tmp_path: Path) -> None:
+    # Bug caught: a check that reads around LocalTarget (a direct Path read), or the
+    # target itself, diverges when every file is a relative link into blobs/.
+    files, shards = shard_repo("consistent")
+    real = check_local_model(write_repo(tmp_path / "real", files, shards))
+    cached = check_local_model(
+        write_hf_cache_snapshot(tmp_path / "hub", "org/model", files, shards)
+    )
+
+    def rendered(report: DoctorReport) -> dict[str, object]:
+        payload = json.loads(render_json(report))
+        payload["target"] = "<target>"
+        return payload
+
+    assert rendered(cached) == rendered(real)
+    assert cached.summary["fail"] == 0
+
+
+def test_check_local_on_hf_shared_blob_snapshot_matches_a_real_file_copy(tmp_path: Path) -> None:
+    # Bug caught: a file in the shared blob store of huggingface_hub 1.32+ (two links:
+    # snapshot -> repo blobs/<etag> -> <hub>/blobs/<xx>/<xet>) reads as absent or outside.
+    # The snapshot mixes both layouts, as a real 1.32+ cache does: the shards take the second
+    # hop, every other file stays one hop under a 40-hex git-sha1 blob name.
+    files, shards = shard_repo("consistent")
+    real = check_local_model(write_repo(tmp_path / "real", files, shards))
+    snapshot = write_hf_cache_snapshot(
+        tmp_path / "hub", "org/model", files, shards, shared_blobs=True
+    )
+    cached = check_local_model(snapshot)
+
+    def rendered(report: DoctorReport) -> dict[str, object]:
+        payload = json.loads(render_json(report))
+        payload["target"] = "<target>"
+        return payload
+
+    second_hop, one_hop = _snapshot_hops(snapshot)
+    assert set(second_hop) == {name for name in shards if name.endswith(".safetensors")}
+    assert set(one_hop) == set(files)
+    assert all(len(blob) == 40 for blob in one_hop.values())
+    assert rendered(cached) == rendered(real)
+    assert cached.summary["fail"] == 0
+
+
+def _snapshot_hops(snapshot: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """Split a snapshot's files by layout: (second hop, one hop), each name -> repo blob."""
+    second_hop: dict[str, str] = {}
+    one_hop: dict[str, str] = {}
+    blobs = snapshot.parent.parent / "blobs"
+    for link in snapshot.rglob("*"):
+        if not link.is_symlink():
+            continue
+        blob = blobs / link.readlink().name
+        hops = second_hop if blob.is_symlink() else one_hop
+        hops[link.relative_to(snapshot).as_posix()] = blob.name
+    return second_hop, one_hop

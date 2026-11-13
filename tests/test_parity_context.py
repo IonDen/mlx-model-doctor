@@ -19,7 +19,7 @@ from mlx_model_doctor.parity.context import (
 )
 from mlx_model_doctor.parity.fixtures import reference_tokenizer_files
 from mlx_model_doctor.targets import LocalTarget
-from tests.fakes import FakeTarget, check_options
+from tests.fakes import FakeTarget, check_options, write_hf_cache_snapshot
 
 
 def _write_tokenizer_repo(root: Path) -> Path:
@@ -124,3 +124,16 @@ def test_tokenizer_json_over_tokenizer_cap_is_still_unavailable() -> None:
 
     assert fp.vocab_size is None
     assert fp.token_id_map_digest is None
+
+
+def test_tokenizer_fingerprint_for_cache_snapshot_equals_real_copy(tmp_path: Path) -> None:
+    # Bug caught: a parity base given as a Hugging Face cache snapshot reads
+    # no tokenizer file through its blob links, so every fingerprint field is None.
+    real = _write_tokenizer_repo(tmp_path / "real")
+    files = {path.name: path.read_bytes() for path in real.iterdir()}
+    snapshot = write_hf_cache_snapshot(tmp_path / "hub", "org/model", files)
+
+    cached = tokenizer_fingerprint_for_path(str(snapshot))
+
+    assert cached == tokenizer_fingerprint_for_path(str(real))
+    assert cached.vocab_size is not None

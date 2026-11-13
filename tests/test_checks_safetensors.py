@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -6,7 +7,14 @@ from mlx_model_doctor.checks.safetensors import SafetensorsIndexCheck, Safetenso
 from mlx_model_doctor.context import _MAX_METADATA_BYTES, CheckContext
 from mlx_model_doctor.errors import TargetError
 from mlx_model_doctor.safetensors_header import FileHeader, SafetensorsHeader, TensorEntry
-from tests.fakes import FakeTarget, check_options, context_for_files
+from mlx_model_doctor.targets import LocalTarget
+from tests.fakes import (
+    FakeTarget,
+    check_options,
+    context_for_files,
+    shard_repo,
+    write_hf_cache_snapshot,
+)
 
 
 def test_safetensors_index_check_skips_when_index_missing() -> None:
@@ -778,3 +786,41 @@ def test_target_rejected_in_repo_name_is_invalid_not_stale(error: Exception) -> 
 
     assert result.status == "fail"
     assert result.details["invalid_shards"] == ("link.safetensors",)
+
+
+def test_cached_sharded_snapshot_index_is_consistent(tmp_path: Path) -> None:
+    # Bug caught: _shard_present or the header reads go through the blob name, so a
+    # cached two-shard snapshot reads as missing, or its header names blob hashes.
+    files, shards = shard_repo("consistent")
+    target = LocalTarget(write_hf_cache_snapshot(tmp_path / "hub", "org/model", files, shards))
+
+    result = SafetensorsIndexCheck().run(CheckContext(target=target, options=check_options()))
+    header = target.safetensors_header()
+
+    # A consistent index takes the pass path, whose details carry no shard_layout key.
+    assert result.status == "pass"
+    assert set(result.details["shards"]) == {
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
+    }
+    assert header is not None
+    assert [file.filename for file in header.files] == [
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
+    ]
+
+
+def test_cached_snapshot_with_dangling_shard_fails_as_missing(tmp_path: Path) -> None:
+    # Bug caught: a shard link whose blob was never downloaded reads as an invalid name
+    # (a TargetError) or lets the index pass as stale, instead of a missing shard.
+    files, shards = shard_repo("consistent")
+    del shards["model-00002-of-00002.safetensors"]
+    snapshot = write_hf_cache_snapshot(tmp_path / "hub", "org/model", files, shards)
+    (snapshot / "model-00002-of-00002.safetensors").symlink_to("../../blobs/" + "e" * 64)
+    target = LocalTarget(snapshot)
+
+    result = SafetensorsIndexCheck().run(CheckContext(target=target, options=check_options()))
+
+    assert result.status == "fail"
+    assert result.details["shard_layout"] == "partial_missing"
+    assert result.details["missing_shards"] == ("model-00002-of-00002.safetensors",)
