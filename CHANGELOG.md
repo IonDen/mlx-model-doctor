@@ -5,6 +5,118 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] — 2026-11-16
+
+`--smoke` and `parity mlx` now refuse to load a repository that names its own
+loader code, or, on VLM `--smoke`, that ships a chat template for one of six
+processor families. If you used `--smoke`, or `parity mlx` on a base or fused model you
+do not control, upgrade.
+
+### Security
+- Some versions of the loaders that `--smoke` and `parity mlx` use can run
+  Python code shipped inside a model repository while loading it: mlx-lm 0.30.6
+  to 0.31.3 (the `[mlx-lm]` extra installs 0.31.3) and mlx-vlm 0.6.16 and later
+  (the `[mlx-vlm]` extra is `>=0.6.12,<0.7`, so it reaches 0.6.16 and 0.6.17;
+  0.7.12 is the newest release as of 2026-11-16). With such a repository, `--smoke` could
+  run that code on your machine, and so could `parity mlx` for its base or
+  fused model. These pins are the same in 0.10.1.
+- The 0.10.0 README said the VLM smoke check refused remote code by default.
+  That held only for the `trust_remote_code` flag, not for a repository that
+  names a `model_file`.
+- A refused smoke check is a failed check, so `--smoke` exits 1 under the
+  default policy. A refused `parity mlx` run exits 2.
+- Before any `--smoke` load, text or VLM, the tool now reads the model folder
+  and refuses the load, with a plain message, in these cases:
+  - Text `--smoke` and `parity mlx` (base and fused) load through mlx-lm. They
+    refuse when `config.json` names a `model_file` at any depth, when
+    `config.json` cannot be read, or when the model path is not a directory.
+    The `--prompts` step loads the tokenizer through transformers with remote
+    code turned off, and applies the same refusal before it does. Parity loads
+    the tokenizer with remote code turned off, so an `auto_map` entry does not
+    block it. Text `--smoke` also calls mlx-lm with
+    remote code off for the tokenizer, and an `auto_map` there did not run
+    code.
+  - VLM `--smoke` (`--plugin vlm`) loads through mlx-vlm, and some mlx-vlm
+    processors turn remote code back on. This path also refuses:
+    - a `configuration_files` key in `config.json`;
+    - an `auto_map` anywhere in `config.json`;
+    - an `auto_map` anywhere in `tokenizer_config.json`;
+    - an `auto_map` anywhere in `processor_config.json`;
+    - an `auto_map` anywhere in `preprocessor_config.json`;
+    - an `auto_map` anywhere in `video_preprocessor_config.json`;
+    - any of those files that exists but cannot be read;
+    - a chat template of the repository's own, when `model_type` in
+      `config.json` (compared in lower case, or `speculators_model_type` when
+      `model_type` is empty) is `molmo`, `molmo2`, `ernie4_5_moe_vl`, `phi3_v`
+      (also written `phi3-v` or `phi3v`), `kimi_vl` or `locateanything`. These
+      mlx-vlm processors render templates without a sandbox, which can let a
+      template run code. This route was read in the mlx-vlm and transformers
+      source; it has not been shown to run code. The list comes from mlx-vlm
+      0.6.12 to 0.7.12; a later mlx-vlm could change it.
+    - The tool looks for that template in `tokenizer_config.json`,
+      `chat_template.json`, `processor_config.json`,
+      `preprocessor_config.json`, `special_tokens_map.json` (a top-level
+      `chat_template` key), `chat_template.jinja` and an
+      `additional_chat_templates/` folder that holds a `.jinja` file. The check
+      covers all of these files for every one of the six families. A template
+      file that exists but cannot be read (for example a truncated download)
+      also refuses the load, because the tool cannot tell whether the
+      repository ships a template.
+    - The message names the family and where the template was found, says the
+      load was refused so the template was not rendered, and says the static
+      checks still ran. A repository of these families with no template of its
+      own still loads. Where mlx-vlm has a built-in template (molmo, molmo2) it
+      is used; for the other four families such a repository can fail when the
+      chat template is applied.
+- The message reads: "This repository names loader code (`<key>` in `<file>`)
+  that mlx-lm could import" (or mlx-vlm), then "The load was refused, so that
+  code was not run." Smoke adds "The static checks above still ran." The advice
+  is not to load the repository with mlx-lm or mlx-vlm unless you trust its
+  author; the static checks read it without running its code. For a file that
+  is unreadable or only partly downloaded, the message says the file could not
+  be read and suggests downloading it again or repairing it.
+- `parity mlx` and `check_adapter_parity` read the base and fused directories
+  with the mlx-lm rule above before any model loads. On a hit, nothing is loaded; the
+  report names the repository (base or fused), the key and the file, and says
+  the load was refused so that code was not run. The run cannot reach a verdict,
+  so it exits 2. A tokenizer mismatch or an uncovered target found in the same
+  run still exits 1. The adapter directory is not checked, because mlx-lm reads
+  only its config and weights.
+- Who was exposed: users of `--smoke` (opt-in, needs an extra) on 0.10.0 and
+  earlier who pointed it at a repository they do not control, and users of
+  `parity mlx` with mlx-lm 0.30.6 to 0.31.3 who pointed the base or fused model at one.
+  The static checks, which are the default, read only metadata and the safetensors header
+  and are not affected.
+- What to do: upgrade to 0.10.1. Until then, run `--smoke` and `parity mlx`
+  only on repositories you trust.
+- What this does not do: `--smoke` and `parity mlx` still load the model through
+  mlx-lm or mlx-vlm. Outside the cases listed above, including chat templates
+  in other model families, a repository is loaded as before, so run `--smoke`
+  only on repositories you trust. The static checks remain the safe way to look
+  at a repository you do not trust.
+
+### Changed
+- `check hf … --smoke` now downloads the repository snapshot first, without
+  downloading `.py` files, checks it, and loads from that local copy. The smoke result
+  records the snapshot revision.
+- A failed snapshot download is now a tool error (exit 2). Before, it was a
+  smoke failure (exit 1).
+- When the Python API `check_adapter_parity` downloads a repository from the Hub
+  (the `parity mlx` command never downloads), it now fetches only the
+  files mlx-lm reads (JSON configs, safetensors weights, tokenizer files and
+  chat templates) plus the adapter's config and weights.
+- VLM `--smoke` now refuses any repository whose config files carry an
+  `auto_map` entry, and some well-known vision repositories do. There is no
+  option to override this. The static checks still run on them.
+- VLM `--smoke` now also refuses repositories of the molmo, molmo2,
+  ernie4_5_moe_vl, phi3_v, kimi_vl and locateanything families that ship their
+  own chat template.
+- On text `--smoke` and in parity, an `auto_map` does not block the load. But if
+  the tokenizer needs that code to load, the load now fails with a message that
+  names the file, instead of transformers' advice to turn remote code on.
+
+No dependency changes in this release.
+
 ## [0.10.0] — 2026-11-13
 
 `check local` and `parity mlx` now read a model straight from your Hugging Face
