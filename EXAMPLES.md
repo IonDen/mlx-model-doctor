@@ -2,7 +2,7 @@
 
 Mostly real output from `mlx-model-doctor`, captured by running the tool — so you can see exactly what you get before installing it. Captured transcript sections show a command, its actual response, and a short read of what the result means. Command-only examples are marked.
 
-> Most transcripts were captured with **mlx-model-doctor 0.10.0** on **2026-11-13**. The `parity mlx` transcripts (section 9) were captured with 0.9.0 on 2026-09-12. They load models, so they were not re-run. The parity logic is unchanged for the directories of real files used there; this release only adds reading of Hugging Face cache snapshots (section 12), so section 9 keeps its 0.9.0 capture. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 5 and 6 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
+> Most transcripts were captured with **mlx-model-doctor 0.10.1** on **2026-11-16**. The `parity mlx` transcripts (section 9) were captured with 0.9.0 on 2026-09-12. They load models, so they were not re-run. Since 0.9.0, parity gained reading of Hugging Face cache snapshots (0.10.0, section 12) and a refusal of repositories that ship their own loader code (0.10.1). Section 9 keeps its 0.9.0 capture, because re-running it loads models. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 5 and 6 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
 
 ## Producer pre-upload workflow
 
@@ -96,7 +96,7 @@ PASS info vlm/quantization.shape
 
 ```console
 $ mlx-model-doctor version
-mlx-model-doctor 0.10.0
+mlx-model-doctor 0.10.1
 Python: 3.14.5
 Executable: /path/to/.venv/bin/python3
 Virtualenv: /path/to/.venv
@@ -449,25 +449,17 @@ Summary:
   checked: 10
   tool-error: 0
 
+CHECKED mlx-community/AREX-2-6bit
+  Signal: tag:mlx
+  Results: pass=11 warn=1 fail=0 skip=2
+
 CHECKED mlx-community/Audio8-TTS-Realistic-0.6b-bf16
   Signal: tag:mlx
   Results: pass=8 warn=2 fail=0 skip=4
 
-CHECKED mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit
-  Signal: tag:mlx
-  Results: pass=11 warn=1 fail=0 skip=2
-
-CHECKED mlx-community/DeepSeek-Coder-V2-Lite-Instruct-4bit-mlx
-  Signal: tag:mlx
-  Results: pass=12 warn=0 fail=0 skip=2
-
 CHECKED mlx-community/DeepSeek-OCR-2-bf16
   Signal: tag:mlx
   Results: pass=10 warn=2 fail=0 skip=2
-
-CHECKED mlx-community/DeepSeek-OCR-4bit
-  Signal: tag:mlx
-  Results: pass=12 warn=1 fail=0 skip=1
 
 CHECKED mlx-community/DeepSeek-R1-0528-Qwen3-8B-8bit
   Signal: tag:mlx
@@ -477,20 +469,28 @@ CHECKED mlx-community/DeepSeek-R1-Distill-Qwen-32B-MLX-4Bit
   Signal: tag:mlx
   Results: pass=12 warn=0 fail=0 skip=2
 
-CHECKED mlx-community/DeepSeek-V4-Pro-Qwen3.5-9B-4bit
+CHECKED mlx-community/DeepSeek-V4.1-Flash-1017-oQ2.5e-ngram-mtp
   Signal: tag:mlx
-  Results: pass=13 warn=0 fail=0 skip=1
+  Results: pass=9 warn=3 fail=0 skip=2
 
 CHECKED mlx-community/DeepSeek-V4.1-Flash-1017-oQ4e-mtp
   Signal: tag:mlx
   Results: pass=9 warn=3 fail=0 skip=2
 
-CHECKED mlx-community/DeepSeek-V4.1-Flash-1017-oQ4e-ngram-mtp
+CHECKED mlx-community/GLM-4.6V-Flash-8bit
   Signal: tag:mlx
-  Results: pass=9 warn=3 fail=0 skip=2
+  Results: pass=12 warn=1 fail=0 skip=1
+
+CHECKED mlx-community/Inkling-2-Small-oQ4e
+  Signal: tag:mlx
+  Results: pass=12 warn=1 fail=0 skip=1
+
+CHECKED mlx-community/Kimi-K2-Instruct-0905-mlx-3bit
+  Signal: tag:mlx
+  Results: pass=11 warn=2 fail=0 skip=1
 ```
 
-**Result:** exit code `0`. All ten candidates come back with no failures, and six of them carry at least one warning. The survey exits `0` because it gates on tool errors (`tool-error: 0`) rather than per-model check results. The Hub listing changes as authors upload, so a rerun picks a different sample. Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
+**Result:** exit code `0`. All ten candidates come back with no failures, and eight of them carry at least one warning. The survey exits `0` because it gates on tool errors (`tool-error: 0`) rather than per-model check results. The Hub listing changes as authors upload, so a rerun picks a different sample. Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
 
 ## 8. `sample hf` with `--max-candidates` and `--signal-filter`
 
@@ -518,6 +518,10 @@ CHECKED mlx-community/ALMA-7B-R-4bit-mlx
   Signal: tag:mlx
   Results: pass=10 warn=1 fail=0 skip=3
 
+CHECKED mlx-community/AREX-2-4bit
+  Signal: tag:mlx
+  Results: pass=11 warn=1 fail=0 skip=2
+
 CHECKED mlx-community/AREX-2-6bit
   Signal: tag:mlx
   Results: pass=11 warn=1 fail=0 skip=2
@@ -525,13 +529,9 @@ CHECKED mlx-community/AREX-2-6bit
 CHECKED mlx-community/AlphaMonarch-7B-mlx
   Signal: tag:mlx
   Results: pass=10 warn=1 fail=0 skip=3
-
-CHECKED mlx-community/AlphaMonarch-7B-mlx-4bit
-  Signal: tag:mlx
-  Results: pass=12 warn=0 fail=0 skip=2
 ```
 
-**Result:** exit code `0`. With `--max-candidates 500`, the survey scans deeper into the catalog (500 repos instead of the default window), and `--signal-filter tag:mlx` keeps only repos whose primary signal is the `mlx` tag. Compared with the run in section 7, the list starts at ALMA-13B-R-4bit-mlx instead of Audio8-TTS-Realistic-0.6b-bf16. Use `--no-cache` to bypass the listing cache, or `--cache-ttl` to change its TTL (default: 1 hour).
+**Result:** exit code `0`. With `--max-candidates 500`, the survey scans deeper into the catalog (500 repos instead of the default window), and `--signal-filter tag:mlx` keeps only repos whose primary signal is the `mlx` tag. Compared with the run in section 7, the list starts at ALMA-13B-R-4bit-mlx instead of AREX-2-6bit. Use `--no-cache` to bypass the listing cache, or `--cache-ttl` to change its TTL (default: 1 hour).
 
 ## 9. `parity mlx` — did fusing the adapter keep its behavior?
 

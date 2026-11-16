@@ -5,6 +5,9 @@ as priorities change.
 
 ## Released
 
+- **v0.10.1** (2026-11-16) — `--smoke` and `parity mlx` refuse to load a
+  repository that names its own loader code or, on VLM `--smoke`, ships a chat
+  template for one of six processor families.
 - **v0.10.0** (2026-11-13) — Hugging Face cache snapshots. `check local` and
   `parity mlx` now work directly on a model in your Hugging Face cache, including
   one downloaded with huggingface_hub 1.x or 2.x, so there is no need to copy it to a
