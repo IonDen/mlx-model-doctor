@@ -2,7 +2,7 @@
 
 Mostly real output from `mlx-model-doctor`, captured by running the tool — so you can see exactly what you get before installing it. Captured transcript sections show a command, its actual response, and a short read of what the result means. Command-only examples are marked.
 
-> Most transcripts were captured with **mlx-model-doctor 0.10.1** on **2026-11-16**. The `parity mlx` transcripts (section 9) were captured with 0.9.0 on 2026-09-12. They load models, so they were not re-run. Since 0.9.0, parity gained reading of Hugging Face cache snapshots (0.10.0, section 12) and a refusal of repositories that ship their own loader code (0.10.1). Section 9 keeps its 0.9.0 capture, because re-running it loads models. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 5 and 6 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
+> Section 1 was captured with a 0.10.2 development build on 2026-11-16; the transcript drops the development suffix. Most other transcripts were captured with **0.10.1** on **2026-11-16**. The `parity mlx` transcripts (section 9) were captured with 0.9.0 on 2026-09-12. They load models, so they were not re-run. Since 0.9.0, parity gained reading of Hugging Face cache snapshots (0.10.0, section 12) and a refusal of repositories that ship their own loader code (0.10.1). Section 9 keeps its 0.9.0 capture, because re-running it loads models. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 5 and 6 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
 
 ## Producer pre-upload workflow
 
@@ -96,16 +96,16 @@ PASS info vlm/quantization.shape
 
 ```console
 $ mlx-model-doctor version
-mlx-model-doctor 0.10.1
-Python: 3.14.5
+mlx-model-doctor 0.10.2
+Python: 3.13.12
 Executable: /path/to/.venv/bin/python3
 Virtualenv: /path/to/.venv
 Dependencies:
   huggingface-hub: 1.19.0
   safetensors: 0.8.0
-  mlx: 0.32.0
-  mlx-lm: 0.31.3
-  mlx-vlm: 0.6.12
+  mlx: 0.32.4
+  mlx-lm: 0.32.2
+  mlx-vlm: 0.7.12
 ```
 
 **Result:** exit code `0`. The version report shows the Python environment, the tool's own version, and each dependency it knows about. `safetensors` is the serialization format (the tool parses headers itself); `mlx`, `mlx-lm` and `mlx-vlm` are needed only for the optional `--smoke` runtime check.

@@ -5,6 +5,73 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.2] — 2026-11-17
+
+The `[mlx-lm]` and `[mlx-vlm]` extras now follow MLX 0.32, mlx-lm 0.32 and
+mlx-vlm 0.6.12 to 0.7. A text `--smoke` load that fails on a repository
+naming `auto_map` code no longer puts your home folder path in the upstream
+error kept in the report details. Nothing changes in the API, the CLI, the
+checks or the output format.
+
+### Changed
+- The extras now require newer packages. `[mlx-lm]` asks for
+  `mlx-lm>=0.32.0,<0.33` and `mlx>=0.32.4,<0.33` (it was `mlx-lm>=0.31.3,<0.32`
+  and `mlx>=0.32,<0.33`). `[mlx-vlm]` asks for `mlx-vlm>=0.6.12,<0.8` and
+  `mlx>=0.32.4,<0.33` (it was `mlx-vlm>=0.6.12,<0.7`). The runtime dependencies
+  and the Python requirement are the same.
+- mlx-lm 0.32.0 and later refuse a repository's own `model_file` unless the
+  caller passes `trust_remote_code=True`. That is a second layer beside the
+  refusal added in 0.10.1, which stays.
+- With either extra installed, MLX is now 0.32.4 or later. Its release notes
+  add 1-bit affine quantization on Apple GPUs, and the check accepts 1-bit from
+  0.32.4 (0.32.0 to 0.32.3 reject it). The static check runs from the base
+  install and cannot see which MLX will load the model, so a 1-bit repository
+  checked in one environment and loaded on an older MLX in another can still
+  fail at load.
+- mlx-vlm 0.7.x no longer depends on mlx-lm. It brings more packages that only
+  the extra installs: `datasets` (with pandas and pyarrow), `cryptography` and
+  `websockets`. `fastapi`, `uvicorn` and `starlette` also came with mlx-vlm
+  0.6.12.
+
+### Fixed
+- When a text `--smoke` load fails on a repository that names `auto_map` code,
+  the upstream error kept in the report details (`upstream_error`) shows your
+  home folder as `~`. This also holds when the user name has a space, when the
+  home folder ends a quoted path, a sentence or a line, and when it appears
+  percent-encoded in a `file://` or Hub URL. Other failed loads, text or VLM,
+  still show the loader's own message, with its paths.
+- `check hf --smoke --plugin vlm` now also downloads `*.jsonl` files, which one
+  mlx-vlm 0.7.x processor family reads.
+
+### Verified
+On 2026-11-16, on this release's code (a clean tree), with mlx 0.32.4,
+mlx-lm 0.32.2, mlx-vlm 0.7.12, transformers 5.15.0 and Python 3.13 on an Apple
+M1 Max with 32 GB under macOS 27.2.1, these passed: the GPU-marked upstream
+call tests and the source scans of mlx-vlm, a text `--smoke` on
+Qwen2.5-0.5B-Instruct-4bit, and a VLM `--smoke` on Qwen2.5-VL-3B-Instruct-4bit.
+Both `--smoke` runs exited 0.
+
+The live VLM check ran three tests: the live VLM smoke test and two offline
+snapshot-resolution tests. All three passed, and then the test process crashed
+during teardown (exit 139).
+
+At an earlier commit with the same extras and lock, `parity mlx` ran on a small
+base and LoRA. The three parity runs returned their expected verdict codes (0
+for pass, 2 for inconclusive, 1 for tracks-base) with no crash. One opt-in
+parity test passed both of its tests and then ended with the same exit code
+(139) during teardown. No traceback was kept, so a shared cause is not
+confirmed. This was seen before 0.10.2 and is not fixed yet.
+
+The lowest versions the extras admit (mlx-lm 0.32.0, mlx-vlm 0.6.12 and
+mlx 0.32.4) were not run.
+
+### Upgrade notes
+- Installing an extra upgrades `mlx` to 0.32.4 or later and, for `[mlx-lm]`,
+  `mlx-lm` to 0.32.0 or later.
+- mlx-train-perf 0.9.1 pins `mlx==0.32.0` in its base install, and its own
+  `[mlx-lm]` extra keeps `mlx-lm` below 0.32. Either way it cannot share an
+  environment with these extras.
+
 ## [0.10.1] — 2026-11-16
 
 `--smoke` and `parity mlx` now refuse to load a repository that names its own
