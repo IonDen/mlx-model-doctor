@@ -480,3 +480,53 @@ def test_man_command_mentions_prompts_flag(capsys: pytest.CaptureFixture[str]) -
 
     assert code == 0
     assert "--prompts" in output
+
+
+def test_parity_mlx_prompts_refuses_a_base_that_names_loader_code_before_any_tokenizer(
+    tiny_local_repos: _Repos,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    # Bug: `parity mlx --prompts` loads the base tokenizer before the loader-code guard,
+    # so a refused base reaches AutoTokenizer and the user never sees the refusal.
+    base = Path(tiny_local_repos.base)
+    config = json.loads((base / "config.json").read_text(encoding="utf-8"))
+    (base / "config.json").write_text(
+        json.dumps({**config, "model_file": "modeling_x.py"}), encoding="utf-8"
+    )
+    prompts_path = tmp_path / "prompts.json"
+    prompts_path.write_text(json.dumps([{"prompt": "hi", "completion": "there"}]), encoding="utf-8")
+    loads: list[str] = []
+    real_build_prompts_fixture = cli.build_prompts_fixture
+
+    def recording_build_prompts_fixture(base_ref: str, prompts: str) -> object:
+        def loader(path: str) -> _FakeCliTokenizer:
+            loads.append(path)
+            return _FakeCliTokenizer()
+
+        return real_build_prompts_fixture(base_ref, prompts, tokenizer_loader=loader)
+
+    monkeypatch.setattr(cli, "build_prompts_fixture", recording_build_prompts_fixture)
+    _inject_launcher(monkeypatch, RaisingLauncher())
+
+    code = cli.main(
+        [
+            "parity",
+            "mlx",
+            "--base",
+            str(base),
+            "--adapter",
+            tiny_local_repos.adapter,
+            "--fused",
+            tiny_local_repos.fused_diff,
+            "--prompts",
+            str(prompts_path),
+        ]
+    )
+
+    assert code == 2
+    assert "names loader code (model_file in config.json) that mlx-lm could import" in (
+        capsys.readouterr().err
+    )
+    assert loads == []

@@ -855,3 +855,252 @@ def test_parity_static_phase_passes_with_cache_snapshot_base(
     assert report.phase_outcomes["delta_map"] == "ok"
     assert launcher.model_paths_by_role[ROLE_BASE] == str(snapshot.resolve())
     assert launcher.model_paths_by_role[ROLE_BASE].endswith("/snapshots/" + "0" * 40)
+
+
+# --- repositories that name their own loader code -------------------------------
+# --- repositories that name their own loader code -------------------------------
+
+_REMOTE_CODE_CHECK_ID = "parity/load.remote_code"
+_KEY_REMEDIATION = (
+    "Do not load this repository with mlx-lm or mlx-vlm unless you trust its author. "
+    "The static checks read it without running its code."
+)
+
+
+def _set_json_key(path: Path, key: str, value: object) -> None:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data[key] = value
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _remote_code_result(report: object) -> object:
+    matches = [r for r in report.results if r.check_id == _REMOTE_CODE_CHECK_ID]  # type: ignore[attr-defined]
+    assert len(matches) == 1, [r.check_id for r in report.results]  # type: ignore[attr-defined]
+    return matches[0]
+
+
+def test_base_that_names_its_own_code_is_refused_before_any_worker(
+    tiny_local_repos: _Repos,
+) -> None:
+    # Bug: the parent never reads the base config for loader keys, so four workers
+    # call mlx_lm.load on a base whose config.json model_file mlx-lm 0.31.x imports.
+    _set_json_key(Path(tiny_local_repos.base) / "config.json", "model_file", "modeling_x.py")
+    launcher = _pass_launcher()
+
+    report = check_adapter_parity(
+        base=tiny_local_repos.base,
+        adapter=tiny_local_repos.adapter,
+        fused=tiny_local_repos.fused_diff,
+        options=ParityOptions(launcher=launcher),
+    )
+
+    result = _remote_code_result(report)
+    assert result.status == "fail"
+    assert result.details["refused_targets"] == ("base",)
+    assert result.details["base_remote_code_key"] == "model_file"
+    assert result.details["base_remote_code_file"] == "config.json"
+    assert result.message == (
+        "The base repository names loader code (model_file in config.json) that mlx-lm "
+        "could import. The load was refused, so that code was not run."
+    )
+    assert result.remediation == _KEY_REMEDIATION
+    assert launcher.model_paths_by_role == {}
+    assert set(report.worker_status.values()) == {"skipped"}
+    assert report.verdict is None
+    assert report.phase_outcomes["static"] == "blocking_fail"
+    assert parity_exit_code(report) == 2
+    assert json.loads(render_parity_json(report))["verdict"] is None
+
+
+def test_fused_with_a_nested_model_file_is_refused_before_any_worker(
+    tiny_local_repos: _Repos,
+) -> None:
+    # Bug: the parity guard reads model_file at the top level only, so one nested in
+    # text_config reaches the fused worker's mlx_lm.load.
+    _set_json_key(
+        Path(tiny_local_repos.fused_diff) / "config.json", "text_config", {"model_file": "m.py"}
+    )
+    launcher = _pass_launcher()
+
+    report = check_adapter_parity(
+        base=tiny_local_repos.base,
+        adapter=tiny_local_repos.adapter,
+        fused=tiny_local_repos.fused_diff,
+        options=ParityOptions(launcher=launcher),
+    )
+
+    result = _remote_code_result(report)
+    assert result.status == "fail"
+    assert result.details["fused_remote_code_key"] == "model_file"
+    assert launcher.model_paths_by_role == {}
+
+
+def test_auto_map_does_not_refuse_parity_and_the_workers_run(tiny_local_repos: _Repos) -> None:
+    # Bug: the parity guard uses the VLM key table, so a base or fused repository that
+    # kept an auto_map from its source cannot be compared at all, although the workers
+    # load with trust_remote_code pinned off and never import what it names.
+    _set_json_key(
+        Path(tiny_local_repos.base) / "config.json",
+        "auto_map",
+        {"AutoConfig": "configuration_x.XConfig"},
+    )
+    _set_json_key(
+        Path(tiny_local_repos.fused_diff) / "tokenizer_config.json",
+        "auto_map",
+        {"AutoTokenizer": ["tokenization_x.XTokenizer", None]},
+    )
+    (Path(tiny_local_repos.fused_diff) / "processor_config.json").write_bytes(b'{"auto_map":')
+    launcher = _pass_launcher()
+
+    report = check_adapter_parity(
+        base=tiny_local_repos.base,
+        adapter=tiny_local_repos.adapter,
+        fused=tiny_local_repos.fused_diff,
+        options=_opts(launcher),
+    )
+
+    assert _remote_code_result(report).status == "pass"
+    assert set(launcher.model_paths_by_role) == {ROLE_BASE, ROLE_NOISE, ROLE_REFERENCE, ROLE_FUSED}
+    assert parity_exit_code(report) == 0
+
+
+def test_dangling_fused_config_is_refused_before_any_worker(
+    tiny_local_repos: _Repos, tmp_path: Path
+) -> None:
+    # Bug: an unreadable guarded file is treated as clean on the parity path (fail
+    # open), or the refusal hides that the file is a link into a missing blob.
+    fused = _write_model_repo(tmp_path / "fused_dangling", q_bytes=_F4_TWO * 64)
+    (fused / "config.json").unlink()
+    (fused / "config.json").symlink_to(tmp_path / "missing-blob")
+    launcher = _pass_launcher()
+
+    report = check_adapter_parity(
+        base=tiny_local_repos.base,
+        adapter=tiny_local_repos.adapter,
+        fused=str(fused),
+        options=ParityOptions(launcher=launcher),
+    )
+
+    result = _remote_code_result(report)
+    assert result.status == "fail"
+    assert result.details["fused_remote_code_file"] == "config.json"
+    assert result.details["fused_remote_code_unreadable"] is True
+    assert result.details["fused_remote_code_dangling_link"] is True
+    assert "could not be read (missing target, unreadable, or not a JSON object)" in (
+        result.message
+    )
+    assert result.remediation == "Re-download or repair config.json, then run again."
+    assert launcher.model_paths_by_role == {}
+    assert parity_exit_code(report) == 2
+
+
+def test_base_naming_code_and_dangling_fused_config_are_both_refused_in_one_result(
+    tiny_local_repos: _Repos, tmp_path: Path
+) -> None:
+    # Bug: with one named key and one unreadable file, the closing sentence says "that
+    # code was not run" (any() for all()), although the fused file was never read; or
+    # a refused target or a remediation is dropped or repeated when both are refused.
+    _set_json_key(Path(tiny_local_repos.base) / "config.json", "model_file", "modeling_x.py")
+    fused = _write_model_repo(tmp_path / "fused_dangling", q_bytes=_F4_TWO * 64)
+    (fused / "config.json").unlink()
+    (fused / "config.json").symlink_to(tmp_path / "missing-blob")
+    launcher = _pass_launcher()
+
+    report = check_adapter_parity(
+        base=tiny_local_repos.base,
+        adapter=tiny_local_repos.adapter,
+        fused=str(fused),
+        options=ParityOptions(launcher=launcher),
+    )
+
+    result = _remote_code_result(report)
+    assert result.status == "fail"
+    assert result.message == (
+        "The base repository names loader code (model_file in config.json) that mlx-lm "
+        "could import. config.json could not be read (missing target, unreadable, or not "
+        "a JSON object), so it is unknown whether the fused repository names loader code. "
+        "The load was refused, so repository code was not run."
+    )
+    repair = "Re-download or repair config.json, then run again."
+    assert result.remediation == f"{_KEY_REMEDIATION} {repair}"
+    assert result.remediation.count(_KEY_REMEDIATION) == 1
+    assert result.remediation.count(repair) == 1
+    assert result.details["refused_targets"] == ("base", "fused")
+    assert launcher.model_paths_by_role == {}
+    assert set(report.worker_status.values()) == {"skipped"}
+
+
+def test_refusal_plus_tokenizer_mismatch_still_exits_1_and_runs_no_worker(
+    tiny_local_repos: _Repos,
+) -> None:
+    # Bug: parity/load.remote_code is added to step 1 of parity_exit_code (or the
+    # refusal drops the tokenizer result), so a run with a confirmed tokenizer mismatch
+    # silently becomes "cannot determine" (exit 2).
+    _set_json_key(Path(tiny_local_repos.base) / "config.json", "model_file", "modeling_x.py")
+    launcher = RaisingLauncher()
+
+    report = check_adapter_parity(
+        base=tiny_local_repos.base,
+        adapter=tiny_local_repos.adapter,
+        fused=tiny_local_repos.fused_vocab_mismatch,
+        options=ParityOptions(launcher=launcher),
+    )
+
+    assert _remote_code_result(report).status == "fail"
+    assert any(
+        r.check_id == "parity/tokenizer.identity" and r.status == "fail" for r in report.results
+    )
+    assert launcher.model_paths_by_role == {}
+    assert parity_exit_code(report) == 1
+
+
+@dataclass(frozen=True)
+class _CrashingRemoteCodeCheck:
+    check_id: str = _REMOTE_CODE_CHECK_ID
+    title: str = "Repository loader code"
+
+    def run(self, pctx: object) -> object:
+        raise RuntimeError("boom")
+
+
+def test_a_crash_of_the_remote_code_check_is_not_reported_as_a_refusal(
+    tiny_local_repos: _Repos, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: remote_code_refused matches any fail under the check id, so a crash also adds
+    # the false reason that a repository names loader code.
+    import mlx_model_doctor.api as api_module
+
+    checks = tuple(
+        _CrashingRemoteCodeCheck() if c.check_id == _REMOTE_CODE_CHECK_ID else c
+        for c in api_module._PARITY_CHECKS
+    )
+    monkeypatch.setattr(api_module, "_PARITY_CHECKS", checks)
+
+    report = check_adapter_parity(
+        base=tiny_local_repos.base,
+        adapter=tiny_local_repos.adapter,
+        fused=tiny_local_repos.fused_diff,
+        options=ParityOptions(launcher=RaisingLauncher()),
+    )
+
+    assert _remote_code_result(report).message.startswith("check crashed:")
+    assert report.reasons == ("a cross-target parity check crashed; the run cannot be trusted.",)
+    assert parity_exit_code(report) == 2
+
+
+def test_clean_targets_pass_the_remote_code_check_and_run_the_workers(
+    tiny_local_repos: _Repos,
+) -> None:
+    # Bug: the guard refuses clean repositories (for example a missing guarded file
+    # counted as a refusal), so no parity run can ever reach the oracle.
+    launcher = _pass_launcher()
+
+    report = check_adapter_parity(
+        base=tiny_local_repos.base,
+        adapter=tiny_local_repos.adapter,
+        fused=tiny_local_repos.fused_diff,
+        options=_opts(launcher),
+    )
+
+    assert _remote_code_result(report).status == "pass"
+    assert parity_exit_code(report) == 0

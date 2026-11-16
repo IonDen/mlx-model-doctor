@@ -162,3 +162,83 @@ def test_real_hf_snapshot_resolution(tmp_path: Path) -> None:
     snapshot = Path(sources.base.path)
     assert snapshot.is_dir()
     assert (snapshot / "config.json").is_file()
+
+
+def test_default_downloader_never_fetches_repository_python_files(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Bug: the parity snapshot downloads the whole repository, "*.py" included, so a
+    # repository's code lands on disk beside the files the worker loads.
+    from fnmatch import fnmatch
+
+    import huggingface_hub
+
+    from mlx_model_doctor.parity.sources import DefaultSnapshotDownloader
+
+    calls: list[dict[str, object]] = []
+
+    def fake_snapshot_download(**kwargs: object) -> str:
+        calls.append(kwargs)
+        return "/cache/models--org--base/snapshots/" + "0" * 40
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot_download)
+
+    path = DefaultSnapshotDownloader().snapshot("org/base")
+
+    assert path == "/cache/models--org--base/snapshots/" + "0" * 40
+    (call,) = calls
+    assert call["repo_id"] == "org/base"
+    ignored = call.get("ignore_patterns") or []
+    allowed = call.get("allow_patterns")
+    assert isinstance(ignored, list)
+
+    def fetched(name: str) -> bool:
+        if any(fnmatch(name, p) for p in ignored):
+            return False
+        return allowed is None or any(fnmatch(name, p) for p in allowed)  # type: ignore[union-attr]
+
+    assert not fetched("modeling_x.py")
+    for name in ("config.json", "model.safetensors", "adapters.safetensors", "tokenizer.json"):
+        assert fetched(name), name
+
+
+def test_default_downloader_fetches_only_the_loader_and_adapter_files(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Bug: the parity snapshot uses a deny list (ignore "*.py"), so compiled modules,
+    # shared libraries and any other file the repository ships are fetched; or the
+    # allow list drops a file the parity load needs (tokenizer.model, *.jinja, the
+    # adapter weights).
+    import huggingface_hub
+
+    from mlx_model_doctor.parity.sources import DefaultSnapshotDownloader
+
+    calls: list[dict[str, object]] = []
+
+    def fake_snapshot_download(**kwargs: object) -> str:
+        calls.append(kwargs)
+        return "/cache/models--org--base/snapshots/" + "0" * 40
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot_download)
+
+    DefaultSnapshotDownloader().snapshot("org/base")
+
+    # mlx-lm 0.31.3 utils._download's patterns minus "*.py", plus the two files
+    # mlx-lm 0.31.3 tuner/utils.py load_adapters reads.
+    assert calls == [
+        {
+            "repo_id": "org/base",
+            "allow_patterns": [
+                "*.json",
+                "model*.safetensors",
+                "tokenizer.model",
+                "*.tiktoken",
+                "tiktoken.model",
+                "*.txt",
+                "*.jsonl",
+                "*.jinja",
+                "adapter_config.json",
+                "adapters.safetensors",
+            ],
+        }
+    ]
