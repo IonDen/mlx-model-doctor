@@ -36,9 +36,11 @@ from mlx_model_doctor.targets import HfTarget
 if TYPE_CHECKING:
     from mlx_model_doctor.targets import ModelTarget
 
-# The files each loader would download for a Hub repo id, minus "*.py": mlx-lm 0.31.3
-# utils._download and mlx-vlm 0.6.12 utils.get_model_path (read 2026-11-16). The smoke
-# load runs from this local snapshot. The download does not fetch .py files; the folder
+# The files each loader would download for a Hub repo id, minus "*.py": mlx-lm 0.32.2
+# utils.DEFAULT_ALLOW_PATTERNS (the 0.31.3 list) and mlx-vlm 0.7.12 utils.get_model_path
+# (read 2026-11-16; 0.7.x adds "*.jsonl" to the 0.6.12 list, which plamo2vl's
+# tokenizer.jsonl needs). tests/test_upstream_surface.py compares both lists with the
+# installed loaders. The smoke load runs from this local snapshot. The download does not fetch .py files; the folder
 # may still hold some from an earlier full download, which is why the guard reads it.
 _MLX_LM_SNAPSHOT_PATTERNS = (
     "*.json",
@@ -52,6 +54,7 @@ _MLX_LM_SNAPSHOT_PATTERNS = (
 )
 _MLX_VLM_SNAPSHOT_PATTERNS = (
     "*.json",
+    "*.jsonl",
     "*.safetensors",
     "*.model",
     "*.tiktoken",
@@ -320,15 +323,15 @@ class MlxLmSmokeCheck:
 
 
 # Checked against mlx-vlm 0.6.12 with ``inspect.signature`` on the installed package, and
-# against the 0.7.10 source on 2026-10-24 (the same signatures).
+# against 0.7.12 by tests/test_upstream_surface.py on 2026-11-16 (the same signatures).
 class MlxVlmModule(Protocol):
     """mlx-vlm API surface used by the VLM smoke backend.
 
-    Signatures verified against mlx-vlm 0.6.12 and 0.7.10: ``load`` and ``generate``
-    accept many more parameters via ``**kwargs`` than declared here; only the ones this
-    backend passes are part of this Protocol. ``apply_chat_template`` takes a
-    model-config argument (``processor, config, prompt, ...``), not just a processor
-    and a prompt.
+    Signatures checked against mlx-vlm 0.7.12 by the test suite and, earlier, against
+    0.6.12 with ``inspect.signature``. ``load`` and ``generate`` accept many more parameters via
+    ``**kwargs`` than declared here; only the ones this backend passes are part of this Protocol.
+    ``apply_chat_template`` takes a model-config argument (``processor, config, prompt, ...``),
+    not just a processor and a prompt.
     """
 
     def load(

@@ -2,6 +2,7 @@
 
 import json
 import re
+import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,7 +23,8 @@ class RemoteCodeKeys:
 
 
 # mlx-lm: config.json "model_file" is imported with no trust_remote_code gate (mlx-lm
-# 0.31.3 utils.py:325). "auto_map" is not listed: transformers imports what it names only
+# 0.31.3 utils.py:325); mlx-lm 0.32.0 and later gate it, and the key stays because the
+# base install does not pin mlx-lm. "auto_map" is not listed: transformers imports what it names only
 # with trust_remote_code on, and every mlx-lm load here pins it off (the smoke load and
 # the parity worker pass tokenizer_config={"trust_remote_code": False}; the --prompts
 # tokenizer passes trust_remote_code=False). mlx-lm's distributed sharded loader turns it
@@ -168,18 +170,36 @@ def describe_auto_map_load_failure(file: str) -> str:
     )
 
 
-# An absolute path: a "/" that does not continue a word, a URL or another "/", then at
-# least two components. The match is replaced by its last component.
-_ABSOLUTE_PATH = re.compile(r"(?<![\w:/.])/+(?:[^\s/'\"]+/+)+([^\s/'\"]+)")
+# An absolute path: an optional "~", then a "/" that does not continue a word, a URL,
+# another "/" or a "~", then at least two components. The match is replaced by its last
+# component.
+_ABSOLUTE_PATH = re.compile(r"(?<![\w:/.~])~?/+(?:[^\s/'\"]+/+)+([^\s/'\"]+)")
+
+# What blocks the home cut: a word character, a "-", or a "." followed by a word
+# character, which continue the user name into another folder ("/Users/alice2",
+# "/Users/alice-b", "/Users/alice.smith"). Anything else, or the end of the text, cuts.
+_HOME_END = r"(?![\w-]|\.\w)"
 
 
 def reduce_absolute_paths(text: str, *, model_dir: Path) -> str:
     """Return ``text`` with ``model_dir`` and every other absolute path cut to its name.
 
-    ``model_dir`` itself is cut first, also where transformers glues it to a URL
-    (``https://hf.co//<path>``); a path below it is left to the general rule.
+    ``model_dir`` itself is cut first, plain or percent-encoded, also where
+    transformers glues it to a URL (``https://hf.co//<path>``); a path below it is
+    left to the general rule. Then the home directory (of at least two components),
+    plain or percent-encoded, is written as ``~``, so a user name with a space, or one
+    inside a ``file://`` URL, is not kept. An unknown home skips that step.
     """
-    own = re.sub(re.escape(str(model_dir)) + "(?!/)", lambda _match: model_dir.name, text)
+    own = text
+    for spelling in dict.fromkeys((str(model_dir), urllib.parse.quote(str(model_dir)))):
+        own = re.sub(re.escape(spelling) + "(?!/)", lambda _match: model_dir.name, own)
+    try:
+        home = Path.home()
+    except RuntimeError:
+        home = None
+    if home is not None and len(home.parts) >= 3:
+        for spelling in dict.fromkeys((str(home), urllib.parse.quote(str(home)))):
+            own = re.sub(re.escape(spelling) + _HOME_END, "~", own)
     return _ABSOLUTE_PATH.sub(r"\1", own)
 
 

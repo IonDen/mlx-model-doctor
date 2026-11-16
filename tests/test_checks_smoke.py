@@ -8,7 +8,30 @@ from mlx_model_doctor.checks.smoke import MlxLmBackend, MlxLmSmokeCheck, SmokeGe
 from mlx_model_doctor.context import CheckContext
 from mlx_model_doctor.errors import DependencyError, MemorySafetyError, ModelDoctorError
 from mlx_model_doctor.memory import GIB
-from tests.fakes import FakeTarget, check_options
+from tests.fakes import FakeTarget, check_options, write_hf_cache_snapshot
+
+# Small, known-good VLM pinned for the live canary (mlx-community, 4-bit quantized).
+CANARY_REPO = "mlx-community/Qwen2.5-VL-3B-Instruct-4bit"
+
+
+def canary_snapshot_dir(*, cache_dir: Path | None = None) -> Path:
+    """Return the canary's snapshot folder from the local Hugging Face cache only.
+
+    Never contacts the Hub. A missing snapshot fails the test: a --run-smoke run is
+    prepared on purpose, so the model must already be downloaded.
+    """
+    from huggingface_hub import snapshot_download
+    from huggingface_hub.errors import LocalEntryNotFoundError
+
+    try:
+        folder = snapshot_download(CANARY_REPO, cache_dir=cache_dir, local_files_only=True)
+    except LocalEntryNotFoundError:
+        pytest.fail(
+            f"{CANARY_REPO} is not in the local Hugging Face cache. "
+            f"Run `hf download {CANARY_REPO}` before `pytest --run-smoke`.",
+            pytrace=False,
+        )
+    return Path(folder)
 
 
 def test_mlx_lm_smoke_check_passes_for_non_empty_generation() -> None:
@@ -241,8 +264,8 @@ class LoadForbiddenMlxLm:
 # --- VLM smoke fakes (pure Python, no real MLX) ---
 #
 # apply_chat_template's `config` parameter was added after verifying the real
-# mlx-vlm 0.6.12 signature (inspect.signature), unchanged in 0.7.10 (source
-# read 2026-10-24); apply_chat_template requires
+# mlx-vlm 0.6.12 signature (inspect.signature), unchanged in 0.7.12 (the
+# upstream surface tests, 2026-11-16); apply_chat_template requires
 # a model-config argument (`processor, config, prompt, ...`), unlike the
 # text-only mlx_lm.load()/generate() surface above.
 
@@ -509,19 +532,17 @@ def test_vlm_smoke_canary_on_real_model() -> None:
     """Live: load a small VLM model through mlx-vlm and verify non-empty output + cap persistence."""
     from mlx_model_doctor.checks.smoke import MlxVlmBackend, MlxVlmSmokeCheck
     from mlx_model_doctor.memory import install_mlx_memory_caps
-    from mlx_model_doctor.targets import HfTarget
+    from mlx_model_doctor.targets import LocalTarget
+
+    # The cached snapshot folder, read without the Hub, checked as a local target.
+    snapshot = canary_snapshot_dir()
 
     caps_before = install_mlx_memory_caps()
     assert caps_before[0] > 0, "Memory caps must be available for the canary"
 
-    # Small, known-good VLM model pinned for the canary (mlx-community, 4-bit quantized).
-    # A real HfTarget: the smoke load downloads its snapshot and loads that directory.
     backend = MlxVlmBackend()
     check = MlxVlmSmokeCheck(backend=backend)
-    ctx = CheckContext(
-        target=HfTarget("mlx-community/Qwen2.5-VL-3B-Instruct-4bit"),
-        options=check_options(),
-    )
+    ctx = CheckContext(target=LocalTarget(snapshot), options=check_options())
     result = check.run(ctx)
     assert result.status == "pass", f"VLM canary failed: {result.message}"
     assert result.details["generated_text_chars"] > 0
@@ -531,3 +552,46 @@ def test_vlm_smoke_canary_on_real_model() -> None:
     assert caps_after == caps_before, (
         f"Memory caps drifted: before={caps_before}, after={caps_after}"
     )
+
+
+# --- canary snapshot resolution (offline, from the local Hugging Face cache) ---
+
+CANARY_COMMIT = "46d4cf06a06ffc1a766c214174f9cbed2f45bcab"
+
+
+def test_canary_snapshot_resolution_returns_the_cached_snapshot_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: the canary asks the Hub for the snapshot, so it fails with the Hub unreachable
+    # although the snapshot is cached.
+    import huggingface_hub
+
+    def hub_contacted(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("the canary snapshot resolution contacted the Hub")
+
+    monkeypatch.setattr(huggingface_hub.HfApi, "repo_info", hub_contacted)
+    snapshot = write_hf_cache_snapshot(
+        tmp_path,
+        "mlx-community/Qwen2.5-VL-3B-Instruct-4bit",
+        {"config.json": b"{}"},
+        commit=CANARY_COMMIT,
+    )
+    refs = tmp_path / "models--mlx-community--Qwen2.5-VL-3B-Instruct-4bit" / "refs"
+    refs.mkdir()
+    (refs / "main").write_text(CANARY_COMMIT, encoding="utf-8")
+
+    assert canary_snapshot_dir(cache_dir=tmp_path) == snapshot
+
+
+def test_canary_snapshot_resolution_fails_naming_the_download_command_when_not_cached(
+    tmp_path: Path,
+) -> None:
+    # Bug: a missing snapshot skips the canary (a prepared --run-smoke run then reports
+    # nothing), or fails without saying how to fetch the model.
+    # BaseException, then the type: pytest.raises(Failed) would let a skip through.
+    with pytest.raises(
+        BaseException, match=r"`hf download mlx-community/Qwen2\.5-VL-3B-Instruct-4bit`"
+    ) as exc_info:
+        canary_snapshot_dir(cache_dir=tmp_path)
+
+    assert exc_info.type is pytest.fail.Exception
