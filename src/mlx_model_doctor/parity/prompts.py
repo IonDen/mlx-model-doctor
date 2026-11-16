@@ -37,6 +37,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol, cast
 
+from mlx_model_doctor.checks.remote_code import (
+    MLX_LM_KEYS,
+    describe_refusal,
+    find_remote_code,
+    refusal_remediation,
+)
 from mlx_model_doctor.environment import format_install_hint, has_uv_context
 from mlx_model_doctor.errors import DependencyError, ModelDoctorError
 from mlx_model_doctor.parity.context import TokenizerFingerprint, tokenizer_fingerprint_for_path
@@ -149,6 +155,15 @@ def build_prompts_fixture(
         base_ref, base_ref, base_ref, allow_network=allow_network, downloader=downloader
     )
     local_base_path = sources.base.path
+    # The guard runs before the tokenizer load, with the same table and words as the
+    # parity check, so a refused base is never handed to AutoTokenizer.
+    refusal = find_remote_code(Path(local_base_path), keys=MLX_LM_KEYS)
+    if refusal is not None:
+        outcome = "that code" if refusal.key is not None else "repository code"
+        raise ModelDoctorError(
+            f"{describe_refusal(refusal, subject='the base repository')} The load was "
+            f"refused, so {outcome} was not run. {refusal_remediation(refusal)}"
+        )
     tokenizer = tokenizer_loader(local_base_path)
 
     def apply_chat_template(

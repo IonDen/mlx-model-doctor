@@ -36,9 +36,20 @@ from tests.parity_fakes import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _model_dir_on_disk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the default spec path ``models/base`` a real, empty model directory.
+
+    The worker's loader-code guard refuses a path that is not an existing directory,
+    so the tests that reach the (faked) load need one on disk.
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "models" / "base").mkdir(parents=True)
+
+
 def _spec(**overrides: object) -> WorkerSpec:
     defaults: dict[str, object] = {
-        "model_path": "/models/base",
+        "model_path": "models/base",
         "adapter_path": None,
         "token_ids": ((1, 2, 3),),
         "fixture_id": "fx-1",
@@ -65,7 +76,7 @@ def _result(**overrides: object) -> WorkerResult:
 
 def test_worker_spec_holds_the_expected_fields() -> None:
     spec = _spec(adapter_path="/adapters/a", token_ids=((4, 5),))
-    assert spec.model_path == "/models/base"
+    assert spec.model_path == "models/base"
     assert spec.adapter_path == "/adapters/a"
     assert spec.token_ids == ((4, 5),)
     assert spec.fixture_id == "fx-1"
@@ -517,7 +528,7 @@ def test_mlx_lm_worker_backend_computes_argmax_without_adapter(monkeypatch) -> N
     assert result.fixture_id == "fx-1"
     assert mlx_lm.load_calls == [
         {
-            "path": "/models/base",
+            "path": "models/base",
             "adapter_path": None,
             "tokenizer_config": {"trust_remote_code": False},
         }
@@ -585,7 +596,7 @@ def test_mlx_lm_worker_backend_concatenates_per_sequence_argmax_in_order(monkeyp
     assert model.calls == [[[1, 2, 3]], [[4, 5]]]
     assert mlx_lm.load_calls == [
         {
-            "path": "/models/base",
+            "path": "models/base",
             "adapter_path": None,
             "tokenizer_config": {"trust_remote_code": False},
         }
@@ -735,7 +746,7 @@ def test_main_writes_worker_json_and_prints_sentinel(monkeypatch, tmp_path, caps
     exit_code = main(
         [
             "--model-path",
-            "/models/base",
+            "models/base",
             "--token-ids",
             "1,2",
             "--fixture-id",
@@ -771,7 +782,7 @@ def test_main_refuses_when_caps_cannot_be_installed(monkeypatch, tmp_path) -> No
         main(
             [
                 "--model-path",
-                "/models/base",
+                "models/base",
                 "--token-ids",
                 "1,2",
                 "--fixture-id",
@@ -818,7 +829,7 @@ def test_main_wires_watchdog_abort_to_do_abort(monkeypatch, tmp_path) -> None:
     main(
         [
             "--model-path",
-            "/models/base",
+            "models/base",
             "--token-ids",
             "1",
             "--fixture-id",
@@ -877,7 +888,7 @@ def test_main_creates_output_directory_before_watchdog_can_abort(monkeypatch, tm
     main(
         [
             "--model-path",
-            "/models/base",
+            "models/base",
             "--token-ids",
             "1",
             "--fixture-id",
@@ -1164,7 +1175,7 @@ def test_main_rejects_non_integer_memory_size(monkeypatch, tmp_path: Path) -> No
         main(
             [
                 "--model-path",
-                "/models/base",
+                "models/base",
                 "--token-ids",
                 "1",
                 "--fixture-id",
@@ -1176,3 +1187,178 @@ def test_main_rejects_non_integer_memory_size(monkeypatch, tmp_path: Path) -> No
             ]
         )
     assert mlx_lm.load_calls == 0
+
+
+def test_mlx_lm_worker_backend_refuses_a_model_dir_that_names_its_own_code(
+    monkeypatch, tmp_path: Path
+) -> None:
+    # Bug: the worker hands a directory whose config.json names model_file straight to
+    # mlx_lm.load, which on mlx-lm 0.31.x imports and runs that file.
+    model = tmp_path / "base"
+    model.mkdir()
+    (model / "config.json").write_text(
+        '{"model_type": "llama", "model_file": "modeling_x.py"}', encoding="utf-8"
+    )
+    logits = [[0.1, 5.0, 0.2]]
+    mlx_lm = FakeMlxLmModule(FakeMlxLmModel(logits))
+    mx = FakeMxCore(logits=logits)
+    monkeypatch.setattr(
+        worker_module.importlib,
+        "import_module",
+        make_import_module({"mlx.core": mx, "mlx_lm": mlx_lm}),
+    )
+
+    with pytest.raises(
+        ModelDoctorError, match=r"model_file.*config\.json|config\.json.*model_file"
+    ) as exc_info:
+        MlxLmWorkerBackend().load_argmax(_spec(model_path=str(model), token_ids=((1,),)))
+
+    assert "that mlx-lm could import" in str(exc_info.value)
+    assert mlx_lm.load_calls == []
+
+
+def _recording_worker_mlx_lm(monkeypatch: pytest.MonkeyPatch) -> FakeMlxLmModule:
+    logits = [[0.1, 5.0, 0.2]]
+    mlx_lm = FakeMlxLmModule(FakeMlxLmModel(logits))
+    monkeypatch.setattr(
+        worker_module.importlib,
+        "import_module",
+        make_import_module({"mlx.core": FakeMxCore(logits=logits), "mlx_lm": mlx_lm}),
+    )
+    return mlx_lm
+
+
+@pytest.mark.parametrize("make", ["missing", "file"])
+def test_mlx_lm_worker_backend_refuses_a_path_that_is_not_an_existing_directory(
+    make: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Bug: the worker guard finds no config.json under a missing path and passes it to
+    # mlx_lm.load, which treats "org/model" as a Hub repo id and downloads its *.py files.
+    path = tmp_path / "org" / "model"
+    if make == "file":
+        path.parent.mkdir()
+        path.write_bytes(b"{}")
+    mlx_lm = _recording_worker_mlx_lm(monkeypatch)
+
+    with pytest.raises(ModelDoctorError, match="not an existing directory"):
+        MlxLmWorkerBackend().load_argmax(_spec(model_path=str(path), token_ids=((1,),)))
+
+    assert mlx_lm.load_calls == []
+
+
+@pytest.mark.parametrize("make", ["dangling_link", "invalid_json"])
+def test_mlx_lm_worker_backend_refuses_an_unreadable_config(
+    make: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Bug: the worker guard treats a config.json it cannot read (a link into a missing
+    # blob, or invalid JSON) as clean and hands the directory to mlx_lm.load.
+    model = tmp_path / "base"
+    model.mkdir()
+    if make == "dangling_link":
+        (model / "config.json").symlink_to(tmp_path / "gone.json")
+    else:
+        (model / "config.json").write_bytes(b'{"model_file": "x.py",')
+    mlx_lm = _recording_worker_mlx_lm(monkeypatch)
+
+    with pytest.raises(ModelDoctorError, match=r"config\.json could not be read"):
+        MlxLmWorkerBackend().load_argmax(_spec(model_path=str(model), token_ids=((1,),)))
+
+    assert mlx_lm.load_calls == []
+
+
+def test_mlx_lm_worker_backend_loads_a_repo_whose_auto_map_mlx_lm_does_not_import(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Bug: the worker applies the VLM key table and refuses a repository that kept an
+    # auto_map from its source, which mlx-lm with trust_remote_code pinned off never
+    # imports; or it loads without that pin.
+    model = tmp_path / "base"
+    model.mkdir()
+    (model / "config.json").write_text(
+        '{"model_type": "llama", "auto_map": {"AutoConfig": "configuration_x.XConfig"}}',
+        encoding="utf-8",
+    )
+    (model / "tokenizer_config.json").write_text(
+        '{"auto_map": {"AutoTokenizer": ["tokenization_x.XTokenizer", null]}}',
+        encoding="utf-8",
+    )
+    mlx_lm = _recording_worker_mlx_lm(monkeypatch)
+
+    MlxLmWorkerBackend().load_argmax(_spec(model_path=str(model), token_ids=((1,),)))
+
+    assert mlx_lm.load_calls == [
+        {
+            "path": str(model),
+            "adapter_path": None,
+            "tokenizer_config": {"trust_remote_code": False},
+        }
+    ]
+
+
+def _transformers_remote_code_error(path: str) -> ValueError:
+    """The ValueError transformers 5.15.0 raises for a local directory whose auto_map it
+    would have to import with trust_remote_code off (dynamic_module_utils.py:742-792)."""
+    return ValueError(
+        f"The repository {path} contains custom code which must be executed to correctly "
+        f"load the model. You can inspect the repository content at {path} .\n You can "
+        f"inspect the repository content at https://hf.co/{path}.\n"
+        "Please pass the argument `trust_remote_code=True` to allow custom code to be run."
+    )
+
+
+def test_mlx_lm_worker_backend_load_failure_on_an_auto_map_gets_our_message(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Bug: the worker relays transformers' error, which tells the user to pass
+    # trust_remote_code=True and prints the absolute model path in a hf.co// link.
+    model = tmp_path / "base"
+    model.mkdir()
+    (model / "tokenizer_config.json").write_text(
+        '{"auto_map": {"AutoTokenizer": ["tokenization_x.XTokenizer", null]}}',
+        encoding="utf-8",
+    )
+    logits = [[0.1, 5.0, 0.2]]
+    mlx_lm = FakeMlxLmModule(
+        FakeMlxLmModel(logits), raise_error=_transformers_remote_code_error(str(model))
+    )
+    monkeypatch.setattr(
+        worker_module.importlib,
+        "import_module",
+        make_import_module({"mlx.core": FakeMxCore(logits=logits), "mlx_lm": mlx_lm}),
+    )
+
+    with pytest.raises(ModelDoctorError) as exc_info:
+        MlxLmWorkerBackend().load_argmax(_spec(model_path=str(model), token_ids=((1,),)))
+
+    assert str(exc_info.value) == (
+        "This repository names tokenizer or model code (auto_map in tokenizer_config.json). "
+        "mlx-lm was called with remote code turned off, so that code was not run, and the "
+        "load could not finish without it. Do not load this repository with mlx-lm or "
+        "mlx-vlm unless you trust its author. The static checks read it without running "
+        "its code."
+    )
+    # The traceback the parent captures must not carry the upstream text either.
+    assert exc_info.value.__suppress_context__ is True
+    assert exc_info.value.__cause__ is None
+    assert len(mlx_lm.load_calls) == 1
+
+
+def test_mlx_lm_worker_backend_load_failure_without_an_auto_map_is_not_reworded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Bug: every failed worker load is reworded as an auto_map refusal.
+    model = tmp_path / "base"
+    model.mkdir()
+    logits = [[0.1, 5.0, 0.2]]
+    upstream = _transformers_remote_code_error(str(model))
+    mlx_lm = FakeMlxLmModule(FakeMlxLmModel(logits), raise_error=upstream)
+    monkeypatch.setattr(
+        worker_module.importlib,
+        "import_module",
+        make_import_module({"mlx.core": FakeMxCore(logits=logits), "mlx_lm": mlx_lm}),
+    )
+
+    with pytest.raises(ValueError, match="trust_remote_code=True") as exc_info:
+        MlxLmWorkerBackend().load_argmax(_spec(model_path=str(model), token_ids=((1,),)))
+
+    assert exc_info.value is upstream

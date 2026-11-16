@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -68,7 +69,9 @@ def test_mlx_lm_smoke_check_propagates_memory_safety_errors() -> None:
         check.run(CheckContext(target=FakeTarget(files={}), options=check_options()))
 
 
-def test_mlx_lm_backend_lazily_imports_installs_caps_and_records_peak(monkeypatch) -> None:
+def test_mlx_lm_backend_lazily_imports_installs_caps_and_records_peak(
+    monkeypatch, tmp_path: Path
+) -> None:
     mx = FakeMx()
     mlx_lm = FakeMlxLm(mx)
 
@@ -81,8 +84,9 @@ def test_mlx_lm_backend_lazily_imports_installs_caps_and_records_peak(monkeypatc
 
     monkeypatch.setattr(smoke_module.importlib, "import_module", import_module)
 
+    # The smoke load reads a real directory; an empty one carries no guarded file.
     generation = MlxLmBackend().generate(
-        CheckContext(target=FakeTarget(files={}), options=check_options())
+        CheckContext(target=FakeTarget(files={}, name=str(tmp_path)), options=check_options())
     )
 
     assert generation.text.strip()
@@ -189,7 +193,9 @@ class FakeMlxLm:
         self.load_saw_caps: tuple[int | None, int | None] | None = None
         self.generate_kwargs: dict[str, object] | None = None
 
-    def load(self, path_or_repo: str) -> tuple[object, object]:
+    def load(
+        self, path_or_repo: str, tokenizer_config: dict[str, object] | None = None
+    ) -> tuple[object, object]:
         self.load_saw_reset = self._mx.peak_was_reset
         self.load_saw_caps = (self._mx.wired_limit, self._mx.memory_limit)
         return (object(), object())
@@ -214,7 +220,9 @@ class FakeMlxLm:
 class LoadForbiddenMlxLm:
     load_calls = 0
 
-    def load(self, path_or_repo: str) -> tuple[object, object]:
+    def load(
+        self, path_or_repo: str, tokenizer_config: dict[str, object] | None = None
+    ) -> tuple[object, object]:
         self.load_calls += 1
         raise AssertionError("mlx_lm.load() must not be called without MLX memory caps")
 
@@ -346,7 +354,7 @@ def test_vlm_smoke_propagates_memory_safety_error() -> None:
 # --- VLM backend-level tests (FakeVlmModule + FakeMx, monkeypatched imports) ---
 
 
-def test_vlm_backend_installs_caps_loads_and_reinstalls_caps(monkeypatch) -> None:
+def test_vlm_backend_installs_caps_loads_and_reinstalls_caps(monkeypatch, tmp_path: Path) -> None:
     mx = FakeMx()
     vlm = FakeVlmModule()
 
@@ -362,7 +370,7 @@ def test_vlm_backend_installs_caps_loads_and_reinstalls_caps(monkeypatch) -> Non
     from mlx_model_doctor.checks.smoke import MlxVlmBackend
 
     generation = MlxVlmBackend(vlm_module=vlm, mx_module=mx).generate(
-        CheckContext(target=FakeTarget(files={}, name="test-vlm"), options=check_options())
+        CheckContext(target=FakeTarget(files={}, name=str(tmp_path)), options=check_options())
     )
 
     assert generation.text.strip()
@@ -411,7 +419,7 @@ def test_vlm_backend_missing_dependencies_raise_install_hint(monkeypatch) -> Non
     assert exc_info.value.extra_name == "mlx-vlm"
 
 
-def test_vlm_backend_generate_failure_returns_fail_result() -> None:
+def test_vlm_backend_generate_failure_returns_fail_result(tmp_path: Path) -> None:
     """Test that a generate-time (not load-time) exception becomes a fail result."""
     from mlx_model_doctor.checks.smoke import MlxVlmBackend, MlxVlmSmokeCheck
 
@@ -420,17 +428,18 @@ def test_vlm_backend_generate_failure_returns_fail_result() -> None:
     backend = MlxVlmBackend(vlm_module=vlm, mx_module=mx)
     check = MlxVlmSmokeCheck(backend=backend)
     result = check.run(
-        CheckContext(target=FakeTarget(files={}, name="test"), options=check_options())
+        CheckContext(target=FakeTarget(files={}, name=str(tmp_path)), options=check_options())
     )
     assert result.status == "fail"
     assert "vision encoder crash" in result.message
 
 
-def _vlm_smoke_context() -> CheckContext:
-    return CheckContext(target=FakeTarget(files={}, name="test-vlm"), options=check_options())
+def _vlm_smoke_context(model_dir: Path) -> CheckContext:
+    # The smoke load reads a real directory; an empty one carries no guarded file.
+    return CheckContext(target=FakeTarget(files={}, name=str(model_dir)), options=check_options())
 
 
-def test_vlm_backend_refuses_when_caps_fail_after_load() -> None:
+def test_vlm_backend_refuses_when_caps_fail_after_load(tmp_path: Path) -> None:
     """Post-load cap reinstall failure must raise MemorySafetyError."""
     from mlx_model_doctor.checks.smoke import MlxVlmBackend
 
@@ -459,12 +468,12 @@ def test_vlm_backend_refuses_when_caps_fail_after_load() -> None:
 
     mx = CapsFailAfterLoadMx()
     backend = MlxVlmBackend(vlm_module=FakeVlmModule(), mx_module=mx)
-    ctx = _vlm_smoke_context()
+    ctx = _vlm_smoke_context(tmp_path)
     with pytest.raises(MemorySafetyError, match="reinstalled after VLM load"):
         backend.generate(ctx)
 
 
-def test_vlm_smoke_fails_when_text_attribute_is_none() -> None:
+def test_vlm_smoke_fails_when_text_attribute_is_none(tmp_path: Path) -> None:
     """A GenerationResult with .text=None must fail, not false-pass via str()."""
     from mlx_model_doctor.checks.smoke import MlxVlmBackend, MlxVlmSmokeCheck
 
@@ -486,7 +495,7 @@ def test_vlm_smoke_fails_when_text_attribute_is_none() -> None:
 
     backend = MlxVlmBackend(vlm_module=NoneTextVlm(), mx_module=FakeMx())
     check = MlxVlmSmokeCheck(backend=backend)
-    ctx = _vlm_smoke_context()
+    ctx = _vlm_smoke_context(tmp_path)
     result = check.run(ctx)
     assert result.status == "fail"
     assert "empty" in result.message.lower()
@@ -500,15 +509,17 @@ def test_vlm_smoke_canary_on_real_model() -> None:
     """Live: load a small VLM model through mlx-vlm and verify non-empty output + cap persistence."""
     from mlx_model_doctor.checks.smoke import MlxVlmBackend, MlxVlmSmokeCheck
     from mlx_model_doctor.memory import install_mlx_memory_caps
+    from mlx_model_doctor.targets import HfTarget
 
     caps_before = install_mlx_memory_caps()
     assert caps_before[0] > 0, "Memory caps must be available for the canary"
 
     # Small, known-good VLM model pinned for the canary (mlx-community, 4-bit quantized).
+    # A real HfTarget: the smoke load downloads its snapshot and loads that directory.
     backend = MlxVlmBackend()
     check = MlxVlmSmokeCheck(backend=backend)
     ctx = CheckContext(
-        target=FakeTarget(files={}, name="mlx-community/Qwen2.5-VL-3B-Instruct-4bit", _source="hf"),
+        target=HfTarget("mlx-community/Qwen2.5-VL-3B-Instruct-4bit"),
         options=check_options(),
     )
     result = check.run(ctx)

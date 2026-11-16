@@ -18,6 +18,14 @@ from pathlib import Path
 from threading import Event
 from typing import Literal, Protocol, cast
 
+from mlx_model_doctor.checks.remote_code import (
+    KEY_REMEDIATION,
+    MLX_LM_KEYS,
+    describe_auto_map_load_failure,
+    describe_refusal,
+    find_auto_map,
+    find_remote_code,
+)
 from mlx_model_doctor.environment import format_install_hint, has_uv_context
 from mlx_model_doctor.errors import (
     DependencyError,
@@ -476,17 +484,40 @@ class MlxLmWorkerBackend:
         single loaded model, concatenating each sequence's per-position argmax,
         in sequence order, into one flat result vector.
         """
+        # Defence in depth behind the parent's RemoteCodeCheck: never hand mlx_lm.load a
+        # path that is not an existing directory (mlx-lm would treat it as a Hub repo id)
+        # or one whose config.json names a model_file (mlx-lm 0.31.x imports it with no
+        # gate). auto_map is inert here: the load below pins trust_remote_code off.
+        refusal = find_remote_code(Path(spec.model_path), keys=MLX_LM_KEYS)
+        if refusal is not None:
+            raise ModelDoctorError(
+                f"refusing to load {spec.model_path}: {describe_refusal(refusal)} "
+                "No repository code was run."
+            )
         mx = _import_mlx_core()
         mlx_lm_module = _import_mlx_lm()
         # The tokenizer resolution a bare `load()` triggers can fall into
         # transformers' `trust_remote_code` prompt/execution path for an
         # untrusted repo even though the loaded tokenizer itself is discarded
         # below -- pin it explicitly rather than accept the caller's default.
-        model, _tokenizer = mlx_lm_module.load(
-            spec.model_path,
-            adapter_path=spec.adapter_path,
-            tokenizer_config={"trust_remote_code": False},
-        )
+        try:
+            model, _tokenizer = mlx_lm_module.load(
+                spec.model_path,
+                adapter_path=spec.adapter_path,
+                tokenizer_config={"trust_remote_code": False},
+            )
+        except ModelDoctorError:
+            raise
+        except Exception:
+            # transformers' own text advises trust_remote_code=True and prints the
+            # absolute path; the parent shows this worker's stderr, so replace it and
+            # keep the upstream exception out of the traceback (from None).
+            auto_map_file = find_auto_map(Path(spec.model_path))
+            if auto_map_file is None:
+                raise
+            raise ModelDoctorError(
+                f"{describe_auto_map_load_failure(auto_map_file)} {KEY_REMEDIATION}"
+            ) from None
         applied = _adapter_applied_from_reference(model, spec) if spec.adapter_path else None
         flat_argmax: list[int] = []
         for sequence in spec.token_ids:

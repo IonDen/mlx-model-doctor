@@ -17,8 +17,15 @@ a crash can be told apart from an ordinary, confidently-reached ``fail``
 import traceback
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
+from mlx_model_doctor.checks.remote_code import (
+    MLX_LM_KEYS,
+    describe_refusal,
+    find_remote_code,
+    refusal_remediation,
+)
 from mlx_model_doctor.errors import ModelDoctorError, TargetError, raise_for_hf_target_error
 from mlx_model_doctor.parity.context import ParityContext, tokenizers_match
 from mlx_model_doctor.parity.resolver import ResolvedTargets, resolve_targets
@@ -499,4 +506,65 @@ class TokenizerIdentityCheck:
                 "Metadata-only difference (common after mlx_lm.fuse re-serializes "
                 "tokenizer_config.json); confirm it is expected."
             ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteCodeCheck:
+    """Check that neither model the parity workers load names its own loader code.
+
+    The base and fused directories are loaded through ``mlx_lm.load`` in the workers;
+    a directory whose config.json names a ``model_file`` (mlx-lm imports it with no gate),
+    or whose config.json cannot be read, fails here, before any worker runs. An
+    ``auto_map`` does not: the workers pin ``trust_remote_code`` off. The adapter directory is
+    not loaded as a model: mlx-lm 0.31.3 ``tuner/utils.py`` ``load_adapters`` reads
+    only ``adapter_config.json`` as JSON and ``adapters.safetensors`` as weights.
+    """
+
+    check_id: str = "parity/load.remote_code"
+    title: str = "Repository loader code"
+
+    def run(self, pctx: ParityContext) -> CheckResult:
+        """Run the remote-code guard on the base and fused model directories."""
+        refusals = [
+            (role, refusal)
+            for role, target in (("base", pctx.targets.base), ("fused", pctx.targets.fused))
+            if (refusal := find_remote_code(Path(target.name), keys=MLX_LM_KEYS)) is not None
+        ]
+        if not refusals:
+            return CheckResult(
+                check_id=self.check_id,
+                title=self.title,
+                status="pass",
+                severity="info",
+                message="Neither the base nor the fused repository names its own loader code.",
+            )
+        details: dict[str, object] = {"refused_targets": tuple(role for role, _ in refusals)}
+        sentences: list[str] = []
+        remediations: list[str] = []
+        for role, refusal in refusals:
+            details[f"{role}_remote_code_file"] = refusal.file
+            if refusal.key is None:
+                details[f"{role}_remote_code_unreadable"] = True
+                if refusal.reason == "dangling_link":
+                    details[f"{role}_remote_code_dangling_link"] = True
+            else:
+                details[f"{role}_remote_code_key"] = refusal.key
+            sentences.append(describe_refusal(refusal, subject=f"the {role} repository"))
+            if (remediation := refusal_remediation(refusal)) not in remediations:
+                remediations.append(remediation)
+        named = all(refusal.key is not None for _, refusal in refusals)
+        sentences.append(
+            "The load was refused, so that code was not run."
+            if named
+            else "The load was refused, so repository code was not run."
+        )
+        return CheckResult(
+            check_id=self.check_id,
+            title=self.title,
+            status="fail",
+            severity="high",
+            message=" ".join(sentences),
+            remediation=" ".join(remediations),
+            details=details,
         )

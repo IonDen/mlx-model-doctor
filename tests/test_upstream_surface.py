@@ -16,6 +16,7 @@ import inspect
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -47,7 +48,7 @@ class SurveyedCall:
 # Each entry mirrors one call site; the positional prefix is what we pass by position.
 SURVEYED_CALLS = (
     # parity/worker.py: load(path, adapter_path=, tokenizer_config={...});
-    # checks/smoke.py: load(name).
+    # checks/smoke.py: load(local_dir, tokenizer_config={"trust_remote_code": False}).
     SurveyedCall(
         module="mlx_lm",
         attr="load",
@@ -67,7 +68,7 @@ SURVEYED_CALLS = (
         call_args=("model", "tokenizer"),
         call_kwargs={"prompt": "p", "max_tokens": 8, "verbose": False},
     ),
-    # checks/smoke.py: load(name, trust_remote_code=False); the flag rides **kwargs.
+    # checks/smoke.py: load(local_dir, trust_remote_code=False); the flag rides **kwargs.
     SurveyedCall(
         module="mlx_vlm",
         attr="load",
@@ -195,3 +196,109 @@ def test_surface_checker_flags_a_renamed_keyword() -> None:
     problems = _surface_problems(_GENERATE_CALL, inspect.signature(_generate_with_verbose_renamed))
 
     assert problems == ["'verbose' is not a positional-or-keyword parameter"]
+
+
+# --- the trust_remote_code pin reaches AutoTokenizer --------------------------------
+
+
+class _TokenizerReachedError(Exception):
+    """Raised by the stand-in AutoTokenizer once it has recorded its kwargs."""
+
+
+def _from_pretrained_kwargs(
+    utils: object, tokenizer_utils: object, monkeypatch: pytest.MonkeyPatch, model_dir: str
+) -> dict[str, object]:
+    """Call ``utils.load`` with the pin and return what AutoTokenizer received.
+
+    The download and the model build are replaced, so nothing is fetched or loaded.
+    """
+    seen: dict[str, object] = {}
+
+    class RecordingAutoTokenizer:
+        @staticmethod
+        def from_pretrained(path: object, **kwargs: object) -> object:
+            seen.update(kwargs)
+            raise _TokenizerReachedError
+
+    monkeypatch.setattr(utils, "_download", lambda path, **_kw: __import__("pathlib").Path(path))
+    monkeypatch.setattr(utils, "load_model", lambda *_a, **_kw: (object(), {}))
+    monkeypatch.setattr(tokenizer_utils, "AutoTokenizer", RecordingAutoTokenizer)
+    with pytest.raises(_TokenizerReachedError):
+        utils.load(model_dir, tokenizer_config={"trust_remote_code": False})  # type: ignore[attr-defined]
+    return seen
+
+
+@pytest.mark.gpu
+@pytest.mark.filterwarnings(
+    f"ignore:{SWIG_WARNING_PREFIX}.* has no __module__ attribute:DeprecationWarning"
+)
+def test_mlx_lm_load_forwards_tokenizer_config_to_auto_tokenizer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    # Bug caught: an mlx-lm release stops forwarding load(tokenizer_config=...) to
+    # AutoTokenizer.from_pretrained, so the trust_remote_code=False pin our smoke and
+    # parity loads rely on (it is what keeps auto_map inert) silently drops.
+    _skip_unless_installed("mlx_lm")
+    utils = importlib.import_module("mlx_lm.utils")
+    tokenizer_utils = importlib.import_module("mlx_lm.tokenizer_utils")
+
+    seen = _from_pretrained_kwargs(utils, tokenizer_utils, monkeypatch, str(tmp_path))
+
+    assert seen == {"trust_remote_code": False}
+
+
+@pytest.mark.gpu
+@pytest.mark.filterwarnings(
+    f"ignore:{SWIG_WARNING_PREFIX}.* has no __module__ attribute:DeprecationWarning"
+)
+def test_the_forwarding_probe_notices_a_load_that_drops_tokenizer_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: object
+) -> None:
+    # Bug caught: the probe reads its own stand-in instead of what load forwarded, so the
+    # test above passes whatever mlx-lm does.
+    _skip_unless_installed("mlx_lm")
+    utils = importlib.import_module("mlx_lm.utils")
+    tokenizer_utils = importlib.import_module("mlx_lm.tokenizer_utils")
+    real_load_tokenizer = utils.load_tokenizer
+
+    def dropping_load_tokenizer(model_path: object, *_a: object, **kw: object) -> object:
+        return real_load_tokenizer(model_path, None, **kw)
+
+    monkeypatch.setattr(utils, "load_tokenizer", dropping_load_tokenizer)
+
+    seen = _from_pretrained_kwargs(utils, tokenizer_utils, monkeypatch, str(tmp_path))
+
+    assert seen == {}
+
+
+# --- no call to mlx-lm's sharded loader ------------------------------------------
+
+_SHARDED_LOADER = "sharded" + "_load"
+
+
+def _files_naming(root: "Path", word: str) -> list[str]:
+    """Return the .py files under ``root`` whose text contains ``word``, sorted."""
+    return sorted(
+        str(path.relative_to(root))
+        for path in root.rglob("*.py")
+        if word in path.read_text(encoding="utf-8")
+    )
+
+
+def test_the_package_never_names_mlx_lm_sharded_load() -> None:
+    # Bug caught: a call to mlx_lm.sharded_load is added; it defaults tokenizer_config
+    # to {"trust_remote_code": True} (mlx-lm 0.31.3 utils.py:576), which would make an
+    # auto_map in the repository importable on a path the guard treats as mlx-lm.
+    src = Path(__file__).resolve().parent.parent / "src" / "mlx_model_doctor"
+
+    assert _files_naming(src, _SHARDED_LOADER) == []
+
+
+def test_the_sharded_load_scan_finds_a_file_that_names_it(tmp_path: "Path") -> None:
+    # Bug caught: the scan looks at the wrong files or never reads them, so the test
+    # above passes whatever the package calls.
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "pkg" / "b.py").write_text(f"mlx_lm.{_SHARDED_LOADER}(repo)\n", encoding="utf-8")
+
+    assert _files_naming(tmp_path, _SHARDED_LOADER) == ["pkg/b.py"]

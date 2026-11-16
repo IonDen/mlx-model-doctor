@@ -16,6 +16,8 @@ from mlx_model_doctor.errors import DependencyError, ModelDoctorError
 from mlx_model_doctor.parity import prompts as prompts_module
 from mlx_model_doctor.parity.context import TokenizerFingerprint, tokenizer_fingerprint
 from mlx_model_doctor.parity.prompts import build_prompts_fixture
+from mlx_model_doctor.parity.report import ResolvedIdentity
+from mlx_model_doctor.parity.sources import ResolvedSources
 from tests.parity_fakes import make_import_module
 
 
@@ -273,3 +275,95 @@ class TestDefaultTokenizerLoader:
         prompts_module._default_tokenizer_loader("/some/path")
 
         assert calls == [{"path": "/some/path", "trust_remote_code": False}]
+
+
+class _RecordingLoaderStopError(Exception):
+    """Raised by the recording tokenizer loader once it has seen its call."""
+
+
+def test_a_base_that_names_loader_code_is_refused_before_the_tokenizer_load(
+    tmp_path: Path,
+) -> None:
+    # Bug: --prompts loads the base tokenizer before any guard runs, so the user gets
+    # transformers' error (or a load) instead of the refusal parity gives.
+    base_dir = _make_base_dir(tmp_path)
+    (base_dir / "config.json").write_text(
+        json.dumps({"model_type": "llama", "text_config": {"model_file": "m.py"}}),
+        encoding="utf-8",
+    )
+    prompts_path = tmp_path / "prompts.json"
+    _write_prompts(prompts_path, [{"prompt": "hi", "completion": "there"}])
+    calls: list[str] = []
+
+    def loader(path: str) -> object:
+        calls.append(path)
+        raise _RecordingLoaderStopError
+
+    with pytest.raises(ModelDoctorError) as exc_info:
+        build_prompts_fixture(str(base_dir), str(prompts_path), tokenizer_loader=loader)  # type: ignore[arg-type]
+
+    assert str(exc_info.value) == (
+        "The base repository names loader code (model_file in config.json) that mlx-lm "
+        "could import. The load was refused, so that code was not run. Do not load this "
+        "repository with mlx-lm or mlx-vlm unless you trust its author. The static checks "
+        "read it without running its code."
+    )
+    assert calls == []
+
+
+def test_a_base_with_only_an_auto_map_still_loads_its_tokenizer(tmp_path: Path) -> None:
+    # Bug: the --prompts pre-check uses the VLM key table and refuses an auto_map that
+    # the tokenizer load, with trust_remote_code pinned off, never imports.
+    base_dir = _make_base_dir(tmp_path)
+    (base_dir / "tokenizer_config.json").write_text(
+        json.dumps({"auto_map": {"AutoTokenizer": ["tokenization_x.XTokenizer", None]}}),
+        encoding="utf-8",
+    )
+    prompts_path = tmp_path / "prompts.json"
+    _write_prompts(prompts_path, [{"prompt": "hi", "completion": "there"}])
+    calls: list[str] = []
+
+    def loader(path: str) -> object:
+        calls.append(path)
+        raise _RecordingLoaderStopError
+
+    with pytest.raises(_RecordingLoaderStopError):
+        build_prompts_fixture(str(base_dir), str(prompts_path), tokenizer_loader=loader)  # type: ignore[arg-type]
+
+    assert calls == [str(base_dir.resolve())]
+
+
+def test_a_base_that_resolves_to_a_file_is_refused_before_the_tokenizer_load(
+    tmp_path: Path,
+) -> None:
+    # Bug: the --prompts guard treats a resolved base that is not a directory as clean
+    # (or words it as a named key, "that code was not run"), so AutoTokenizer receives a
+    # path it would read as a Hub repo id.
+    base_file = tmp_path / "base.safetensors"
+    base_file.write_bytes(b"not a directory")
+    prompts_path = tmp_path / "prompts.json"
+    _write_prompts(prompts_path, [{"prompt": "hi", "completion": "there"}])
+    calls: list[str] = []
+
+    def loader(path: str) -> object:
+        calls.append(path)
+        raise _RecordingLoaderStopError
+
+    def resolver(*refs: str, **_kwargs: object) -> ResolvedSources:
+        identity = ResolvedIdentity(path=str(base_file), original_ref=refs[0], source="local")
+        return ResolvedSources(base=identity, adapter=identity, fused=identity)
+
+    with pytest.raises(ModelDoctorError) as exc_info:
+        build_prompts_fixture(
+            "org/base",
+            str(prompts_path),
+            tokenizer_loader=loader,  # type: ignore[arg-type]
+            resolver=resolver,
+        )
+
+    assert str(exc_info.value) == (
+        f"{base_file} is not an existing directory, so it is unknown whether the base "
+        "repository names loader code. The load was refused, so repository code was not "
+        "run. Pass an existing model directory, then run again."
+    )
+    assert calls == []

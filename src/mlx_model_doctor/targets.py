@@ -231,6 +231,17 @@ class HfHubProtocol(Protocol):
     def safetensors_file_metadata(self, repo_id: str, filename: str) -> HfFileMetadata:
         """Return one safetensors file's header metadata via a Range request."""
 
+    def snapshot_download(self, repo_id: str, *, allow_patterns: Sequence[str]) -> str:
+        """Download the matching repository files and return the local snapshot folder."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class HfSnapshot:
+    """A repository snapshot on local disk, and the commit it was resolved to."""
+
+    path: Path
+    revision: str | None
+
 
 @contextmanager
 def _hub_progress_bars_disabled() -> Iterator[None]:
@@ -314,6 +325,14 @@ class DefaultHfHub:
 
         downloaded_path = hf_hub_download(repo_id=repo_id, filename=filename)
         return Path(downloaded_path).read_bytes()
+
+    def snapshot_download(self, repo_id: str, *, allow_patterns: Sequence[str]) -> str:
+        """Download the matching files into the Hub cache and return the snapshot folder."""
+        from huggingface_hub import snapshot_download
+
+        # huggingface_hub 1.19.0 _snapshot_download.py:371: the returned folder is
+        # <cache>/models--<org>--<name>/snapshots/<commit sha>.
+        return snapshot_download(repo_id=repo_id, allow_patterns=list(allow_patterns))
 
     def safetensors_metadata(self, repo_id: str) -> HfSafetensorsRepoMetadata | None:
         """Read safetensors header metadata from huggingface_hub (Range, no download)."""
@@ -711,6 +730,25 @@ class HfTarget:
     def read_text(self, path: str, *, max_bytes: int | None = None) -> str:
         """Read UTF-8 text from one repository file."""
         return self.read_bytes(path, max_bytes=max_bytes).decode("utf-8")
+
+    def snapshot(self, *, allow_patterns: Sequence[str]) -> HfSnapshot:
+        """Download the matching repository files and return the local snapshot.
+
+        The revision is the commit the snapshot folder is named after, when the folder
+        sits in a Hub cache ``snapshots/`` directory; otherwise it is None.
+        """
+        try:
+            folder = Path(self._hub.snapshot_download(self._repo_id, allow_patterns=allow_patterns))
+        except TargetError:
+            raise
+        except Exception as exc:
+            raise TargetError(
+                f"Could not download a snapshot of Hugging Face model {self._repo_id}: {exc}",
+                target=self._repo_id,
+                source="hf",
+            ) from exc
+        revision = folder.name if folder.parent.name == "snapshots" else None
+        return HfSnapshot(path=folder, revision=revision)
 
     def safetensors_header(self) -> SafetensorsHeader | None:
         """Map the Hugging Face safetensors header metadata, no weight download.
