@@ -20,7 +20,7 @@ from mlx_model_doctor.checks.smoke import (
     MlxVlmSmokeCheck,
 )
 from mlx_model_doctor.context import CheckContext
-from mlx_model_doctor.errors import TargetError
+from mlx_model_doctor.errors import MemorySafetyError, TargetError
 from mlx_model_doctor.memory import GIB
 from mlx_model_doctor.report import CheckResult
 from mlx_model_doctor.targets import HfTarget, LocalTarget, ModelTarget
@@ -649,8 +649,8 @@ def test_hf_snapshot_never_fetches_repository_python_files(
     assert not any(fnmatch("modeling_x.py", p) for p in patterns)
 
 
-# Each loader's own download patterns minus "*.py", copied from mlx-lm 0.31.3
-# utils._download and mlx-vlm 0.6.12 utils.get_model_path.
+# Each loader's own download patterns minus "*.py", copied from mlx-lm 0.32.2
+# utils.DEFAULT_ALLOW_PATTERNS (the 0.31.3 list) and mlx-vlm 0.7.12 utils.get_model_path.
 LOADER_PATTERNS_WITHOUT_PY = {
     "text": [
         "*.json",
@@ -662,7 +662,7 @@ LOADER_PATTERNS_WITHOUT_PY = {
         "*.jsonl",
         "*.jinja",
     ],
-    "vlm": ["*.json", "*.safetensors", "*.model", "*.tiktoken", "*.txt", "*.jinja"],
+    "vlm": ["*.json", "*.jsonl", "*.safetensors", "*.model", "*.tiktoken", "*.txt", "*.jinja"],
 }
 
 
@@ -945,11 +945,47 @@ def test_text_smoke_load_failure_without_an_auto_map_keeps_the_upstream_text(
     assert "auto_map" not in result.message
 
 
-def test_upstream_error_paths_are_reduced_to_their_file_names() -> None:
+@dataclass
+class ToolErrorMlxLm(RecordingMlxLm):
+    """An mlx-lm whose load raises one of this tool's own errors."""
+
+    error: MemorySafetyError = field(
+        default_factory=lambda: MemorySafetyError("memory limit reached during load")
+    )
+
+    def load(self, path_or_hf_repo: str, **kwargs: object) -> tuple[object, object]:
+        super().load(path_or_hf_repo, **kwargs)
+        raise self.error
+
+
+def test_text_smoke_load_raising_a_tool_error_passes_it_through_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: a ModelDoctorError from the load is caught as an upstream failure and, since
+    # the repository names an auto_map, reported as an auto_map smoke fail instead of
+    # stopping the run as a tool error.
+    files = {
+        "config.json": as_json(CLEAN_CONFIG),
+        "tokenizer_config.json": as_json({"auto_map": AUTO_MAP}),
+    }
+    model = write_model(tmp_path / "model", files)
+    mlx_lm = ToolErrorMlxLm()
+
+    with pytest.raises(MemorySafetyError) as exc_info:
+        run_text_smoke_with(mlx_lm, LocalTarget(model), monkeypatch)
+
+    assert exc_info.value is mlx_lm.error
+    assert mlx_lm.load_paths == [str(model.resolve())]
+
+
+def test_upstream_error_paths_are_reduced_to_their_file_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Bug: only the model directory is shortened, so another absolute path in the
     # upstream text (a cached module, a parent folder) reaches the report in full.
     from mlx_model_doctor.checks.remote_code import reduce_absolute_paths
 
+    monkeypatch.setenv("HOME", "/nonexistent/home")
     text = (
         "No file at /Users/someone/models/m/tokenization_x.py or '/opt/cache/x.json'; "
         "see https://hf.co//Users/someone/models/m and https://hf.co/docs/hub."
@@ -958,3 +994,204 @@ def test_upstream_error_paths_are_reduced_to_their_file_names() -> None:
     assert reduce_absolute_paths(text, model_dir=Path("/Users/someone/models/m")) == (
         "No file at tokenization_x.py or 'x.json'; see https://hf.co/m and https://hf.co/docs/hub."
     )
+
+
+# The home directory is written as "~" before the general rule runs, so a user name with
+# a space, or one inside a file:// URL, never reaches details.upstream_error.
+HOME_WITH_SPACE = "/Users/John Smith"
+OTHER_MODEL_DIR = Path("/Volumes/models/other")
+
+HOME_PATHS = [
+    pytest.param(
+        "No module at /Users/John Smith/.cache/huggingface/modules/x/tokenization_x.py.",
+        "No module at tokenization_x.py.",
+        id="file-below-home",
+    ),
+    pytest.param("cwd is /Users/John Smith", "cwd is ~", id="home-at-end-of-text"),
+    pytest.param(
+        "Could not open file:///Users/John Smith/models/m/chat_template.jinja",
+        "Could not open file://~/models/m/chat_template.jinja",
+        id="file-url",
+    ),
+    pytest.param(
+        "No such file or directory: '/Users/John Smith'",
+        "No such file or directory: '~'",
+        id="home-before-single-quote",
+    ),
+    pytest.param('home "/Users/John Smith" is read-only', 'home "~" is read-only', id="dquote"),
+    pytest.param("home (/Users/John Smith) not writable", "home (~) not writable", id="paren"),
+    pytest.param("dirs: /Users/John Smith, /tmp", "dirs: ~, /tmp", id="home-before-comma"),
+    pytest.param("/Users/John Smith: Permission denied", "~: Permission denied", id="colon"),
+    pytest.param("cache dir /Users/John Smith\n  next", "cache dir ~\n  next", id="newline"),
+    pytest.param("cwd is /Users/John Smith. Retry", "cwd is ~. Retry", id="period-then-space"),
+    pytest.param("cwd is /Users/John Smith.", "cwd is ~.", id="period-at-end-of-text"),
+    pytest.param("dirs [/Users/John Smith]", "dirs [~]", id="home-before-bracket"),
+    pytest.param("HOME=/Users/John Smith; exit", "HOME=~; exit", id="home-before-semicolon"),
+    pytest.param("<HOME=/Users/John Smith>", "<HOME=~>", id="home-before-angle-bracket"),
+    pytest.param("run `ls /Users/John Smith`", "run `ls ~`", id="home-before-backtick"),
+    pytest.param("is /Users/John Smith? no", "is ~? no", id="home-before-question-mark"),
+    pytest.param("cannot write /Users/John Smith!", "cannot write ~!", id="home-before-bang"),
+    pytest.param("{home: /Users/John Smith}", "{home: ~}", id="home-before-brace"),
+    pytest.param("/Users/John Smith|/tmp", "~|/tmp", id="home-before-pipe"),
+    pytest.param("cache dir /Users/John Smith...", "cache dir ~...", id="home-before-ellipsis"),
+    pytest.param(
+        str(Exception("cannot write cache dir /Users/John Smith.", 13)),
+        "('cannot write cache dir ~.', 13)",
+        id="multi-arg-exception-repr",
+    ),
+    pytest.param(
+        '{"error": "no access to /Users/John Smith."}',
+        '{"error": "no access to ~."}',
+        id="json-body",
+    ),
+    pytest.param("/Users/John Smith Jr/x/a.py", "~ Jr/x/a.py", id="home-before-a-space-word"),
+    pytest.param(
+        "Could not open file:///Users/John%20Smith/models/m/chat_template.jinja",
+        "Could not open file://~/models/m/chat_template.jinja",
+        id="percent-encoded-file-url",
+    ),
+    pytest.param(
+        "404 for url: https://huggingface.co//Users/John%20Smith/models/m/resolve/main/"
+        "tokenizer.json",
+        "404 for url: https://huggingface.co/~/models/m/resolve/main/tokenizer.json",
+        id="percent-encoded-hub-url",
+    ),
+]
+
+
+# A home is cut unless the user name continues (a word character, "-", or "." and a word
+# character; see the sibling cases below). The shapes here, written plain or
+# percent-encoded, are the ones that must not keep the name.
+@pytest.mark.parametrize(("text", "reduced"), HOME_PATHS)
+def test_a_home_with_a_space_not_followed_by_more_of_the_name_keeps_no_part_of_it(
+    text: str, reduced: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: the home cut fires only before a listed set of characters, so a bare home
+    # before "?", "}", "...", or a full stop and a quote, is cut by the general rule to
+    # its last part, the user name; or the percent-encoded home (as Path.as_uri()
+    # writes it) is not cut at all; or a space is taken to continue the name.
+    from mlx_model_doctor.checks.remote_code import reduce_absolute_paths
+
+    monkeypatch.setenv("HOME", HOME_WITH_SPACE)
+
+    result = reduce_absolute_paths(text, model_dir=OTHER_MODEL_DIR)
+
+    assert result == reduced
+    assert "John" not in result
+    assert "Smith" not in result
+
+
+def test_the_model_dir_under_home_is_still_cut_to_its_name_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Bug: the home is replaced before the model_dir cut, so the exact model_dir string
+    # no longer matches and the hf.co// link keeps "~/models/m" instead of "m".
+    from mlx_model_doctor.checks.remote_code import reduce_absolute_paths
+
+    monkeypatch.setenv("HOME", HOME_WITH_SPACE)
+    text = "see https://hf.co//Users/John Smith/models/m and /Users/John Smith/models/m/a.py"
+
+    result = reduce_absolute_paths(text, model_dir=Path("/Users/John Smith/models/m"))
+
+    assert result == "see https://hf.co/m and a.py"
+
+
+def test_a_percent_encoded_model_dir_in_a_url_is_cut_to_its_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Bug: only the plain model_dir is cut, so a URL that carries it percent-encoded
+    # ("Alice%20SSD", as Path.as_uri() and the Hub client write a space) keeps it whole.
+    from mlx_model_doctor.checks.remote_code import reduce_absolute_paths
+
+    monkeypatch.setenv("HOME", "/nonexistent/home")
+    text = "404 for url: https://huggingface.co//Volumes/Alice%20SSD/models/m"
+
+    result = reduce_absolute_paths(text, model_dir=Path("/Volumes/Alice SSD/models/m"))
+
+    assert result == "404 for url: https://huggingface.co/m"
+
+
+def test_an_unknown_home_skips_the_home_cut_and_still_reduces_other_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Bug: Path.home() raises RuntimeError (no HOME and no passwd entry) inside the
+    # smoke error handler, so the auto_map failure is replaced by "Could not determine
+    # home directory." and the general reduction never runs.
+    from mlx_model_doctor.checks.remote_code import reduce_absolute_paths
+
+    def no_home(cls: type[Path]) -> Path:
+        raise RuntimeError("Could not determine home directory.")
+
+    monkeypatch.setattr(Path, "home", classmethod(no_home))
+    text = "No file at /Volumes/models/other/a.json or '/opt/cache/x.json'"
+
+    result = reduce_absolute_paths(text, model_dir=OTHER_MODEL_DIR)
+
+    assert result == "No file at a.json or 'x.json'"
+
+
+SIBLINGS_OF_A_HOME = [
+    pytest.param("see /Users/alice2/x/y.py", "see y.py", id="digit-continues-the-name"),
+    pytest.param("see /Users/alice.smith/x/y.py", "see y.py", id="dot-continues-the-name"),
+    pytest.param("see /Users/alice-b/x/y.py", "see y.py", id="dash-continues-the-name"),
+]
+
+
+@pytest.mark.parametrize(("text", "reduced"), SIBLINGS_OF_A_HOME)
+def test_a_sibling_whose_name_starts_with_the_home_name_is_left_to_the_general_rule(
+    text: str, reduced: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: the home cut fires before any character (or before any "."), so another
+    # user's folder "/Users/alice2" becomes "~2" and its path is never reduced.
+    from mlx_model_doctor.checks.remote_code import reduce_absolute_paths
+
+    monkeypatch.setenv("HOME", "/Users/alice")
+
+    assert reduce_absolute_paths(text, model_dir=OTHER_MODEL_DIR) == reduced
+
+
+OUTSIDE_HOME = [
+    # Pins today's limit, not the wanted output: a path with a space outside home keeps
+    # its tail after the space.
+    pytest.param("see /opt/My Models/x/a.py", "see My Models/x/a.py", id="space-outside-home"),
+    pytest.param(
+        "see /Users/John Smithers/x/a.py", "see John Smithers/x/a.py", id="home-name-prefix"
+    ),
+]
+
+
+@pytest.mark.parametrize(("text", "reduced"), OUTSIDE_HOME)
+def test_upstream_error_paths_outside_home_are_reduced_as_before(
+    text: str, reduced: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: the home replacement matches a longer name that only starts with the home
+    # ("/Users/John Smithers"), or the general rule changes for paths outside home.
+    from mlx_model_doctor.checks.remote_code import reduce_absolute_paths
+
+    monkeypatch.setenv("HOME", HOME_WITH_SPACE)
+
+    assert reduce_absolute_paths(text, model_dir=OTHER_MODEL_DIR) == reduced
+
+
+SHORT_HOMES = [
+    pytest.param(
+        "/",
+        "see https://hf.co/docs and /opt/x/y.py",
+        "see https://hf.co/docs and y.py",
+        id="root",
+    ),
+    pytest.param("/root", "/root/x/y.py is in /root", "y.py is in /root", id="one-component"),
+]
+
+
+@pytest.mark.parametrize(("home", "text", "reduced"), SHORT_HOMES)
+def test_a_home_of_fewer_than_two_components_is_not_replaced(
+    home: str, text: str, reduced: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: a home of "/" turns every "/" before another "/" into "~" (URLs included),
+    # and a one-component home is rewritten although it names no user.
+    from mlx_model_doctor.checks.remote_code import reduce_absolute_paths
+
+    monkeypatch.setenv("HOME", home)
+
+    assert reduce_absolute_paths(text, model_dir=OTHER_MODEL_DIR) == reduced

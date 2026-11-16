@@ -7,6 +7,7 @@ mlx-vlm 0.6.12 and 0.7.12) render the chat template with a plain jinja2 ``Templa
 test uses a real model directory and a fake loader that records its calls.
 """
 
+import os
 from pathlib import Path
 
 import pytest
@@ -16,8 +17,9 @@ from mlx_model_doctor.checks.remote_code import (
     TemplateRendererRefusal,
     find_template_renderer,
 )
-from mlx_model_doctor.targets import LocalTarget
-from tests.test_remote_code_guard import KEY_REMEDIATION, as_json, run_smoke
+from mlx_model_doctor.targets import HfTarget, LocalTarget
+from tests.fakes import write_hf_cache_snapshot
+from tests.test_remote_code_guard import KEY_REMEDIATION, FakeSnapshotHub, as_json, run_smoke
 
 TEMPLATE = "{% for m in messages %}{{ m['content'] }}{% endfor %}"
 
@@ -101,6 +103,82 @@ def test_vlm_smoke_refuses_every_name_that_selects_a_renderer(
 
     assert run.loader.load_paths == []
     assert run.result.details["remote_code_renderer"] == family
+
+
+def test_vlm_smoke_ignores_speculators_model_type_when_model_type_is_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: speculators_model_type is read even when model_type is set, so a qwen2_vl
+    # repository is refused for a renderer mlx-vlm never selects (mlx-vlm imports
+    # (model_type or speculators_model_type), and its processor patch reads model_type).
+    files = {
+        "config.json": as_json(
+            {"model_type": "qwen2_vl", "speculators_model_type": "kimi_vl", "hidden_size": 64}
+        ),
+        "tokenizer_config.json": as_json({"chat_template": TEMPLATE}),
+    }
+    model = write_repo(tmp_path / "model", files)
+
+    run = run_smoke("vlm", LocalTarget(model), monkeypatch)
+
+    assert run.loader.load_paths == [str(model.resolve())]
+    assert run.result.status == "pass"
+
+
+# A model_type that is set but is not a string: mlx-vlm 0.7.12 get_model_type calls
+# (model_type or speculators_model_type).lower() and fails before any processor is built,
+# and the processor patch compares str(model_type).lower(), which names no family. The
+# guard reads it the same way: no family, and speculators_model_type is not consulted.
+NON_STRING_MODEL_TYPES = [
+    pytest.param({"name": "molmo"}, id="nested-object"),
+    pytest.param(["molmo"], id="list"),
+    pytest.param(7, id="number"),
+    pytest.param(True, id="true"),
+]
+
+
+@pytest.mark.parametrize("model_type", NON_STRING_MODEL_TYPES)
+def test_a_non_string_model_type_selects_no_renderer(model_type: object, tmp_path: Path) -> None:
+    # Bug: a non-string model_type is treated as empty, so speculators_model_type selects
+    # a renderer for a repository mlx-vlm cannot load at all.
+    model = write_repo(
+        tmp_path / "model",
+        {
+            "config.json": as_json({"model_type": model_type, "speculators_model_type": "molmo"}),
+            "tokenizer_config.json": as_json({"chat_template": TEMPLATE}),
+        },
+    )
+
+    assert find_template_renderer(model) is None
+
+
+# A model_type that is false, zero or empty falls through to speculators_model_type, as
+# mlx-vlm's (model_type or speculators_model_type) does.
+FALSY_MODEL_TYPES = [
+    pytest.param(False, id="false"),
+    pytest.param(0, id="zero"),
+    pytest.param([], id="empty-list"),
+    pytest.param({}, id="empty-object"),
+]
+
+
+@pytest.mark.parametrize("model_type", FALSY_MODEL_TYPES)
+def test_a_falsy_model_type_falls_back_to_speculators_model_type(
+    model_type: object, tmp_path: Path
+) -> None:
+    # Bug: only a missing or empty-string model_type falls back, so a repository with
+    # "model_type": false and a renderer in speculators_model_type is not refused.
+    model = write_repo(
+        tmp_path / "model",
+        {
+            "config.json": as_json({"model_type": model_type, "speculators_model_type": "molmo"}),
+            "tokenizer_config.json": as_json({"chat_template": TEMPLATE}),
+        },
+    )
+
+    assert find_template_renderer(model) == TemplateRendererRefusal(
+        renderer="molmo", file="tokenizer_config.json", reason="ships_template"
+    )
 
 
 # --- refused: each place a template is read from ---------------------------------------
@@ -329,3 +407,63 @@ def test_a_dangling_template_file_of_a_renderer_family_is_refused(tmp_path: Path
     assert find_template_renderer(model) == TemplateRendererRefusal(
         renderer="phi3_v", file="chat_template.jinja", reason="unreadable"
     )
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root lists a folder whose mode is 0o000")
+def test_vlm_smoke_refuses_a_renderer_family_whose_extra_templates_folder_cannot_be_listed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: an OSError from listing additional_chat_templates/ is read as "no template",
+    # so a folder the guard could not read is loaded and its *.jinja rendered.
+    model = write_repo(
+        tmp_path / "model",
+        {
+            "config.json": config("molmo"),
+            "additional_chat_templates/tool_use.jinja": TEMPLATE.encode(),
+        },
+    )
+    folder = model / "additional_chat_templates"
+    folder.chmod(0o000)
+    try:
+        run = run_smoke("vlm", LocalTarget(model), monkeypatch)
+    finally:
+        folder.chmod(0o755)
+
+    assert run.loader.load_paths == []
+    assert run.result.status == "fail"
+    assert dict(run.result.details) == {
+        "remote_code_renderer": "molmo",
+        "remote_code_file": "additional_chat_templates/",
+        "remote_code_unreadable": True,
+    }
+    assert run.result.remediation == (
+        "Re-download or repair additional_chat_templates/, then run again."
+    )
+
+
+# --- Hugging Face targets: the refusal applies to the materialized snapshot -----------
+
+SNAPSHOT_COMMIT = "fedcba9876543210fedcba9876543210fedcba98"
+
+
+def test_vlm_smoke_refuses_a_renderer_family_in_an_hf_snapshot_and_names_its_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: the renderer refusal drops the snapshot revision, so the report does not say
+    # which commit of the Hub repository was refused; or the HF path skips the guard.
+    snapshot = write_hf_cache_snapshot(
+        tmp_path / "hub", "org/vlm", with_tokenizer_template("kimi_vl"), commit=SNAPSHOT_COMMIT
+    )
+    hub = FakeSnapshotHub(snapshot=snapshot)
+
+    run = run_smoke("vlm", HfTarget("org/vlm", hub=hub), monkeypatch)
+
+    assert hub.snapshot_calls == ["org/vlm"]
+    assert run.loader.load_paths == []
+    assert run.result.status == "fail"
+    assert run.result.message == refusal_message("kimi_vl", "tokenizer_config.json")
+    assert dict(run.result.details) == {
+        "remote_code_renderer": "kimi_vl",
+        "remote_code_template_source": "tokenizer_config.json",
+        "snapshot_revision": "fedcba9876543210fedcba9876543210fedcba98",
+    }

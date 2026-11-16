@@ -1362,3 +1362,31 @@ def test_mlx_lm_worker_backend_load_failure_without_an_auto_map_is_not_reworded(
         MlxLmWorkerBackend().load_argmax(_spec(model_path=str(model), token_ids=((1,),)))
 
     assert exc_info.value is upstream
+
+
+def test_mlx_lm_worker_backend_load_raising_a_tool_error_passes_it_through_unchanged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Bug: a ModelDoctorError from the load is caught as an upstream failure and, since
+    # the repository names an auto_map, replaced by the auto_map message, so the parent
+    # reports a repository problem for what was this tool's own error.
+    model = tmp_path / "base"
+    model.mkdir()
+    (model / "tokenizer_config.json").write_text(
+        '{"auto_map": {"AutoTokenizer": ["tokenization_x.XTokenizer", null]}}',
+        encoding="utf-8",
+    )
+    logits = [[0.1, 5.0, 0.2]]
+    tool_error = MemorySafetyError("memory limit reached during load")
+    mlx_lm = FakeMlxLmModule(FakeMlxLmModel(logits), raise_error=tool_error)
+    monkeypatch.setattr(
+        worker_module.importlib,
+        "import_module",
+        make_import_module({"mlx.core": FakeMxCore(logits=logits), "mlx_lm": mlx_lm}),
+    )
+
+    with pytest.raises(MemorySafetyError) as exc_info:
+        MlxLmWorkerBackend().load_argmax(_spec(model_path=str(model), token_ids=((1,),)))
+
+    assert exc_info.value is tool_error
+    assert len(mlx_lm.load_calls) == 1

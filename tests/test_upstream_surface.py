@@ -10,11 +10,14 @@ so collection never needs MLX. The checker's own self-tests are pure Python and 
 in the default suite.
 """
 
+import ast
 import importlib
 import importlib.util
 import inspect
+import re
 import subprocess
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -269,6 +272,358 @@ def test_the_forwarding_probe_notices_a_load_that_drops_tokenizer_config(
     seen = _from_pretrained_kwargs(utils, tokenizer_utils, monkeypatch, str(tmp_path))
 
     assert seen == {}
+
+
+# --- the snapshot lists match each loader's own download list -----------------------
+
+
+@pytest.mark.gpu
+@pytest.mark.filterwarnings(
+    f"ignore:{SWIG_WARNING_PREFIX}.* has no __module__ attribute:DeprecationWarning"
+)
+def test_text_snapshot_patterns_are_mlx_lm_download_patterns_without_py() -> None:
+    # Bug caught: an mlx-lm release adds a download pattern (a new tokenizer file type)
+    # that the `check hf --smoke` snapshot does not fetch, so the smoke load fails where
+    # plain mlx-lm would succeed; or our list drops one of mlx-lm's patterns.
+    _skip_unless_installed("mlx_lm")
+    from mlx_model_doctor.checks.smoke import _MLX_LM_SNAPSHOT_PATTERNS
+
+    upstream = importlib.import_module("mlx_lm.utils").DEFAULT_ALLOW_PATTERNS
+
+    assert sorted(_MLX_LM_SNAPSHOT_PATTERNS) == sorted(set(upstream) - {"*.py"})
+
+
+class _DownloadReachedError(Exception):
+    """Raised by the stand-in snapshot_download once it has recorded its patterns."""
+
+
+@pytest.mark.gpu
+@pytest.mark.filterwarnings(
+    f"ignore:{SWIG_WARNING_PREFIX}.* has no __module__ attribute:DeprecationWarning"
+)
+def test_vlm_snapshot_patterns_are_mlx_vlm_download_patterns_without_py(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Bug caught: an mlx-vlm release adds a download pattern (0.7.x added "*.jsonl" for
+    # plamo2vl's tokenizer.jsonl) that the `check hf --smoke --plugin vlm` snapshot does
+    # not fetch, so the smoke load misses a file plain mlx-vlm would have.
+    _skip_unless_installed("mlx_vlm")
+    from mlx_model_doctor.checks.smoke import _MLX_VLM_SNAPSHOT_PATTERNS
+
+    utils = importlib.import_module("mlx_vlm.utils")
+    seen: list[str] = []
+
+    def recording_snapshot_download(**kwargs: object) -> str:
+        patterns = kwargs["allow_patterns"]
+        assert isinstance(patterns, list)
+        seen.extend(patterns)
+        raise _DownloadReachedError
+
+    monkeypatch.setattr(utils, "snapshot_download", recording_snapshot_download)
+    with pytest.raises(_DownloadReachedError):
+        utils.get_model_path(str(tmp_path / "not-a-local-folder"))
+
+    assert sorted(_MLX_VLM_SNAPSHOT_PATTERNS) == sorted(set(seen) - {"*.py"})
+
+
+# --- no unsurveyed jinja2 renderer in mlx-vlm ------------------------------------
+
+# The mlx_vlm modules that call jinja2 Template(, Environment( or .from_string(,
+# surveyed on 0.6.12, 0.7.10 and 0.7.12 (2026-11-16): each renderer module, with the
+# VLM_TEMPLATE_RENDERERS family it backs.
+SURVEYED_RENDERER_MODULES = {
+    "models/molmo/processing_molmo.py": "molmo",
+    "models/molmo2/processing.py": "molmo2",
+    "models/ernie4_5_moe_vl/processing_ernie4_5_moe_vl.py": "ernie4_5_moe_vl",
+    "models/phi3_v/processing_phi3_v.py": "phi3_v",
+    "models/kimi_vl/processing_kimi_vl.py": "kimi_vl",
+    "models/locateanything/processing_locateanything.py": "locateanything",
+}
+# Surveyed in the same pass and not a renderer: 0.7.12 server code that only calls
+# Environment(...).parse(template) (it parses, never renders) and that load() does not
+# import.
+SURVEYED_NON_RENDERING_MODULES = frozenset({"server/model_discovery.py"})
+
+_UNSANDBOXED_JINJA = re.compile(
+    r"\bTemplate\(|\bEnvironment\(|\.from_string\(|\bimport jinja2\b|\bfrom jinja2\b"
+)
+
+
+def _unsandboxed_jinja_modules(root: Path) -> list[str]:
+    """Return the .py files under ``root`` that import jinja2 or call a plain renderer.
+
+    An import counts, so a renderer reached through an alias (``import jinja2 as j``,
+    ``from jinja2 import Template as T``) is not missed. ``SandboxedEnvironment(`` does
+    not match: ``Environment`` is not a word there. A module that imports jinja2 only to
+    sandbox it would match; none does in the surveyed releases.
+    """
+    return sorted(
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*.py")
+        if _UNSANDBOXED_JINJA.search(path.read_text(encoding="utf-8"))
+    )
+
+
+def test_the_surveyed_renderer_modules_back_exactly_the_renderer_table() -> None:
+    # Bug caught: a family is added to (or dropped from) VLM_TEMPLATE_RENDERERS without
+    # the survey below, so the scan's expected set no longer describes the table.
+    from mlx_model_doctor.checks.remote_code import VLM_TEMPLATE_RENDERERS
+
+    assert set(SURVEYED_RENDERER_MODULES.values()) == set(VLM_TEMPLATE_RENDERERS.values())
+
+
+def test_the_jinja_scan_finds_plain_renderers_and_skips_the_sandbox(tmp_path: Path) -> None:
+    # Bug caught: the scan misses a Template(, Environment( or from_string( call, or
+    # counts transformers' SandboxedEnvironment, so the gpu scan below proves nothing.
+    files = {
+        "a/template.py": "from jinja2 import Template\nTemplate(t).render()\n",
+        "b/env.py": "env = jinja2.Environment(extensions=[])\n",
+        "c/from_string.py": "tpl = env.from_string(chat_template)\n",
+        "d/sandbox.py": "env = SandboxedEnvironment(trim_blocks=True)\n",
+        "e/plain.py": "x = 1\n",
+        "f/import_alias.py": "import jinja2 as j2\nT = j2.Template\nT(t).render()\n",
+        "g/from_alias.py": "from jinja2 import Template as T\nT(t).render()\n",
+    }
+    for name, text in files.items():
+        (tmp_path / name).parent.mkdir(parents=True)
+        (tmp_path / name).write_text(text, encoding="utf-8")
+
+    found = _unsandboxed_jinja_modules(tmp_path)
+
+    assert found == [
+        "a/template.py",
+        "b/env.py",
+        "c/from_string.py",
+        "f/import_alias.py",
+        "g/from_alias.py",
+    ]
+
+
+def test_mlx_vlm_has_no_jinja_renderer_outside_the_surveyed_modules() -> None:
+    # Bug caught: an mlx-vlm release inside the admitted range adds a processor that
+    # renders the repository's chat template with a plain jinja2 Template or
+    # Environment; VLM_TEMPLATE_RENDERERS does not list it, so `--smoke` loads it.
+    spec = importlib.util.find_spec("mlx_vlm")
+    if spec is None or spec.origin is None:
+        pytest.skip("mlx_vlm is not installed; install the [mlx-vlm] extra to run this test")
+    root = Path(spec.origin).parent
+    surveyed = set(SURVEYED_RENDERER_MODULES) | SURVEYED_NON_RENDERING_MODULES
+
+    unsurveyed = [m for m in _unsandboxed_jinja_modules(root) if m not in surveyed]
+
+    assert not unsurveyed, (
+        f"mlx_vlm modules call a plain jinja2 renderer outside the surveyed set: "
+        f"{unsurveyed}; the renderer table (VLM_TEMPLATE_RENDERERS) needs a fresh survey"
+    )
+
+
+# --- every model_type that selects a surveyed renderer is in the table -----------
+
+# The processor class behind each VLM_TEMPLATE_RENDERERS family, defined in the module
+# SURVEYED_RENDERER_MODULES names for it (same survey). Molmo2Processor is selected by
+# molmo2's own AutoProcessor patch, not by install_auto_processor_patch.
+RENDERER_PROCESSOR_CLASSES = {
+    "MolmoProcessor": "molmo",
+    "Molmo2Processor": "molmo2",
+    "Ernie4_5_VLProcessor": "ernie4_5_moe_vl",
+    "Phi3VProcessor": "phi3_v",
+    "KimiVLProcessor": "kimi_vl",
+    "LocateAnythingProcessor": "locateanything",
+}
+
+
+_PATCH_FUNCTION = "install_auto_processor_patch"
+_FAMILY_CLASS = {family: name for name, family in RENDERER_PROCESSOR_CLASSES.items()}
+
+
+def _imported_names(tree: ast.Module) -> dict[str, str]:
+    """Map each name a module imports to what it stands for upstream.
+
+    ``as`` aliases resolve to the imported name, and a renderer family package's
+    ``Processor`` export (``from ..kimi_vl import Processor``) to that family's class.
+    """
+    names: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            package = (node.module or "").rsplit(".", 1)[-1]
+            for alias in node.names:
+                original = alias.name
+                if original == "Processor" and package in _FAMILY_CLASS:
+                    original = _FAMILY_CLASS[package]
+                names[alias.asname or alias.name] = original
+    return names
+
+
+def _last_name(node: ast.expr | None) -> str | None:
+    """Return the name a ``Name`` or the attribute an ``Attribute`` ends with."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
+def _argument(call: ast.Call, index: int, keyword: str) -> ast.expr | None:
+    """Return the call's argument at ``index``, or the one passed as ``keyword``."""
+    if len(call.args) > index:
+        return call.args[index]
+    return next((kw.value for kw in call.keywords if kw.arg == keyword), None)
+
+
+def _model_types(node: ast.expr | None) -> list[str]:
+    """Return the lowercased model types a literal names; a non-literal is reported as is."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return [node.value.lower()]
+    if isinstance(node, ast.List | ast.Tuple | ast.Set):
+        return [model_type for element in node.elts for model_type in _model_types(element)]
+    return [f"<not a literal: {ast.unparse(node) if node is not None else 'missing'}>"]
+
+
+def _renderer_registrations(root: Path) -> list[tuple[str, str, str]]:
+    """Return (file, model_type, family) for each renderer registration under ``root``.
+
+    A registration is an ``install_auto_processor_patch(<types>, <class>)`` call whose
+    class resolves to one of RENDERER_PROCESSOR_CLASSES; sorted.
+    """
+    found: list[tuple[str, str, str]] = []
+    for path in root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        names = _imported_names(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            function = _last_name(node.func)
+            if function is None or names.get(function, function) != _PATCH_FUNCTION:
+                continue
+            cls = _last_name(_argument(node, 1, "processor_cls"))
+            family = RENDERER_PROCESSOR_CLASSES.get(names.get(cls, cls)) if cls else None
+            if family is None:
+                continue
+            file = path.relative_to(root).as_posix()
+            types = _model_types(_argument(node, 0, "target_model_types"))
+            found.extend((file, model_type, family) for model_type in types)
+    return sorted(found)
+
+
+def _unlisted_registrations(
+    registrations: list[tuple[str, str, str]], table: Mapping[str, str]
+) -> list[tuple[str, str, str]]:
+    """Return the registrations whose model_type does not select their family in ``table``."""
+    return [entry for entry in registrations if table.get(entry[1]) != entry[2]]
+
+
+def test_the_registration_scan_follows_reuse_aliases_and_package_exports(
+    tmp_path: Path,
+) -> None:
+    # Bug caught: the scan reads only the class name written at the call, so a surveyed
+    # processor imported under another name, through its package's "Processor" export or
+    # by keyword, is registered under a new model_type the renderer table does not list.
+    files = {
+        "models/kimi_vl/processing_kimi_vl.py": (
+            "class KimiVLProcessor: ...\ninstall_auto_processor_patch('kimi_vl', KimiVLProcessor)\n"
+        ),
+        "models/new_vl/processing_new_vl.py": (
+            "from ..kimi_vl.processing_kimi_vl import KimiVLProcessor as NewProcessor\n"
+            "from ..base import install_auto_processor_patch\n"
+            "install_auto_processor_patch(['new_vl', 'New-VL'], NewProcessor)\n"
+        ),
+        "models/la2/__init__.py": (
+            "from ..locateanything import Processor\n"
+            "from .. import base\n"
+            "base.install_auto_processor_patch(processor_cls=Processor, target_model_types='la2')\n"
+        ),
+        "models/phi_alias/p.py": (
+            "from ..base import install_auto_processor_patch as patch\n"
+            "from ..phi3_v import processing_phi3_v as pp\n"
+            "patch(\n    ('phi_alias',),\n    pp.Phi3VProcessor,\n)\n"
+        ),
+        "models/other/p.py": "install_auto_processor_patch('other', OtherProcessor)\n",
+    }
+    for name, text in files.items():
+        (tmp_path / name).parent.mkdir(parents=True)
+        (tmp_path / name).write_text(text, encoding="utf-8")
+
+    found = _renderer_registrations(tmp_path)
+
+    assert found == [
+        ("models/kimi_vl/processing_kimi_vl.py", "kimi_vl", "kimi_vl"),
+        ("models/la2/__init__.py", "la2", "locateanything"),
+        ("models/new_vl/processing_new_vl.py", "new-vl", "kimi_vl"),
+        ("models/new_vl/processing_new_vl.py", "new_vl", "kimi_vl"),
+        ("models/phi_alias/p.py", "phi_alias", "phi3_v"),
+    ]
+
+
+def test_a_reuse_registration_under_a_new_type_is_flagged_against_the_table(
+    tmp_path: Path,
+) -> None:
+    # Bug caught: the gap check compares against the wrong table or never flags, so the
+    # installed-tree check below passes whatever mlx-vlm registers.
+    from mlx_model_doctor.checks.remote_code import VLM_TEMPLATE_RENDERERS
+
+    module = tmp_path / "models" / "reuse" / "processing_reuse.py"
+    module.parent.mkdir(parents=True)
+    module.write_text(
+        "from ..molmo.processing_molmo import MolmoProcessor\n"
+        "install_auto_processor_patch(['molmo', 'molmo_reuse'], MolmoProcessor)\n",
+        encoding="utf-8",
+    )
+
+    gaps = _unlisted_registrations(_renderer_registrations(tmp_path), VLM_TEMPLATE_RENDERERS)
+
+    assert gaps == [("models/reuse/processing_reuse.py", "molmo_reuse", "molmo")]
+
+
+def test_every_mlx_vlm_registration_of_a_renderer_processor_is_in_the_table() -> None:
+    # Bug caught: an mlx-vlm release registers a surveyed renderer processor under a new
+    # model_type (a reuse, or an alias); VLM_TEMPLATE_RENDERERS does not list that type,
+    # so `--smoke` loads a repository whose chat template it renders unsandboxed.
+    from mlx_model_doctor.checks.remote_code import VLM_TEMPLATE_RENDERERS
+
+    spec = importlib.util.find_spec("mlx_vlm")
+    if spec is None or spec.origin is None:
+        pytest.skip("mlx_vlm is not installed; install the [mlx-vlm] extra to run this test")
+    root = Path(spec.origin).parent
+    undefined = [
+        name
+        for name, family in RENDERER_PROCESSOR_CLASSES.items()
+        if not re.search(
+            rf"^class {name}\(",
+            (root / _module_of_family(family)).read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+    ]
+    registrations = _renderer_registrations(root)
+
+    assert not undefined, f"renderer classes not defined where surveyed: {undefined}"
+    assert registrations, "no renderer registration found; the scan reads nothing"
+    assert not _unlisted_registrations(registrations, VLM_TEMPLATE_RENDERERS), (
+        f"mlx_vlm registers a renderer processor under a model_type the renderer table "
+        f"(VLM_TEMPLATE_RENDERERS) does not list: "
+        f"{_unlisted_registrations(registrations, VLM_TEMPLATE_RENDERERS)}"
+    )
+
+
+def _module_of_family(family: str) -> str:
+    """Return the surveyed module that defines ``family``'s processor class."""
+    return next(path for path, fam in SURVEYED_RENDERER_MODULES.items() if fam == family)
+
+
+@pytest.mark.parametrize(
+    "test",
+    [
+        test_mlx_vlm_has_no_jinja_renderer_outside_the_surveyed_modules,
+        test_every_mlx_vlm_registration_of_a_renderer_processor_is_in_the_table,
+    ],
+    ids=lambda t: t.__name__,
+)
+def test_the_source_only_renderer_scans_run_without_the_gpu_marker(test: object) -> None:
+    # Bug caught: a scan that reads mlx_vlm source text and imports nothing carries the
+    # gpu marker, so the default suite (-m "not gpu") never runs it and an mlx-vlm
+    # upgrade that adds a renderer goes unnoticed.
+    marks = [mark.name for mark in getattr(test, "pytestmark", [])]
+
+    assert "gpu" not in marks
 
 
 # --- no call to mlx-lm's sharded loader ------------------------------------------
