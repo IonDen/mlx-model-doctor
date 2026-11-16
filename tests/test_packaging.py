@@ -15,6 +15,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ALLOWED_PREFIXES = ("src/", "tests/")
@@ -163,3 +164,32 @@ def test_development_status_is_beta() -> None:
     classifiers = data["project"]["classifiers"]
     assert "Development Status :: 4 - Beta" in classifiers
     assert "Development Status :: 3 - Alpha" not in classifiers
+
+
+def _extra_requirements(extra: str) -> dict[str, Requirement]:
+    data = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    entries = data["project"]["optional-dependencies"][extra]
+    reqs = [Requirement(entry) for entry in entries]
+    return {req.name: req for req in reqs}
+
+
+@pytest.mark.parametrize(
+    ("extra", "package", "admitted", "rejected"),
+    [
+        ("mlx-lm", "mlx-lm", ("0.32.0", "0.32.2"), ("0.31.3", "0.33.0")),
+        # mlx 0.32.0-0.32.3 reject 1-bit affine at load, so the floor is 0.32.4.
+        ("mlx-lm", "mlx", ("0.32.4",), ("0.32.0", "0.32.3", "0.33.0")),
+        ("mlx-vlm", "mlx-vlm", ("0.6.12", "0.7.10", "0.7.12"), ("0.6.11", "0.8.0")),
+        ("mlx-vlm", "mlx", ("0.32.4",), ("0.32.0", "0.32.3", "0.33.0")),
+    ],
+)
+def test_runtime_extras_admit_the_supported_upstream_lines(
+    extra: str, package: str, admitted: tuple[str, ...], rejected: tuple[str, ...]
+) -> None:
+    reqs = _extra_requirements(extra)
+    assert package in reqs, f"[{extra}] extra has no {package} requirement: {sorted(reqs)}"
+    spec = reqs[package].specifier
+    for version in admitted:
+        assert spec.contains(version), f"[{extra}] {package}{spec} rejects supported {version}"
+    for version in rejected:
+        assert not spec.contains(version), f"[{extra}] {package}{spec} admits untested {version}"
