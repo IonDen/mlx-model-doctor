@@ -5,6 +5,11 @@ as priorities change.
 
 ## Released
 
+- **v0.10.2** (2026-11-17) — the `[mlx-lm]` and `[mlx-vlm]` extras follow MLX
+  0.32, mlx-lm 0.32 and mlx-vlm 0.6.12 to 0.7 (MLX 0.32.4 or later, mlx-lm
+  0.32.0 or later), and a text `--smoke` load that fails on a repository
+  naming `auto_map` code no longer puts your home folder path in the upstream
+  error kept in the report details.
 - **v0.10.1** (2026-11-16) — `--smoke` and `parity mlx` refuse to load a
   repository that names its own loader code or, on VLM `--smoke`, ships a chat
   template for one of six processor families.
