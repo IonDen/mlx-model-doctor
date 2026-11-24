@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.3] — 2026-11-25
+
+Failure messages now shorten the paths to folders on your machine. Exit codes
+and JSON field names and types are the same. One Python API behavior changes.
+
+### Fixed
+- Failure messages from `--smoke` (text and VLM) and `parity mlx` now shorten
+  local folder paths. The same goes for a check that crashed, the error line of
+  a failed Hugging Face download, and Hub errors from `check hf` and
+  `sample hf`. A path is cut to:
+  - the model folder's name;
+  - `org/name` for a model in the Hugging Face cache (a Hub URL glued to it
+    becomes `https://huggingface.co/org/name/tree/main`);
+  - the failing file's own name;
+  - `~` for the home folder;
+  - `$HF_HUB_CACHE` or `$HF_HOME` for the Hugging Face cache roots.
+
+  This applies to the text, Markdown, JSON and GitHub outputs and to
+  `CheckResult.message` in the Python API. A home folder that `$HOME` does not
+  name (its resolved path, or the account's home folder) is cut too.
+
+  Some shapes are still not cut. A folder with a space in its name, other than
+  the home folder, a model folder or a cache root, ends the cut, so the path
+  shows from that folder on (`/Users/you/Client Work/app/x.py` shows
+  `~/Client Work/app/x.py`; `/Volumes/Alice SSD/venvs/x.py` shows
+  `Alice SSD/venvs/x.py`). A path glued straight after a colon
+  (`name:/Volumes/SSD/m/a.json`) is left as written unless it sits under the
+  home folder or a cache root; under the home folder only the home part is cut.
+
+### Changed
+- When `check_adapter_parity` downloads a Hub model and the download fails, it
+  now raises `TargetError`, a `ModelDoctorError`, instead of the underlying
+  error, whatever its type. This matches what `check_hf_model` already does.
+  `parity mlx` never downloads, so it is unaffected.
+
+### Unchanged
+- Exit codes, and JSON field names and types.
+- The identity fields still hold the full local path on every run: the
+  `check local` header and JSON `target`, and parity JSON's `base`, `adapter`
+  and `fused` `path`. That is how you find the exact snapshot used.
+- `--verbose` tracebacks keep their full paths.
+
+### Verified
+The tests pass with fake home folders and fake loaders across every output
+format. No model was loaded for this release.
+
 ## [0.10.2] — 2026-11-17
 
 The `[mlx-lm]` and `[mlx-vlm]` extras now follow MLX 0.32, mlx-lm 0.32 and

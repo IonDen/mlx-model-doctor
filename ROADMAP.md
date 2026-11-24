@@ -5,6 +5,11 @@ as priorities change.
 
 ## Released
 
+- **v0.10.3** (2026-11-25) — failure messages from `--smoke` and `parity mlx`,
+  the error line of a failed Hugging Face download, and Hub errors from
+  `check hf` and `sample hf` now shorten local folder paths.
+  `check_adapter_parity` raises `TargetError` instead of the
+  underlying error when a Hub download fails.
 - **v0.10.2** (2026-11-17) — the `[mlx-lm]` and `[mlx-vlm]` extras follow MLX
   0.32, mlx-lm 0.32 and mlx-vlm 0.6.12 to 0.7 (MLX 0.32.4 or later, mlx-lm
   0.32.0 or later), and a text `--smoke` load that fails on a repository
