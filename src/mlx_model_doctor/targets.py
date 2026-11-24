@@ -14,6 +14,7 @@ from typing import Literal, Protocol, cast, runtime_checkable
 from urllib.parse import urlparse
 
 from mlx_model_doctor.errors import TargetError
+from mlx_model_doctor.redaction import redact_local_paths
 from mlx_model_doctor.safetensors_header import (
     _MAX_HEADER_BYTES,
     FileHeader,
@@ -351,7 +352,8 @@ class DefaultHfHub:
                     f"safetensors shard {missing} is absent from the repository"
                 ) from exc
             raise TargetError(
-                f"Could not read safetensors metadata for {repo_id}: {exc}",
+                f"Could not read safetensors metadata for {repo_id}: "
+                f"{redact_local_paths(str(exc))}",
                 target=repo_id,
                 source="hf",
             ) from exc
@@ -377,7 +379,8 @@ class DefaultHfHub:
                     "listing includes it"
                 ) from exc
             raise TargetError(
-                f"Could not read safetensors metadata for {repo_id}:{filename}: {exc}",
+                f"Could not read safetensors metadata for {repo_id}:{filename}: "
+                f"{redact_local_paths(str(exc))}",
                 target=f"{repo_id}:{filename}",
                 source="hf",
             ) from exc
@@ -662,7 +665,7 @@ class HfTarget:
             raise
         except Exception as exc:
             raise TargetError(
-                f"Could not inspect Hugging Face model {repo_id}: {exc}",
+                f"Could not inspect Hugging Face model {repo_id}: {redact_local_paths(str(exc))}",
                 target=repo_id,
                 source="hf",
             ) from exc
@@ -722,7 +725,7 @@ class HfTarget:
             raise
         except Exception as exc:
             raise self._target_error(
-                f"Could not read Hugging Face model file {path}: {exc}",
+                f"Could not read Hugging Face model file {path}: {redact_local_paths(str(exc))}",
                 path,
             ) from exc
         return data if max_bytes is None else data[:max_bytes]
@@ -743,7 +746,8 @@ class HfTarget:
             raise
         except Exception as exc:
             raise TargetError(
-                f"Could not download a snapshot of Hugging Face model {self._repo_id}: {exc}",
+                f"Could not download a snapshot of Hugging Face model {self._repo_id}: "
+                f"{redact_local_paths(str(exc))}",
                 target=self._repo_id,
                 source="hf",
             ) from exc

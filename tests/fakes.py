@@ -6,14 +6,35 @@ import struct
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from mlx_model_doctor.context import CheckContext, CheckOptions
 from mlx_model_doctor.safetensors_header import SafetensorsHeader, SafetensorsHeaderError
 
+if TYPE_CHECKING:
+    import pytest
+
 # A shard spec: tensor name -> (dtype, shape). Data bytes are zeros.
 ShardSpec = Mapping[str, tuple[str, tuple[int, ...]]]
 _DTYPE_BYTES = {"BF16": 2, "F16": 2, "F32": 4, "U32": 4}
+
+# The variables that move the Hugging Face cache roots the path reduction reads.
+_HF_CACHE_VARIABLES = ("HF_HOME", "HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "XDG_CACHE_HOME")
+
+
+def use_fake_home(
+    monkeypatch: "pytest.MonkeyPatch", *, home: str, pwd_home: str | None = None
+) -> None:
+    """Make ``home`` the only home the path reduction knows, with the default HF cache.
+
+    ``HOME`` is set, the Hugging Face cache variables are cleared (so the cache roots
+    derive from ``home``), and the passwd lookup returns ``pwd_home``, so the machine's
+    real account folder never joins the candidates.
+    """
+    monkeypatch.setenv("HOME", home)
+    for name in _HF_CACHE_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("mlx_model_doctor.redaction._pwd_home", lambda: pwd_home)
 
 
 def check_options() -> CheckOptions:

@@ -12,6 +12,7 @@ offline and MLX/numpy-free.
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
@@ -19,6 +20,7 @@ from mlx_model_doctor.errors import ModelDoctorError, TargetError
 from mlx_model_doctor.parity.checks import (
     AdapterConfigCheck,
     FusedTargetConsistencyCheck,
+    RemoteCodeCheck,
     TargetCoverageCheck,
     TokenizerIdentityCheck,
     run_parity_checks,
@@ -32,7 +34,7 @@ from mlx_model_doctor.parity.context import (
 )
 from mlx_model_doctor.report import CheckResult
 from mlx_model_doctor.safetensors_header import FileHeader, SafetensorsHeader, TensorEntry
-from tests.fakes import FakeTarget, check_options
+from tests.fakes import FakeTarget, check_options, use_fake_home
 
 _BASE_TOKENIZER_CONFIG: dict[str, object] = {
     "bos_token": "<s>",
@@ -799,3 +801,91 @@ class TestRunParityChecks:
 
         assert crashed is False
         assert [r.status for r in results] == ["pass", "pass", "pass", "pass"]
+
+
+# --- failure text keeps no local path ---
+
+
+@dataclass(frozen=True, slots=True)
+class _PathCrashingParityCheck:
+    error: str
+    check_id: str = "parity/path-crash"
+    title: str = "Crash naming local paths"
+
+    def run(self, pctx: ParityContext) -> CheckResult:
+        raise RuntimeError(self.error)
+
+
+def _spaced_home_pctx(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    make_base: bool = True,
+    make_fused: bool = True,
+) -> tuple[Path, Path, ParityContext]:
+    """Return a fake home, the model folder root and a context of three folders below it.
+
+    The spaced "my models" folder keeps the home cut alone from shortening a target
+    path: without the target folders passed to the reduction, "~/my models/base" stays.
+    """
+    home = tmp_path / "Users" / "John Smith"
+    root = home / "my models"
+    for name in ("base", "adapter", "fused"):
+        if {"base": make_base, "fused": make_fused}.get(name, True):
+            (root / name).mkdir(parents=True)
+    use_fake_home(monkeypatch, home=str(home))
+    pctx = _pctx(
+        base=FakeTarget(files={}, name=str(root / "base")),
+        adapter=FakeTarget(files={}, name=str(root / "adapter")),
+        fused=FakeTarget(files={}, name=str(root / "fused")),
+    )
+    return home, root, pctx
+
+
+def test_crashed_parity_check_message_keeps_the_prefix_and_no_local_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: the parity crash text is copied raw (home and target paths), or the
+    # "check crashed:" prefix that parity/exit_codes.py reads is lost.
+    home, root, pctx = _spaced_home_pctx(tmp_path, monkeypatch)
+    base, adapter, fused = (root / name for name in ("base", "adapter", "fused"))
+    error = f"bad {home}/x/y.py; cannot open {base}, {adapter} or {fused}"
+
+    results, crashed = run_parity_checks(pctx, [_PathCrashingParityCheck(error=error)])
+
+    assert crashed is True
+    assert results[0].message == "check crashed: bad y.py; cannot open base, adapter or fused"
+
+
+def test_remote_code_refusal_of_a_missing_base_names_only_its_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: the not_a_directory refusal embeds the absolute base path in the message and
+    # in base_remote_code_file.
+    _home, _root, pctx = _spaced_home_pctx(tmp_path, monkeypatch, make_base=False)
+
+    result = RemoteCodeCheck().run(pctx)
+
+    assert result.status == "fail"
+    assert result.details["base_remote_code_file"] == "base"
+    assert result.message == (
+        "base is not an existing directory, so it is unknown whether the base repository "
+        "names loader code. The load was refused, so repository code was not run."
+    )
+
+
+def test_remote_code_refusal_of_a_missing_fused_names_only_its_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: the fused folder is left out of the model folders the refusal reduction cuts,
+    # so its message and fused_remote_code_file keep "~/my models/fused".
+    _home, _root, pctx = _spaced_home_pctx(tmp_path, monkeypatch, make_fused=False)
+
+    result = RemoteCodeCheck().run(pctx)
+
+    assert result.status == "fail"
+    assert result.details["fused_remote_code_file"] == "fused"
+    assert result.message == (
+        "fused is not an existing directory, so it is unknown whether the fused repository "
+        "names loader code. The load was refused, so repository code was not run."
+    )

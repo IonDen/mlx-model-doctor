@@ -665,3 +665,63 @@ def unused_check(
     plugin_name: str = "text",
 ) -> DoctorReport:
     raise AssertionError(f"unexpected check call for {repo_id}")
+
+
+def _spaced_home_lock_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> OSError:
+    """Return an OSError naming a Hub cache lock file under a fake spaced home."""
+    from tests.fakes import use_fake_home
+
+    home = tmp_path / "Users" / "John Smith"
+    use_fake_home(monkeypatch, home=str(home))
+    lock = home / ".cache" / "huggingface" / "hub" / ".locks" / "models--o--n" / "a.lock"
+    return OSError(f"No space left: '{lock}'")
+
+
+def test_run_hf_sample_listing_failure_keeps_no_cache_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: the listing tool error prints the raw hub exception, the Hugging Face cache
+    # path with the user's home in it.
+    lister = FakeLister(error=_spaced_home_lock_error(tmp_path, monkeypatch))
+
+    with pytest.raises(ModelDoctorError) as exc_info:
+        run_hf_sample(lister=lister, check_model=unused_check)
+
+    assert str(exc_info.value) == "Could not list Hugging Face models: No space left: 'a.lock'"
+
+
+class _FailingModelInfoHub:
+    """Hub whose model_info raises the given error; nothing else is reached."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def model_info(self, repo_id: str, *, files_metadata: bool) -> object:
+        raise self.error
+
+
+def test_run_hf_sample_tool_error_row_keeps_no_cache_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: a model whose Hub metadata read fails lands in the sample output (table,
+    # text and JSON) with the raw hub exception, the cache path and the user's home.
+    from mlx_model_doctor.api import check_hf_model
+
+    hub = _FailingModelInfoHub(_spaced_home_lock_error(tmp_path, monkeypatch))
+
+    def hub_check(
+        repo_id: str, *, options: CheckOptions | None = None, plugin_name: str = "text"
+    ) -> DoctorReport:
+        return check_hf_model(repo_id, options=options, plugin_name=plugin_name, hub=hub)  # type: ignore[arg-type]
+
+    batch = run_hf_sample(
+        lister=FakeLister((FakeModel(id="o/n", tags=("mlx",)),)), check_model=hub_check
+    )
+
+    expected = "Could not inspect Hugging Face model o/n: No space left: 'a.lock'"
+    assert [(item.repo_id, item.status, item.error) for item in batch.items] == [
+        ("o/n", "tool-error", expected)
+    ]
+    assert expected in render_sample_batch_text(batch)
+    assert "John Smith" not in render_sample_batch_markdown(batch)
+    assert "John Smith" not in render_sample_batch_json(batch)

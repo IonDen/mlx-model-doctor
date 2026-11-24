@@ -48,6 +48,7 @@ from mlx_model_doctor.errors import DependencyError, ModelDoctorError
 from mlx_model_doctor.parity.context import TokenizerFingerprint, tokenizer_fingerprint_for_path
 from mlx_model_doctor.parity.fixtures import FixtureRef, build_fixture_from_prompts
 from mlx_model_doctor.parity.sources import ResolvedSources, SnapshotDownloader, resolve_sources
+from mlx_model_doctor.redaction import redact_local_paths
 
 
 class _ChatTemplateTokenizer(Protocol):
@@ -164,7 +165,12 @@ def build_prompts_fixture(
             f"{describe_refusal(refusal, subject='the base repository')} The load was "
             f"refused, so {outcome} was not run. {refusal_remediation(refusal)}"
         )
-    tokenizer = tokenizer_loader(local_base_path)
+    try:
+        tokenizer = tokenizer_loader(local_base_path)
+    except ValueError as exc:
+        # The CLI prints this as a tool error; keep the base folder's name, not its path.
+        reason = redact_local_paths(str(exc), model_dirs=(Path(local_base_path),))
+        raise ValueError(reason) from exc
 
     def apply_chat_template(
         messages: list[dict[str, str]], *, add_generation_prompt: bool

@@ -10,6 +10,7 @@ from mlx_model_doctor.cache import CacheKey, ListingCache
 from mlx_model_doctor.compat import mlx_signals
 from mlx_model_doctor.context import CheckOptions
 from mlx_model_doctor.errors import ModelDoctorError
+from mlx_model_doctor.redaction import redact_local_paths
 from mlx_model_doctor.report import DoctorReport, render_json
 
 ItemStatus = Literal["checked", "tool-error"]
@@ -277,7 +278,9 @@ def run_hf_sample(
     except ModelDoctorError:
         raise
     except Exception as exc:
-        raise ModelDoctorError(f"Could not list Hugging Face models: {exc}") from exc
+        raise ModelDoctorError(
+            f"Could not list Hugging Face models: {redact_local_paths(str(exc))}"
+        ) from exc
 
     sampled_models = deterministic_sample(listed_models, limit=limit, signal_filter=signal_filter)
     checker = check_model if check_model is not None else check_hf_model

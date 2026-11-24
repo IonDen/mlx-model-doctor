@@ -8,7 +8,11 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from mlx_model_doctor.parity.deltamap import TensorDelta
-from mlx_model_doctor.parity.fixtures import DEFAULT_FIXTURE_ID, get_fixture
+from mlx_model_doctor.parity.fixtures import (
+    DEFAULT_FIXTURE_ID,
+    get_fixture,
+    reference_tokenizer_files,
+)
 from mlx_model_doctor.parity.oracle import ParityVerdict
 from mlx_model_doctor.parity.report import ParityReport, ResolvedIdentity, RuntimeProvenance
 from mlx_model_doctor.report import CheckResult, DoctorReport
@@ -42,6 +46,79 @@ def write_safetensors_file(
     header_bytes = safetensors_header_bytes(header)
     path.write_bytes(header_bytes + bytes(payload))
     return path
+
+
+_PARITY_F4_ONE = struct.pack("<f", 1.0)
+_PARITY_F4_TWO = struct.pack("<f", 2.0)
+
+
+def write_parity_model_repo(root: Path, *, fused: bool = False) -> Path:
+    """Write a tiny llama repo that passes the parity static phase with real tensor bytes.
+
+    Its tokenizer is the default fixture's own reference tokenizer, so the
+    fixture-vs-base gate never fires. With ``fused`` the q_proj bytes differ from
+    the base's (a genuine fuse); every other tensor is the same.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    config = {
+        "model_type": "llama",
+        "hidden_size": 8,
+        "num_hidden_layers": 1,
+        "num_attention_heads": 2,
+        "num_key_value_heads": 2,
+        "head_dim": 4,
+        "vocab_size": 16,
+        "intermediate_size": 16,
+        "pad_token_id": 0,
+        "eos_token_id": 1,
+    }
+    (root / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    tokenizer_config, tokenizer_json, chat_template = reference_tokenizer_files()
+    tokenizer_config["chat_template"] = chat_template
+    (root / "tokenizer.json").write_text(json.dumps(tokenizer_json), encoding="utf-8")
+    (root / "tokenizer_config.json").write_text(json.dumps(tokenizer_config), encoding="utf-8")
+    one = _PARITY_F4_ONE
+    q_proj = (_PARITY_F4_TWO if fused else one) * 64
+    write_safetensors_file(
+        root / "model.safetensors",
+        {
+            "model.embed_tokens.weight": ("F32", [16, 8], one * 128),
+            "model.layers.0.self_attn.q_proj.weight": ("F32", [8, 8], q_proj),
+            "model.layers.0.self_attn.k_proj.weight": ("F32", [8, 8], one * 64),
+            "model.layers.0.self_attn.v_proj.weight": ("F32", [8, 8], one * 64),
+            "model.layers.0.self_attn.o_proj.weight": ("F32", [8, 8], one * 64),
+            "model.layers.0.mlp.gate_proj.weight": ("F32", [16, 8], one * 128),
+            "model.layers.0.mlp.up_proj.weight": ("F32", [16, 8], one * 128),
+            "model.layers.0.mlp.down_proj.weight": ("F32", [8, 16], one * 128),
+            "model.norm.weight": ("F32", [8], one * 8),
+            "lm_head.weight": ("F32", [16, 8], one * 128),
+        },
+    )
+    return root
+
+
+def write_parity_adapter(root: Path, *, keys: Sequence[str] = ("self_attn.q_proj",)) -> Path:
+    """Write a rank-4 LoRA adapter on layer 0's q_proj, matching ``write_parity_model_repo``.
+
+    ``keys`` is the config's LoRA target list; a key that names no base tensor
+    (``self_attn.nonexistent``) makes the parity coverage check fail.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    config = {
+        "num_layers": 1,
+        "fine_tune_type": "lora",
+        "lora_parameters": {"rank": 4, "scale": 20.0, "keys": list(keys)},
+    }
+    (root / "adapter_config.json").write_text(json.dumps(config), encoding="utf-8")
+    (root / "adapters.safetensors").write_bytes(
+        safetensors_header_bytes(
+            {
+                "model.layers.0.self_attn.q_proj.lora_a": lora_tensor([4, 8]),
+                "model.layers.0.self_attn.q_proj.lora_b": lora_tensor([8, 4]),
+            }
+        )
+    )
+    return root
 
 
 def lora_tensor(shape: Sequence[int], *, dtype: str = "F32") -> dict[str, object]:

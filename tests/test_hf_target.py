@@ -1,6 +1,8 @@
 import json
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import ClassVar
 
 import httpx
@@ -18,7 +20,7 @@ from mlx_model_doctor.safetensors_header import SafetensorsHeader as _STHeader
 from mlx_model_doctor.safetensors_header import SafetensorsHeaderError
 from mlx_model_doctor.targets import DefaultHfHub, HfTarget, MlxListingMetadata
 from mlx_model_doctor.targets import HfTarget as _HfTargetForST
-from tests.fakes import FakeShardHub, safetensors_bytes, shard_repo
+from tests.fakes import FakeShardHub, safetensors_bytes, shard_repo, use_fake_home
 
 
 @dataclass(frozen=True, slots=True)
@@ -650,3 +652,104 @@ def test_group_progress_bar_state_survives_the_block(
     assert hf_tqdm.progress_bar_states == before == {"huggingface_hub.http_get": False}
     assert hf_tqdm.are_progress_bars_disabled("huggingface_hub.http_get") is True
     assert hf_tqdm.are_progress_bars_disabled() is False
+
+
+class FailingSnapshotHub(FakeHub):
+    """A hub whose snapshot download fails with the given error."""
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self.error = error
+
+    def snapshot_download(self, repo_id: str, *, allow_patterns: Sequence[str]) -> str:
+        raise self.error
+
+
+def test_snapshot_download_error_keeps_no_cache_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: the snapshot tool error (exit 2) prints the Hugging Face cache path with the
+    # user's home in it.
+    home = tmp_path / "Users" / "John Smith"
+    use_fake_home(monkeypatch, home=str(home))
+    lock = home / ".cache" / "huggingface" / "hub" / ".locks" / "models--o--n" / "a.lock"
+    target = HfTarget("o/n", hub=FailingSnapshotHub(OSError(f"No space left: '{lock}'")))
+
+    with pytest.raises(TargetError) as exc_info:
+        target.snapshot(allow_patterns=("*.json",))
+
+    assert str(exc_info.value) == (
+        "Could not download a snapshot of Hugging Face model o/n: No space left: 'a.lock'"
+    )
+    assert exc_info.value.source == "hf"
+    assert exc_info.value.target == "o/n"
+
+
+def _lock_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> OSError:
+    """Return an OSError naming a Hub cache lock file under a fake spaced home."""
+    home = tmp_path / "Users" / "John Smith"
+    use_fake_home(monkeypatch, home=str(home))
+    lock = home / ".cache" / "huggingface" / "hub" / ".locks" / "models--o--n" / "a.lock"
+    return OSError(f"No space left: '{lock}'")
+
+
+def test_model_info_error_keeps_no_cache_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: the "Could not inspect" tool error (exit 2) prints the raw hub exception,
+    # the Hugging Face cache path with the user's home in it.
+    error = _lock_error(monkeypatch, tmp_path)
+
+    with pytest.raises(TargetError) as exc_info:
+        HfTarget("o/n", hub=FakeHub(model_info_error=error))
+
+    assert (
+        str(exc_info.value) == "Could not inspect Hugging Face model o/n: No space left: 'a.lock'"
+    )
+    assert exc_info.value.__cause__ is error
+
+
+def test_file_download_error_keeps_no_cache_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: the "Could not read Hugging Face model file" tool error prints the raw
+    # hf_hub_download exception, the cache path with the user's home in it.
+    error = _lock_error(monkeypatch, tmp_path)
+    target = HfTarget("o/n", hub=FakeHub(files={"config.json": b"{}"}, download_error=error))
+
+    with pytest.raises(TargetError) as exc_info:
+        target.read_bytes("config.json")
+
+    assert str(exc_info.value) == (
+        "Could not read Hugging Face model file config.json: No space left: 'a.lock'"
+    )
+    assert exc_info.value.target == "o/n:config.json"
+
+
+def test_safetensors_metadata_error_keeps_no_cache_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_api: type[_RaisingApi]
+) -> None:
+    # Bug: the repository safetensors metadata tool error prints the raw hub exception
+    # (a token-file or cache OSError carries the user's home).
+    fake_api.error = _lock_error(monkeypatch, tmp_path)
+
+    with pytest.raises(TargetError) as exc_info:
+        DefaultHfHub().safetensors_metadata("o/n")
+
+    assert str(exc_info.value) == (
+        "Could not read safetensors metadata for o/n: No space left: 'a.lock'"
+    )
+
+
+def test_safetensors_file_metadata_error_keeps_no_cache_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_api: type[_RaisingApi]
+) -> None:
+    # Bug: the per-file safetensors metadata tool error prints the raw hub exception.
+    fake_api.error = _lock_error(monkeypatch, tmp_path)
+
+    with pytest.raises(TargetError) as exc_info:
+        DefaultHfHub().safetensors_file_metadata("o/n", "model.safetensors")
+
+    assert str(exc_info.value) == (
+        "Could not read safetensors metadata for o/n:model.safetensors: No space left: 'a.lock'"
+    )
