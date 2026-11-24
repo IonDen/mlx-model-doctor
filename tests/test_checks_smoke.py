@@ -8,7 +8,14 @@ from mlx_model_doctor.checks.smoke import MlxLmBackend, MlxLmSmokeCheck, SmokeGe
 from mlx_model_doctor.context import CheckContext
 from mlx_model_doctor.errors import DependencyError, MemorySafetyError, ModelDoctorError
 from mlx_model_doctor.memory import GIB
-from tests.fakes import FakeTarget, check_options, write_hf_cache_snapshot
+from mlx_model_doctor.targets import HfTarget, LocalTarget
+from tests.fakes import (
+    FakeShardHub,
+    FakeTarget,
+    check_options,
+    use_fake_home,
+    write_hf_cache_snapshot,
+)
 
 # Small, known-good VLM pinned for the live canary (mlx-community, 4-bit quantized).
 CANARY_REPO = "mlx-community/Qwen2.5-VL-3B-Instruct-4bit"
@@ -595,3 +602,104 @@ def test_canary_snapshot_resolution_fails_naming_the_download_command_when_not_c
         canary_snapshot_dir(cache_dir=tmp_path)
 
     assert exc_info.type is pytest.fail.Exception
+
+
+# --- failure text keeps no local path (the user's home, the model folder) ---
+
+_SHA = "0123456789abcdef0123456789abcdef01234567"
+
+
+def _spaced_home_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
+    """Return a fake home and a model folder below it, behind a spaced folder.
+
+    The spaced folder keeps the home cut alone from shortening the model path: without
+    the model folder passed to the reduction, the text keeps ``~/my models/m``.
+    """
+    home = tmp_path / "Users" / "John Smith"
+    model = home / "my models" / "m"
+    model.mkdir(parents=True)
+    use_fake_home(monkeypatch, home=str(home))
+    return home, model
+
+
+def test_smoke_failure_names_the_model_folder_not_its_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: smoke.py copies the loader's text raw, so the message carries the home and
+    # the full model path; or it skips the target's folder and keeps "~/my models/m".
+    _home, model = _spaced_home_model(tmp_path, monkeypatch)
+    target = LocalTarget(model)
+    check = MlxLmSmokeCheck(
+        backend=FakeSmokeBackend(error=OSError(f"No safetensors found in {target.name}"))
+    )
+
+    result = check.run(CheckContext(target=target, options=check_options()))
+
+    assert result.status == "fail"
+    assert result.message == "Smoke generation failed: No safetensors found in m"
+
+
+def test_vlm_smoke_failure_names_the_file_not_its_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: the VLM smoke message has no reduction at all, so a missing processor file
+    # prints the home and the whole model path.
+    from mlx_model_doctor.checks.smoke import MlxVlmSmokeCheck
+
+    _home, model = _spaced_home_model(tmp_path, monkeypatch)
+    target = LocalTarget(model)
+    missing = f"{target.name}/processor/preprocessor_config.json"
+    check = MlxVlmSmokeCheck(
+        backend=FakeSmokeBackend(error=OSError(f"No such file or directory: '{missing}'"))
+    )
+
+    result = check.run(CheckContext(target=target, options=check_options()))
+
+    assert result.message == (
+        "VLM smoke generation failed: No such file or directory: 'preprocessor_config.json'"
+    )
+
+
+def test_hf_smoke_failure_names_the_repo_not_the_cache_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: `check hf --smoke` prints the cache snapshot path, which the user never typed
+    # and which holds their home.
+    home = tmp_path / "Users" / "John Smith"
+    use_fake_home(monkeypatch, home=str(home))
+    snapshot = home / ".cache" / "huggingface" / "hub" / "models--o--n" / "snapshots" / _SHA
+    error = OSError(f"{snapshot}/config.json not found; snapshot {snapshot}")
+    target = HfTarget("o/n", hub=FakeShardHub(files={}, shards={}))
+    check = MlxLmSmokeCheck(backend=FakeSmokeBackend(error=error))
+
+    result = check.run(CheckContext(target=target, options=check_options()))
+
+    assert result.message == "Smoke generation failed: config.json not found; snapshot o/n"
+
+
+def test_smoke_failure_for_a_missing_model_folder_names_only_the_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: the NotADirectoryError from the guard embeds the typed model path, and the
+    # smoke message prints it with the home.
+    home = tmp_path / "Users" / "John Smith"
+    missing = home / "my models" / "gone"
+    use_fake_home(monkeypatch, home=str(home))
+    mx = FakeMx()
+    mlx_lm = FakeMlxLm(mx)
+
+    def import_module(name: str) -> object:
+        if name == "mlx.core":
+            return mx
+        if name == "mlx_lm":
+            return mlx_lm
+        raise ImportError(name)
+
+    monkeypatch.setattr(smoke_module.importlib, "import_module", import_module)
+    target = FakeTarget(files={}, name=str(missing))
+
+    result = MlxLmSmokeCheck().run(CheckContext(target=target, options=check_options()))
+
+    assert result.message == (
+        "Smoke generation failed: model path is not an existing directory: gone"
+    )

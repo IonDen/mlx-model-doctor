@@ -18,7 +18,7 @@ import traceback
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from mlx_model_doctor.checks.remote_code import (
     MLX_LM_KEYS,
@@ -29,8 +29,12 @@ from mlx_model_doctor.checks.remote_code import (
 from mlx_model_doctor.errors import ModelDoctorError, TargetError, raise_for_hf_target_error
 from mlx_model_doctor.parity.context import ParityContext, tokenizers_match
 from mlx_model_doctor.parity.resolver import ResolvedTargets, resolve_targets
+from mlx_model_doctor.redaction import redact_local_paths, target_model_dirs
 from mlx_model_doctor.report import CheckResult
 from mlx_model_doctor.safetensors_header import SafetensorsHeader
+
+if TYPE_CHECKING:
+    from mlx_model_doctor.targets import ModelTarget
 
 # Suffixes stripped from a safetensors tensor name to recover its owning
 # module's path, matching MLX's nn.QuantizedLinear/nn.Linear parameter
@@ -133,17 +137,25 @@ def run_parity_checks(
             details: dict[str, object] = {}
             if pctx.options.verbosity == "verbose":
                 details["traceback"] = traceback.format_exc()
+            targets = pctx.targets
+            model_dirs = _model_dirs(targets.base, targets.adapter, targets.fused)
+            reason = redact_local_paths(str(exc), model_dirs=model_dirs)
             results.append(
                 CheckResult(
                     check_id=_safe_parity_check_id(check),
                     title=check.title,
                     status="fail",
                     severity="high",
-                    message=f"check crashed: {exc}",
+                    message=f"check crashed: {reason}",
                     details=details,
                 )
             )
     return results, crashed
+
+
+def _model_dirs(*targets: "ModelTarget") -> tuple[Path, ...]:
+    """Return the local model folders of ``targets``, for the path reduction."""
+    return tuple(model_dir for target in targets for model_dir in target_model_dirs(target))
 
 
 def _strip_tensor_payload_suffix(tensor_name: str) -> str:
@@ -542,15 +554,20 @@ class RemoteCodeCheck:
         details: dict[str, object] = {"refused_targets": tuple(role for role, _ in refusals)}
         sentences: list[str] = []
         remediations: list[str] = []
+        # A not_a_directory refusal names the model folder itself, as an absolute path.
+        model_dirs = _model_dirs(pctx.targets.base, pctx.targets.fused)
         for role, refusal in refusals:
-            details[f"{role}_remote_code_file"] = refusal.file
+            details[f"{role}_remote_code_file"] = redact_local_paths(
+                refusal.file, model_dirs=model_dirs
+            )
             if refusal.key is None:
                 details[f"{role}_remote_code_unreadable"] = True
                 if refusal.reason == "dangling_link":
                     details[f"{role}_remote_code_dangling_link"] = True
             else:
                 details[f"{role}_remote_code_key"] = refusal.key
-            sentences.append(describe_refusal(refusal, subject=f"the {role} repository"))
+            sentence = describe_refusal(refusal, subject=f"the {role} repository")
+            sentences.append(redact_local_paths(sentence, model_dirs=model_dirs))
             if (remediation := refusal_remediation(refusal)) not in remediations:
                 remediations.append(remediation)
         named = all(refusal.key is not None for _, refusal in refusals)

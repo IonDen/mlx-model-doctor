@@ -46,6 +46,7 @@ from mlx_model_doctor.parity.report import (
 from mlx_model_doctor.parity.sources import ResolvedSources, SnapshotDownloader, resolve_sources
 from mlx_model_doctor.parity.worker import WorkerSpec
 from mlx_model_doctor.plugins import DoctorPlugin, get_plugin
+from mlx_model_doctor.redaction import redact_local_paths
 from mlx_model_doctor.report import CheckResult, DoctorReport, zero_check_reason_for
 from mlx_model_doctor.runners.smoke import run_smoke_checks
 from mlx_model_doctor.runners.static import run_static_checks
@@ -425,8 +426,9 @@ def _run_runtime(
         # Surface each failed worker's captured cause (F2/F9): stderr, a timeout, an
         # artifact-validation reason, or the watchdog's memory/wall abort marker --
         # never silently dropped behind the generic "one or more workers failed" line.
+        model_dirs = (sources.base.path, sources.adapter.path, sources.fused.path)
         worker_errors = {
-            outcome.role: outcome.error
+            outcome.role: redact_local_paths(outcome.error, model_dirs=model_dirs)
             for outcome in outcomes
             if outcome.status == "error" and outcome.error is not None
         }
@@ -588,8 +590,9 @@ def _build_delta_map(
             )
         )
     except (ValueError, OSError) as exc:
+        cause = redact_local_paths(str(exc), model_dirs=(sources.base.path, sources.fused.path))
         return _DeltaMapResult(
-            deltas=(), phase="error", reason=f"delta map could not compare tensor bytes: {exc}"
+            deltas=(), phase="error", reason=f"delta map could not compare tensor bytes: {cause}"
         )
     return _DeltaMapResult(deltas=deltas, phase="ok")
 

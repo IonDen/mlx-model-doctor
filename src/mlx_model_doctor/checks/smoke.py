@@ -22,7 +22,6 @@ from mlx_model_doctor.checks.remote_code import (
     find_auto_map,
     find_remote_code,
     find_template_renderer,
-    reduce_absolute_paths,
     refusal_remediation,
     template_renderer_remediation,
 )
@@ -30,6 +29,7 @@ from mlx_model_doctor.context import CheckContext
 from mlx_model_doctor.environment import format_install_hint, has_uv_context
 from mlx_model_doctor.errors import DependencyError, MemorySafetyError, ModelDoctorError
 from mlx_model_doctor.memory import install_mlx_memory_caps
+from mlx_model_doctor.redaction import redact_local_paths, target_model_dirs
 from mlx_model_doctor.report import CheckResult
 from mlx_model_doctor.targets import HfTarget
 
@@ -150,7 +150,7 @@ class MlxLmBackend:
                 raise
             raise AutoMapLoadError(
                 auto_map_file,
-                upstream_error=reduce_absolute_paths(str(exc), model_dir=model_dir),
+                upstream_error=redact_local_paths(str(exc), model_dirs=(model_dir,)),
                 revision=revision,
             ) from exc
         text = mlx_lm.generate(
@@ -291,12 +291,13 @@ class MlxLmSmokeCheck:
         except AutoMapLoadError as exc:
             return _auto_map_load_result(self.check_id, self.title, exc)
         except Exception as exc:
+            reason = redact_local_paths(str(exc), model_dirs=target_model_dirs(ctx.target))
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,
                 status="fail",
                 severity="high",
-                message=f"Smoke generation failed: {exc}",
+                message=f"Smoke generation failed: {reason}",
                 remediation="Inspect the model with mlx-lm directly before using it.",
             )
 
@@ -442,12 +443,13 @@ class MlxVlmSmokeCheck:
         except TemplateRendererRefusedError as exc:
             return _template_renderer_result(self.check_id, self.title, exc)
         except Exception as exc:
+            reason = redact_local_paths(str(exc), model_dirs=target_model_dirs(ctx.target))
             return CheckResult(
                 check_id=self.check_id,
                 title=self.title,
                 status="fail",
                 severity="high",
-                message=f"VLM smoke generation failed: {exc}",
+                message=f"VLM smoke generation failed: {reason}",
                 remediation="Inspect the model with mlx-vlm directly before using it.",
             )
 

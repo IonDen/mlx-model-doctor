@@ -19,8 +19,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from mlx_model_doctor.errors import ModelDoctorError
+from mlx_model_doctor.errors import ModelDoctorError, TargetError
 from mlx_model_doctor.parity.report import ResolvedIdentity
+from mlx_model_doctor.redaction import redact_local_paths
 
 # The text smoke list (mlx-lm 0.31.3 utils._download minus "*.py") plus the two files
 # mlx-lm 0.31.3 tuner/utils.py load_adapters reads from an adapter folder.
@@ -55,7 +56,17 @@ class DefaultSnapshotDownloader:
         # allow_patterns: huggingface_hub 1.19.0 snapshot_download keyword. The same
         # downloader fetches base, fused and adapter repositories, so the list is the
         # mlx-lm one plus the adapter files. It does not download .py files.
-        return snapshot_download(repo_id=repo_id, allow_patterns=list(_PARITY_SNAPSHOT_PATTERNS))
+        try:
+            return snapshot_download(
+                repo_id=repo_id, allow_patterns=list(_PARITY_SNAPSHOT_PATTERNS)
+            )
+        except Exception as exc:
+            raise TargetError(
+                f"Could not download a snapshot of Hugging Face model {repo_id}: "
+                f"{redact_local_paths(str(exc))}",
+                target=repo_id,
+                source="hf",
+            ) from exc
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

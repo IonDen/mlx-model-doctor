@@ -32,6 +32,15 @@ REPO_ID = "org/model"
 KINDS = ("text", "vlm")
 
 
+@pytest.fixture(autouse=True)
+def only_the_home_each_test_sets(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The path reduction also reads the passwd home and the Hugging Face cache
+    # variables; without this, the machine's own values join the roots it cuts.
+    monkeypatch.setattr("mlx_model_doctor.redaction._pwd_home", lambda: None)
+    for name in ("HF_HOME", "HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "XDG_CACHE_HOME"):
+        monkeypatch.delenv(name, raising=False)
+
+
 # --- fakes -------------------------------------------------------------------------
 
 
@@ -983,7 +992,7 @@ def test_upstream_error_paths_are_reduced_to_their_file_names(
 ) -> None:
     # Bug: only the model directory is shortened, so another absolute path in the
     # upstream text (a cached module, a parent folder) reaches the report in full.
-    from mlx_model_doctor.checks.remote_code import reduce_absolute_paths
+    from mlx_model_doctor.redaction import redact_local_paths
 
     monkeypatch.setenv("HOME", "/nonexistent/home")
     text = (
@@ -991,7 +1000,7 @@ def test_upstream_error_paths_are_reduced_to_their_file_names(
         "see https://hf.co//Users/someone/models/m and https://hf.co/docs/hub."
     )
 
-    assert reduce_absolute_paths(text, model_dir=Path("/Users/someone/models/m")) == (
+    assert redact_local_paths(text, model_dirs=(Path("/Users/someone/models/m"),)) == (
         "No file at tokenization_x.py or 'x.json'; see https://hf.co/m and https://hf.co/docs/hub."
     )
 
@@ -1070,11 +1079,11 @@ def test_a_home_with_a_space_not_followed_by_more_of_the_name_keeps_no_part_of_i
     # before "?", "}", "...", or a full stop and a quote, is cut by the general rule to
     # its last part, the user name; or the percent-encoded home (as Path.as_uri()
     # writes it) is not cut at all; or a space is taken to continue the name.
-    from mlx_model_doctor.checks.remote_code import reduce_absolute_paths
+    from mlx_model_doctor.redaction import redact_local_paths
 
     monkeypatch.setenv("HOME", HOME_WITH_SPACE)
 
-    result = reduce_absolute_paths(text, model_dir=OTHER_MODEL_DIR)
+    result = redact_local_paths(text, model_dirs=(OTHER_MODEL_DIR,))
 
     assert result == reduced
     assert "John" not in result
@@ -1086,12 +1095,12 @@ def test_the_model_dir_under_home_is_still_cut_to_its_name_first(
 ) -> None:
     # Bug: the home is replaced before the model_dir cut, so the exact model_dir string
     # no longer matches and the hf.co// link keeps "~/models/m" instead of "m".
-    from mlx_model_doctor.checks.remote_code import reduce_absolute_paths
+    from mlx_model_doctor.redaction import redact_local_paths
 
     monkeypatch.setenv("HOME", HOME_WITH_SPACE)
     text = "see https://hf.co//Users/John Smith/models/m and /Users/John Smith/models/m/a.py"
 
-    result = reduce_absolute_paths(text, model_dir=Path("/Users/John Smith/models/m"))
+    result = redact_local_paths(text, model_dirs=(Path("/Users/John Smith/models/m"),))
 
     assert result == "see https://hf.co/m and a.py"
 
@@ -1101,12 +1110,12 @@ def test_a_percent_encoded_model_dir_in_a_url_is_cut_to_its_name(
 ) -> None:
     # Bug: only the plain model_dir is cut, so a URL that carries it percent-encoded
     # ("Alice%20SSD", as Path.as_uri() and the Hub client write a space) keeps it whole.
-    from mlx_model_doctor.checks.remote_code import reduce_absolute_paths
+    from mlx_model_doctor.redaction import redact_local_paths
 
     monkeypatch.setenv("HOME", "/nonexistent/home")
     text = "404 for url: https://huggingface.co//Volumes/Alice%20SSD/models/m"
 
-    result = reduce_absolute_paths(text, model_dir=Path("/Volumes/Alice SSD/models/m"))
+    result = redact_local_paths(text, model_dirs=(Path("/Volumes/Alice SSD/models/m"),))
 
     assert result == "404 for url: https://huggingface.co/m"
 
@@ -1117,7 +1126,7 @@ def test_an_unknown_home_skips_the_home_cut_and_still_reduces_other_paths(
     # Bug: Path.home() raises RuntimeError (no HOME and no passwd entry) inside the
     # smoke error handler, so the auto_map failure is replaced by "Could not determine
     # home directory." and the general reduction never runs.
-    from mlx_model_doctor.checks.remote_code import reduce_absolute_paths
+    from mlx_model_doctor.redaction import redact_local_paths
 
     def no_home(cls: type[Path]) -> Path:
         raise RuntimeError("Could not determine home directory.")
@@ -1125,7 +1134,7 @@ def test_an_unknown_home_skips_the_home_cut_and_still_reduces_other_paths(
     monkeypatch.setattr(Path, "home", classmethod(no_home))
     text = "No file at /Volumes/models/other/a.json or '/opt/cache/x.json'"
 
-    result = reduce_absolute_paths(text, model_dir=OTHER_MODEL_DIR)
+    result = redact_local_paths(text, model_dirs=(OTHER_MODEL_DIR,))
 
     assert result == "No file at a.json or 'x.json'"
 
@@ -1143,11 +1152,11 @@ def test_a_sibling_whose_name_starts_with_the_home_name_is_left_to_the_general_r
 ) -> None:
     # Bug: the home cut fires before any character (or before any "."), so another
     # user's folder "/Users/alice2" becomes "~2" and its path is never reduced.
-    from mlx_model_doctor.checks.remote_code import reduce_absolute_paths
+    from mlx_model_doctor.redaction import redact_local_paths
 
     monkeypatch.setenv("HOME", "/Users/alice")
 
-    assert reduce_absolute_paths(text, model_dir=OTHER_MODEL_DIR) == reduced
+    assert redact_local_paths(text, model_dirs=(OTHER_MODEL_DIR,)) == reduced
 
 
 OUTSIDE_HOME = [
@@ -1166,11 +1175,11 @@ def test_upstream_error_paths_outside_home_are_reduced_as_before(
 ) -> None:
     # Bug: the home replacement matches a longer name that only starts with the home
     # ("/Users/John Smithers"), or the general rule changes for paths outside home.
-    from mlx_model_doctor.checks.remote_code import reduce_absolute_paths
+    from mlx_model_doctor.redaction import redact_local_paths
 
     monkeypatch.setenv("HOME", HOME_WITH_SPACE)
 
-    assert reduce_absolute_paths(text, model_dir=OTHER_MODEL_DIR) == reduced
+    assert redact_local_paths(text, model_dirs=(OTHER_MODEL_DIR,)) == reduced
 
 
 SHORT_HOMES = [
@@ -1190,8 +1199,8 @@ def test_a_home_of_fewer_than_two_components_is_not_replaced(
 ) -> None:
     # Bug: a home of "/" turns every "/" before another "/" into "~" (URLs included),
     # and a one-component home is rewritten although it names no user.
-    from mlx_model_doctor.checks.remote_code import reduce_absolute_paths
+    from mlx_model_doctor.redaction import redact_local_paths
 
     monkeypatch.setenv("HOME", home)
 
-    assert reduce_absolute_paths(text, model_dir=OTHER_MODEL_DIR) == reduced
+    assert redact_local_paths(text, model_dirs=(OTHER_MODEL_DIR,)) == reduced

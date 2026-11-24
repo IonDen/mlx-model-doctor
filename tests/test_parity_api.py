@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+import mlx_model_doctor.api as api_module
 from mlx_model_doctor import (
     ParityOptions,
     ParityVerdict,
@@ -34,7 +35,7 @@ from mlx_model_doctor.parity.oracle import ROLE_BASE, ROLE_FUSED, ROLE_NOISE, RO
 from mlx_model_doctor.parity.orchestrator import WorkerOutcome
 from mlx_model_doctor.parity.report import render_parity_json, render_parity_text
 from mlx_model_doctor.parity.worker import WorkerSpec
-from tests.fakes import write_hf_cache_snapshot
+from tests.fakes import use_fake_home, write_hf_cache_snapshot
 from tests.parity_fakes import lora_tensor, safetensors_header_bytes, write_safetensors_file
 
 _F4 = struct.pack("<f", 1.0)
@@ -1104,3 +1105,104 @@ def test_clean_targets_pass_the_remote_code_check_and_run_the_workers(
 
     assert _remote_code_result(report).status == "pass"
     assert parity_exit_code(report) == 0
+
+
+# --- failure text keeps no local path ---------------------------------------------
+
+
+@dataclass(frozen=True)
+class _HomeRepos:
+    home: Path
+    base: Path
+    adapter: Path
+    fused: Path
+
+
+@pytest.fixture
+def spaced_home_repos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _HomeRepos:
+    """Base ``m``, fused ``m-fused`` and an adapter below a fake home's spaced folder.
+
+    The spaced "my models" folder keeps the home cut alone from shortening a model path:
+    without the model folders passed to the reduction, "~/my models/m" stays.
+    """
+    home = tmp_path / "Users" / "John Smith"
+    root = home / "my models"
+    use_fake_home(monkeypatch, home=str(home))
+    return _HomeRepos(
+        home=home,
+        base=_write_model_repo(root / "m", q_bytes=_F4 * 64),
+        adapter=_write_adapter(root / "adapter"),
+        fused=_write_model_repo(root / "m-fused", q_bytes=_F4_TWO * 64),
+    )
+
+
+def test_worker_error_reaches_the_report_without_local_paths(
+    spaced_home_repos: _HomeRepos,
+) -> None:
+    # Bug: worker stderr reaches worker_errors raw (home, site-packages, model paths);
+    # or reasons keeps the raw copy.
+    repos = spaced_home_repos
+    traceback_text = (
+        "Traceback (most recent call last):\n"
+        f'  File "{repos.home}/.venv/lib/python3.13/site-packages/mlx_lm/utils.py", line 5\n'
+        f"ValueError: refusing to load {repos.fused} next to {repos.base} "
+        f"and {repos.adapter}/adapters.safetensors"
+    )
+    launcher = FakeLauncher(
+        {
+            ROLE_BASE: _ok(ROLE_BASE, _BASE_AM),
+            ROLE_NOISE: _ok(ROLE_NOISE, _BASE_AM),
+            ROLE_REFERENCE: _ok(ROLE_REFERENCE, _ADAPTER_AM, adapter_applied=True),
+            ROLE_FUSED: WorkerOutcome(
+                role=ROLE_FUSED,
+                argmax=None,
+                adapter_applied=None,
+                peak_bytes=None,
+                status="error",
+                error=traceback_text,
+            ),
+        }
+    )
+
+    report = check_adapter_parity(
+        base=str(repos.base),
+        adapter=str(repos.adapter),
+        fused=str(repos.fused),
+        options=_opts(launcher),
+    )
+
+    expected = (
+        "Traceback (most recent call last):\n"
+        '  File "utils.py", line 5\n'
+        "ValueError: refusing to load m-fused next to m and adapters.safetensors"
+    )
+    assert report.worker_errors == {ROLE_FUSED: expected}
+    assert f"{ROLE_FUSED}: {expected}" in report.reasons
+    # Pin only: the failed fused worker leaves the verdict null, and a null verdict
+    # exits 2 whatever the worker-status rule says.
+    assert parity_exit_code(report) == 2
+
+
+def test_delta_map_error_reason_keeps_no_local_path(
+    spaced_home_repos: _HomeRepos, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: the delta-map byte-compare error is copied raw into reasons; or the base or
+    # the fused folder is left out of the model folders the reduction cuts.
+    repos = spaced_home_repos
+
+    def failing_delta_map(*_args: object, **_kwargs: object) -> object:
+        raise OSError(f"[Errno 5] {repos.base}/model.safetensors differs from {repos.fused}")
+
+    monkeypatch.setattr(api_module, "delta_map", failing_delta_map)
+
+    report = check_adapter_parity(
+        base=str(repos.base),
+        adapter=str(repos.adapter),
+        fused=str(repos.fused),
+        options=_opts(_pass_launcher()),
+    )
+
+    assert report.phase_outcomes["delta_map"] == "error"
+    assert (
+        "delta map could not compare tensor bytes: [Errno 5] model.safetensors differs from m-fused"
+    ) in report.reasons

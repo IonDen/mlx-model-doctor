@@ -242,3 +242,69 @@ def test_default_downloader_fetches_only_the_loader_and_adapter_files(
             ],
         }
     ]
+
+
+def test_default_downloader_failure_is_a_target_error_without_cache_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: a failing parity snapshot download escapes resolve_sources as a raw OSError
+    # (a Python traceback and exit 1, not a tool error), with the Hugging Face cache
+    # path and the user's home in its text.
+    import huggingface_hub
+
+    from mlx_model_doctor.errors import TargetError
+    from tests.fakes import use_fake_home
+
+    home = tmp_path / "Users" / "John Smith"
+    use_fake_home(monkeypatch, home=str(home))
+    lock = home / ".cache" / "huggingface" / "hub" / ".locks" / "models--o--n" / "a.lock"
+    error = OSError(f"No space left: '{lock}'")
+
+    def failing_snapshot_download(**_kwargs: object) -> str:
+        raise error
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", failing_snapshot_download)
+
+    with pytest.raises(TargetError) as exc_info:
+        resolve_sources("o/n", "o/adapter", "o/fused", allow_network=True)
+
+    assert str(exc_info.value) == (
+        "Could not download a snapshot of Hugging Face model o/n: No space left: 'a.lock'"
+    )
+    assert exc_info.value.target == "o/n"
+    assert exc_info.value.source == "hf"
+    assert exc_info.value.__cause__ is error
+
+
+def test_default_downloader_failure_that_is_not_an_os_error_is_a_target_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: the download handler catches only OSError, so a repo id the Hub rejects
+    # (HFValidationError, a ValueError) escapes raw with the user's home in its text.
+    import huggingface_hub
+    from huggingface_hub.errors import HFValidationError
+
+    from mlx_model_doctor.errors import TargetError
+    from tests.fakes import use_fake_home
+
+    assert issubclass(HFValidationError, ValueError)
+    assert not issubclass(HFValidationError, OSError)
+    home = tmp_path / "Users" / "John Smith"
+    use_fake_home(monkeypatch, home=str(home))
+    error = HFValidationError(f"Cannot have -- or .. in repo_id: '{home}/m..x/n'.")
+
+    def failing_snapshot_download(**_kwargs: object) -> str:
+        raise error
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", failing_snapshot_download)
+
+    with pytest.raises(TargetError) as exc_info:
+        resolve_sources("o/n", "o/adapter", "o/fused", allow_network=True)
+
+    assert str(exc_info.value) == (
+        "Could not download a snapshot of Hugging Face model o/n: "
+        "Cannot have -- or .. in repo_id: 'n'."
+    )
+    assert exc_info.value.target == "o/n"
+    assert exc_info.value.source == "hf"
+    assert exc_info.value.__cause__ is error

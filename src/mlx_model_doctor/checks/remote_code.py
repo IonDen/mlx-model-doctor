@@ -1,8 +1,6 @@
 """Refuse a model directory whose metadata names repository code for the loader to run."""
 
 import json
-import re
-import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -168,39 +166,6 @@ def describe_auto_map_load_failure(file: str) -> str:
         "called with remote code turned off, so that code was not run, and the load could "
         "not finish without it."
     )
-
-
-# An absolute path: an optional "~", then a "/" that does not continue a word, a URL,
-# another "/" or a "~", then at least two components. The match is replaced by its last
-# component.
-_ABSOLUTE_PATH = re.compile(r"(?<![\w:/.~])~?/+(?:[^\s/'\"]+/+)+([^\s/'\"]+)")
-
-# What blocks the home cut: a word character, a "-", or a "." followed by a word
-# character, which continue the user name into another folder ("/Users/alice2",
-# "/Users/alice-b", "/Users/alice.smith"). Anything else, or the end of the text, cuts.
-_HOME_END = r"(?![\w-]|\.\w)"
-
-
-def reduce_absolute_paths(text: str, *, model_dir: Path) -> str:
-    """Return ``text`` with ``model_dir`` and every other absolute path cut to its name.
-
-    ``model_dir`` itself is cut first, plain or percent-encoded, also where
-    transformers glues it to a URL (``https://hf.co//<path>``); a path below it is
-    left to the general rule. Then the home directory (of at least two components),
-    plain or percent-encoded, is written as ``~``, so a user name with a space, or one
-    inside a ``file://`` URL, is not kept. An unknown home skips that step.
-    """
-    own = text
-    for spelling in dict.fromkeys((str(model_dir), urllib.parse.quote(str(model_dir)))):
-        own = re.sub(re.escape(spelling) + "(?!/)", lambda _match: model_dir.name, own)
-    try:
-        home = Path.home()
-    except RuntimeError:
-        home = None
-    if home is not None and len(home.parts) >= 3:
-        for spelling in dict.fromkeys((str(home), urllib.parse.quote(str(home)))):
-            own = re.sub(re.escape(spelling) + _HOME_END, "~", own)
-    return _ABSOLUTE_PATH.sub(r"\1", own)
 
 
 class AutoMapLoadError(Exception):

@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from mlx_model_doctor.checks.base import ModelCheck
 from mlx_model_doctor.context import CheckContext
 from mlx_model_doctor.errors import ModelDoctorError
+from mlx_model_doctor.redaction import redact_local_paths, target_model_dirs
 from mlx_model_doctor.report import CheckResult
 
 
@@ -30,13 +31,14 @@ def run_checks(ctx: CheckContext, checks: Sequence[ModelCheck]) -> list[CheckRes
             details: dict[str, object] = {}
             if ctx.options.verbosity == "verbose":
                 details["traceback"] = traceback.format_exc()
+            reason = redact_local_paths(str(exc), model_dirs=target_model_dirs(ctx.target))
             results.append(
                 CheckResult(
                     check_id=_safe_check_id(check),
                     title=check.title,
                     status="fail",
                     severity="high",
-                    message=f"check crashed: {exc}",
+                    message=f"check crashed: {reason}",
                     details=details,
                 )
             )

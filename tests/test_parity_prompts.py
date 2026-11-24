@@ -18,6 +18,7 @@ from mlx_model_doctor.parity.context import TokenizerFingerprint, tokenizer_fing
 from mlx_model_doctor.parity.prompts import build_prompts_fixture
 from mlx_model_doctor.parity.report import ResolvedIdentity
 from mlx_model_doctor.parity.sources import ResolvedSources
+from tests.fakes import use_fake_home
 from tests.parity_fakes import make_import_module
 
 
@@ -367,3 +368,30 @@ def test_a_base_that_resolves_to_a_file_is_refused_before_the_tokenizer_load(
         "run. Pass an existing model directory, then run again."
     )
     assert calls == []
+
+
+def test_a_tokenizer_load_error_names_only_the_base_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Bug: the --prompts tool error (exit 2) prints the base path with the user's home;
+    # or the reduced error is no longer a ValueError, which the CLI turns into exit 2.
+    home = tmp_path / "Users" / "John Smith"
+    base_dir = home / "my models" / "base"
+    base_dir.mkdir(parents=True)
+    use_fake_home(monkeypatch, home=str(home))
+    prompts_path = tmp_path / "prompts.json"
+    _write_prompts(prompts_path, [{"prompt": "hi", "completion": "there"}])
+
+    def loader(path: str) -> _FakeTokenizer:
+        raise ValueError(f"Unrecognized model in {path}. Check {path}/config.json")
+
+    with pytest.raises(ValueError, match=r"^Unrecognized model in ") as exc_info:
+        build_prompts_fixture(
+            str(base_dir),
+            str(prompts_path),
+            tokenizer_loader=loader,
+            fingerprint_fn=lambda _path: _fp(),
+        )
+
+    assert exc_info.type is ValueError
+    assert str(exc_info.value) == "Unrecognized model in base. Check config.json"
