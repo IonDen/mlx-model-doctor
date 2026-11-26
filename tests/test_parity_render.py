@@ -7,14 +7,20 @@ surfaced, or a delta-map tensor not named.
 """
 
 import json
+from typing import Literal
+
+import pytest
 
 from mlx_model_doctor.parity.deltamap import TensorDelta
 from mlx_model_doctor.parity.oracle import ParityVerdict
 from mlx_model_doctor.parity.report import (
+    ParityReport,
+    ResolvedIdentity,
     render_parity_json,
     render_parity_markdown,
     render_parity_text,
 )
+from tests.fakes import use_fake_home
 from tests.parity_fakes import build_parity_report, embedded_doctor_report, parity_check_result
 
 
@@ -264,3 +270,88 @@ def test_markdown_omits_delta_map_section_when_empty() -> None:
     report = build_parity_report(delta_map=())
     markdown = render_parity_markdown(report)
     assert "## Delta map" not in markdown
+
+
+# Header rows: an absolute or "~" adapter/fused ref is shown by its folder name; a
+# relative ref or a repo id is shown as typed. JSON keeps original_ref as typed.
+HOME_YOU = "/Users/you"
+
+
+def _identity(ref: str, *, source: Literal["local", "hf"] = "local") -> ResolvedIdentity:
+    # path ends in a different folder name than original_ref, so a header built from
+    # identity.path instead of original_ref shows "resolved-..." and fails the P rows.
+    return ResolvedIdentity(
+        path=f"/snapshots/resolved-{ref.rsplit('/', 1)[-1]}", original_ref=ref, source=source
+    )
+
+
+def _header_report(
+    adapter: str, fused: str, *, source: Literal["local", "hf"] = "local"
+) -> ParityReport:
+    return build_parity_report(
+        adapter=_identity(adapter, source=source), fused=_identity(fused, source=source)
+    )
+
+
+def test_text_header_names_absolute_refs_by_their_folder(monkeypatch: pytest.MonkeyPatch) -> None:
+    # P1. Bug: the header prints original_ref raw, so the home folder reaches the text.
+    use_fake_home(monkeypatch, home=HOME_YOU)
+    report = _header_report("/Users/you/lora/wikisql", "/Users/you/models/qwen-fused")
+    assert render_parity_text(report).splitlines()[0] == (
+        "MLX Model Doctor (parity): wikisql -> qwen-fused"
+    )
+
+
+def test_markdown_header_names_absolute_refs_by_their_folder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # P2. Bug: the Markdown header keeps original_ref raw while the text header is fixed.
+    use_fake_home(monkeypatch, home=HOME_YOU)
+    report = _header_report("/Users/you/lora/wikisql", "/Users/you/models/qwen-fused")
+    assert render_parity_markdown(report).splitlines()[0] == (
+        "# MLX Model Doctor (parity): wikisql vs qwen-fused"
+    )
+
+
+def test_text_header_names_an_unexpanded_home_ref_by_its_folder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # P6. Bug: only refs starting with "/" are shortened, so "~/lora/wikisql" stays whole.
+    use_fake_home(monkeypatch, home=HOME_YOU)
+    report = _header_report("~/lora/wikisql", "/Users/you/models/qwen-fused")
+    assert render_parity_text(report).splitlines()[0] == (
+        "MLX Model Doctor (parity): wikisql -> qwen-fused"
+    )
+
+
+def test_text_header_shows_same_named_folders_as_the_same_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # P7 (accepted ambiguity): two folders with one name read the same; the header shows
+    # the folder name only, never a parent folder.
+    use_fake_home(monkeypatch, home=HOME_YOU)
+    report = _header_report("/Users/you/run1/out", "/Users/you/run2/out")
+    assert render_parity_text(report).splitlines()[0] == "MLX Model Doctor (parity): out -> out"
+
+
+def test_text_and_markdown_headers_keep_relative_refs_as_typed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # P3. Bug: every ref is cut to its folder name, so "./wikisql-lora" loses its "./".
+    use_fake_home(monkeypatch, home=HOME_YOU)
+    report = _header_report("./wikisql-lora", "./qwen-fused-fp16")
+    assert render_parity_text(report).splitlines()[0] == (
+        "MLX Model Doctor (parity): ./wikisql-lora -> ./qwen-fused-fp16"
+    )
+    assert render_parity_markdown(report).splitlines()[0] == (
+        "# MLX Model Doctor (parity): ./wikisql-lora vs ./qwen-fused-fp16"
+    )
+
+
+def test_text_header_keeps_repo_id_refs_as_typed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # P4. Bug: a repo id is treated as a path, so "mlx-community/x" prints as "x".
+    use_fake_home(monkeypatch, home=HOME_YOU)
+    report = _header_report("mlx-community/x", "mlx-community/x-fused", source="hf")
+    assert render_parity_text(report).splitlines()[0] == (
+        "MLX Model Doctor (parity): mlx-community/x -> mlx-community/x-fused"
+    )

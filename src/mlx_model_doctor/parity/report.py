@@ -21,6 +21,7 @@ from mlx_model_doctor.parity.context import TokenizerFingerprint
 from mlx_model_doctor.parity.deltamap import TensorDelta, TensorDeltaKlass, aggregate_delta_summary
 from mlx_model_doctor.parity.fixtures import FixtureRef
 from mlx_model_doctor.parity.oracle import ParityVerdict
+from mlx_model_doctor.redaction import identity_label
 from mlx_model_doctor.report import CheckResult, DoctorReport, render_json
 
 SourceKind = Literal["local", "hf"]
@@ -346,6 +347,17 @@ def _delta_map_lines(report: ParityReport) -> list[str]:
     return lines
 
 
+def _display_ref(identity: ResolvedIdentity) -> str:
+    """Return how a parity header names a model.
+
+    An absolute or ``~`` ref shows its folder's label; any other ref (a relative path
+    or a repo id) shows as typed.
+    """
+    if identity.original_ref.startswith(("/", "~")):
+        return identity_label(identity.original_ref)
+    return identity.original_ref
+
+
 def render_parity_text(report: ParityReport) -> str:
     """Render a ParityReport as plain text.
 
@@ -356,7 +368,7 @@ def render_parity_text(report: ParityReport) -> str:
     delta map plus the notable tensors within it.
     """
     lines = [
-        f"MLX Model Doctor (parity): {report.adapter.original_ref} -> {report.fused.original_ref}",
+        f"MLX Model Doctor (parity): {_display_ref(report.adapter)} -> {_display_ref(report.fused)}",
         "",
         f"Verdict: {_verdict_label(report.verdict)}",
     ]
@@ -393,8 +405,8 @@ def render_parity_text(report: ParityReport) -> str:
 def render_parity_markdown(report: ParityReport) -> str:
     """Render a ParityReport as Markdown, mirroring ``render_parity_text``'s content."""
     lines = [
-        f"# MLX Model Doctor (parity): {report.adapter.original_ref} "
-        f"vs {report.fused.original_ref}",
+        f"# MLX Model Doctor (parity): {_display_ref(report.adapter)} "
+        f"vs {_display_ref(report.fused)}",
         "",
         f"**Verdict:** {_verdict_label(report.verdict)}",
         "",

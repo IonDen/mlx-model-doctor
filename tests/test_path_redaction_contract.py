@@ -8,9 +8,10 @@ the folder or file that failed must still be named. The ``my models`` folder is
 what makes the folder name depend on the caller passing its model folders: without
 them the home cut leaves ``~/my models/<name>``, which the exact-name asserts reject.
 
-Identity fields keep the full path on purpose and are pinned here, so a change to
-them is a visible decision: the ``check`` header and JSON ``target`` hold the
-resolved model path, and parity ``base``/``adapter``/``fused`` ``path`` hold the
+Identity fields are pinned here, so a change to them is a visible decision: the
+``check`` text, Markdown and GitHub headers show the model's short label with its
+kind (``tiny-model (local folder)``), JSON ``target`` keeps the resolved model
+path, and parity ``base``/``adapter``/``fused`` ``path`` hold the
 pinned path every worker loads. That is why the home check never runs over a
 whole report, only over the failure text each test extracts.
 """
@@ -182,15 +183,18 @@ def test_check_smoke_failure_renders_short_paths_in_every_format(
     resolved = str(model.resolve())
 
     assert code == 1
-    # S13 pin: the report identity keeps the resolved path (a decision, not a leak).
+    # S13 pin: the human headers show the label and its kind; JSON target keeps the
+    # resolved path on purpose (it is not a leak).
     if fmt == "text":
-        assert output.splitlines()[0] == f"MLX Model Doctor: {resolved}"
+        assert output.splitlines()[0] == "MLX Model Doctor: tiny-model (local folder)"
     elif fmt == "markdown":
-        assert output.splitlines()[0] == f"# MLX Model Doctor: {resolved}"
+        assert output.splitlines()[0] == "# MLX Model Doctor: tiny-model (local folder)"
     elif fmt == "json":
         assert json.loads(output)["target"] == resolved
     else:
-        assert output.splitlines()[-1].startswith(f"::notice title=mlx-model-doctor::{resolved} ")
+        assert output.splitlines()[-1].startswith(
+            "::notice title=mlx-model-doctor::tiny-model (local folder) "
+        )
     failure = smoke_failure_text(output, fmt)
     assert "Smoke generation failed: No safetensors found in " in failure
     assert_no_home(failure, home)
@@ -413,11 +417,11 @@ def test_parity_worker_error_renders_short_paths_in_every_format(
     failure = parity_failure_text(report, fmt)
 
     assert parity_exit_code(report) == 2
-    # The typed fused path stays in the header (original_ref is what the user typed).
+    # The human header shows the fused folder's name; JSON keeps the typed path.
     if fmt == "text":
-        assert render_parity_text(report).splitlines()[0].endswith(f"-> {repos.fused}")
+        assert render_parity_text(report).splitlines()[0].endswith("-> qwen-base-fused")
     elif fmt == "markdown":
-        assert render_parity_markdown(report).splitlines()[0].endswith(f"vs {repos.fused}")
+        assert render_parity_markdown(report).splitlines()[0].endswith("vs qwen-base-fused")
     else:
         assert json.loads(render_parity_json(report))["fused"]["original_ref"] == str(repos.fused)
     assert "utils.py" in failure
