@@ -161,10 +161,11 @@ def build_prompts_fixture(
     refusal = find_remote_code(Path(local_base_path), keys=MLX_LM_KEYS)
     if refusal is not None:
         outcome = "that code" if refusal.key is not None else "repository code"
-        raise ModelDoctorError(
+        message = (
             f"{describe_refusal(refusal, subject='the base repository')} The load was "
             f"refused, so {outcome} was not run. {refusal_remediation(refusal)}"
         )
+        raise ModelDoctorError(redact_local_paths(message, model_dirs=(Path(local_base_path),)))
     try:
         tokenizer = tokenizer_loader(local_base_path)
     except ValueError as exc:
@@ -202,13 +203,15 @@ def _read_prompt_pairs(prompts_path: str) -> list[tuple[str, str]]:
     try:
         raw_text = path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise ModelDoctorError(f"could not read prompts file {prompts_path!r}: {exc}") from exc
+        raise _prompts_file_error(f"could not read prompts file {prompts_path!r}: {exc}") from exc
     try:
         parsed: object = json.loads(raw_text)
     except json.JSONDecodeError as exc:
-        raise ModelDoctorError(f"prompts file {prompts_path!r} is not valid JSON: {exc}") from exc
+        raise _prompts_file_error(
+            f"prompts file {prompts_path!r} is not valid JSON: {exc}"
+        ) from exc
     if not isinstance(parsed, list) or not parsed:
-        raise ModelDoctorError(
+        raise _prompts_file_error(
             f"prompts file {prompts_path!r} must be a non-empty JSON array of "
             '{"prompt": <str>, "completion": <str>} objects'
         )
@@ -217,9 +220,14 @@ def _read_prompt_pairs(prompts_path: str) -> list[tuple[str, str]]:
         prompt = item.get("prompt") if isinstance(item, dict) else None
         completion = item.get("completion") if isinstance(item, dict) else None
         if not isinstance(prompt, str) or not isinstance(completion, str):
-            raise ModelDoctorError(
+            raise _prompts_file_error(
                 f"prompts file {prompts_path!r}: item {index} must be an object with "
                 'string "prompt" and "completion" fields'
             )
         pairs.append((prompt, completion))
     return pairs
+
+
+def _prompts_file_error(message: str) -> ModelDoctorError:
+    """Return the error for an unusable ``--prompts`` file, naming the file, not its path."""
+    return ModelDoctorError(redact_local_paths(message))

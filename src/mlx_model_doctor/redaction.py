@@ -73,6 +73,8 @@ _NAME_END = r"(?![\w-]|\.\w)"
 # A sibling folder that starts with a root's name: one of "@ + % = # $ ~", more
 # characters, then "/" ("/Users/alice@work/..."). The root and that run become "/".
 _SIBLING_TAIL = r"(?P<sibling>[@+%=#$~][^\s/]+/)?"
+# The same sibling, refused: the root does not match there, so a shorter root may.
+_NOT_SIBLING = r"(?![@+%=#$~][^\s/]+/)"
 
 # A Hugging Face cache snapshot, wherever it appears: a prefix ("~", a root token, or a
 # "/" that does not continue a word or a "://"), any run of characters with no
@@ -118,6 +120,15 @@ def target_model_dirs(target: "ModelTarget") -> tuple[Path, ...]:
     return ()
 
 
+def redact_roots(text: str) -> str:
+    """Return ``text`` with the home as ``~`` and the Hugging Face cache roots as tokens.
+
+    Nothing else changes: a path outside these roots keeps every component, and a
+    folder beside a root ("/Users/alice+old/...") is left whole.
+    """
+    return _substitute(text, _root_tokens(), lambda _match, token: token, tail=_NOT_SIBLING)
+
+
 def _pwd_home() -> str | None:
     """Return the passwd home of the current user, or ``None`` when there is none."""
     try:
@@ -137,7 +148,7 @@ def _cut_model_dirs(text: str, model_dirs: Sequence[Path | str]) -> str:
     return _substitute(text, labels, _placed)
 
 
-def _cut_roots(text: str) -> str:
+def _root_tokens() -> dict[str, str]:
     tokens: dict[str, str] = {}
     for candidates, token in (
         (_hub_cache_candidates(), HF_HUB_CACHE_TOKEN),
@@ -146,9 +157,13 @@ def _cut_roots(text: str) -> str:
     ):
         for spelling in _spellings(candidates, min_parts=3):
             tokens.setdefault(spelling, token)
+    return tokens
+
+
+def _cut_roots(text: str) -> str:
     return _substitute(
         text,
-        tokens,
+        _root_tokens(),
         lambda match, token: "/" if match["sibling"] else token,
         tail=_SIBLING_TAIL,
     )

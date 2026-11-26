@@ -32,6 +32,7 @@ from mlx_model_doctor.parity.report import (
     render_parity_text,
 )
 from mlx_model_doctor.plugins import BUILTIN_PLUGINS
+from mlx_model_doctor.redaction import redact_roots
 from mlx_model_doctor.report import (
     DoctorReport,
     github_output_lines,
@@ -455,5 +456,5 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return cast("Command", func)(args)
     except ModelDoctorError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        print(f"Error: {redact_roots(str(exc))}", file=sys.stderr)
         return exit_code_for_error(exc)
