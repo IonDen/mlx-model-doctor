@@ -558,6 +558,552 @@ def test_a_home_becomes_a_tilde(
     assert_none_of(names, result)
 
 
+SHARED_FOLDERS = ("Client", "Work", "Shared")
+
+# A quoted absolute path runs to its close quote, spaces included, and becomes its last
+# part when it holds a space and at least two parts.
+QUOTED_ROWS = [
+    pytest.param(
+        NO_HOME,
+        "No such file or directory: '/Users/Shared/Client Work/app/x.py'",
+        "No such file or directory: 'x.py'",
+        SHARED_FOLDERS,
+        id="Q1-a-quoted-spaced-folder-under-users-is-cut-to-the-file",
+    ),
+    pytest.param(
+        NO_HOME,
+        "[Errno 2] No such file or directory: '/opt/My Models/m/a.json'",
+        "[Errno 2] No such file or directory: 'a.json'",
+        ("My", "Models"),
+        id="Q2-a-quoted-spaced-folder-anywhere-is-cut-to-the-file",
+    ),
+    pytest.param(
+        NO_HOME,
+        "cannot open '/Volumes/Alice SSD/venvs/x.py'",
+        "cannot open 'x.py'",
+        ALICE_SSD,
+        id="Q3-a-quoted-spaced-volume-is-cut-to-the-file",
+    ),
+    pytest.param(
+        HOME_YOU,
+        "No such file or directory: '/Users/you/Client Work/app/x.py'",
+        "No such file or directory: 'x.py'",
+        ("you", "Client"),
+        id="Q4-a-quoted-spaced-folder-below-the-home-loses-the-tilde-too",
+    ),
+    pytest.param(
+        NO_HOME,
+        "'/Volumes/Alice SSD/venvs/x.py' is not a file; check the path",
+        "'x.py' is not a file; check the path",
+        ALICE_SSD,
+        id="Q5-prose-after-the-close-quote-is-kept",
+    ),
+    pytest.param(
+        NO_HOME,
+        '"/Users/Shared/Bob\'s Files/x.py" not found',
+        '"x.py" not found',
+        ("Bob", "Files"),
+        id="Q6-a-double-quoted-path-holding-an-apostrophe-closes-on-the-double-quote",
+    ),
+    pytest.param(
+        NO_HOME,
+        "'/Users/Shared/Bob's Files/x.py'",
+        "'x.py'",
+        ("Bob", "Files"),
+        id="Q7-a-quote-followed-by-a-word-character-is-not-the-close",
+    ),
+    pytest.param(
+        NO_HOME,
+        "bad value '/opt/a and b/c'",
+        "bad value 'c'",
+        (),
+        id="Q8-accepted-false-cut-of-quoted-prose-with-slashes",
+    ),
+    pytest.param(
+        NO_HOME,
+        "cannot open '/tmp'",
+        "cannot open '/tmp'",
+        (),
+        id="Q9-pin-a-quoted-one-part-path-with-no-space-stays",
+    ),
+    pytest.param(
+        NO_HOME,
+        "cannot open '/My Drive'",
+        "cannot open '/My Drive'",
+        (),
+        id="Q10-pin-a-quoted-one-part-spaced-path-stays",
+    ),
+    pytest.param(
+        NO_HOME,
+        "No safetensors found in '/Volumes/Alice SSD'",
+        "No safetensors found in 'Alice SSD'",
+        (),
+        id="L3-pin-a-quoted-path-ending-at-a-volume-shows-the-volume-name",
+    ),
+    pytest.param(
+        NO_HOME,
+        "'name:/Volumes/Alice SSD/m/a.json'",
+        "'name:/Volumes/Alice SSD/m/a.json'",
+        (),
+        id="L6-pin-a-path-glued-after-a-colon-inside-quotes-is-not-a-start",
+    ),
+    pytest.param(
+        NO_HOME,
+        "cannot open '~/Client Work'",
+        "cannot open '~/Client Work'",
+        (),
+        id="pin-a-tilde-prefix-is-not-a-part-of-a-quoted-path",
+    ),
+    # Bug: the quoted pass is skipped, so the spaced pass sees no file tail after the
+    # closing quote and the general rule leaves the folder name "My Models/".
+    pytest.param(
+        NO_HOME,
+        "No safetensors in '/opt/My Models/m'",
+        "No safetensors in 'm'",
+        ("My", "Models"),
+        id="pin-a-quoted-spaced-path-with-no-file-tail-is-cut-by-the-quoted-pass",
+    ),
+    # Bug: the close quote is searched past the line end, so the quote on the next
+    # line closes this one and the text between is cut away.
+    pytest.param(
+        NO_HOME,
+        "bad '/opt/a b\nnext 'c/d' end",
+        "bad 'a b\nnext 'c/d' end",
+        ("opt",),
+        id="pin-a-quoted-path-never-closes-on-a-later-line",
+    ),
+]
+
+
+@pytest.mark.parametrize(("home", "text", "expected", "names"), QUOTED_ROWS)
+def test_a_quoted_path_with_a_space_becomes_its_last_part(
+    home: str,
+    text: str,
+    expected: str,
+    names: tuple[str, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    use_fake_home(monkeypatch, home=home)
+
+    result = redact_local_paths(text)
+
+    assert result == expected
+    assert_none_of(names, result)
+
+
+# Unquoted, a run of up to four single-spaced words closed by "/" is one folder name
+# when no word before a space ends a sentence, and it sits directly under "/Users/" or
+# "/Volumes/" or a folder and a file follow it. Anything else ends the path at the space.
+SPACED_ROWS = [
+    pytest.param(
+        NO_HOME,
+        "failed to import /Users/Shared/Client Work/app/x.py",
+        "failed to import x.py",
+        ("Client", "Work"),
+        id="U1-a-spaced-folder-with-a-folder-and-a-file-below-is-cut-to-the-file",
+    ),
+    pytest.param(
+        NO_HOME,
+        "see /opt/My Models/m/a.json",
+        "see a.json",
+        ("My", "Models"),
+        id="U2-a-spaced-folder-anywhere-with-a-file-tail-is-cut",
+    ),
+    pytest.param(
+        NO_HOME,
+        "load /Volumes/Alice SSD/venvs/x.py",
+        "load x.py",
+        ALICE_SSD,
+        id="U3-a-spaced-volume-name-is-cut",
+    ),
+    pytest.param(
+        HOME_YOU,
+        "import /Users/you/Client Work/app/x.py",
+        "import x.py",
+        ("you", "Client"),
+        id="U4-a-spaced-folder-below-the-home-loses-the-tilde-too",
+    ),
+    pytest.param(
+        NO_HOME,
+        "could not read /Volumes/Alice SSD/venvs/x.py because it is locked",
+        "could not read x.py because it is locked",
+        ALICE_SSD,
+        id="U5-prose-after-the-file-is-kept",
+    ),
+    pytest.param(
+        NO_HOME,
+        "/Volumes/My Big Backup Drive/m/a.json",
+        "a.json",
+        ("Backup", "Drive"),
+        id="U7-a-four-word-volume-name-is-cut",
+    ),
+    pytest.param(
+        NO_HOME,
+        "on /Volumes/SSD and/or the cache",
+        "on or the cache",
+        (),
+        id="U11-accepted-false-cut-of-prose-after-a-volume",
+    ),
+    pytest.param(
+        NO_HOME,
+        "copied /tmp/out to models/org/name.json",
+        "copied name.json",
+        (),
+        id="U12-accepted-false-cut-of-a-two-part-file-tail-after-prose",
+    ),
+    pytest.param(
+        NO_HOME,
+        "in /opt/x for mlx-community/Qwen/config.json",
+        "in config.json",
+        (),
+        id="D1-accepted-false-cut-of-a-repo-file-after-prose",
+    ),
+    # Accepted false cut: a full stop after a relative file ends the sentence, yet the
+    # file still reads as the tail of the path before it, so the words between go too.
+    # Bug: "." is dropped from the marks allowed after the extension.
+    pytest.param(
+        NO_HOME,
+        "Copied /opt/x to models/m/config.json.",
+        "Copied config.json.",
+        (),
+        id="accepted-false-cut-of-a-relative-file-that-ends-a-sentence",
+    ),
+    pytest.param(
+        NO_HOME,
+        "in /opt/x for mlx-community/Qwen2.5-0.5B",
+        "in x for mlx-community/Qwen2.5-0.5B",
+        (),
+        id="U9-pin-a-repo-id-after-prose-is-not-swallowed",
+    ),
+    pytest.param(
+        NO_HOME,
+        "in /opt/m and/or the cache",
+        "in m and/or the cache",
+        (),
+        id="U10-pin-prose-after-a-folder-outside-the-anchors-is-kept",
+    ),
+    pytest.param(
+        HOME_YOU,
+        "No safetensors found in /Users/you/models for mlx-community/Qwen",
+        "No safetensors found in ~/models for mlx-community/Qwen",
+        (),
+        id="U19-pin-the-home-is-not-an-anchor-so-a-repo-id-after-it-is-kept",
+    ),
+    # Bug: a word ending in "." before a space joins a spaced folder, so "x. See docs/"
+    # runs on to the file and the sentence is lost.
+    pytest.param(
+        NO_HOME,
+        "in /opt/x. See docs/a/b.md",
+        "in x. See docs/a/b.md",
+        (),
+        id="U13-pin-a-word-that-ends-a-sentence-does-not-join-a-folder",
+    ),
+    # Bug: the home is cut after the spaced pass, so "John Smith and/" joins under
+    # "/Users/" and the prose up to "or" is lost.
+    pytest.param(
+        HOME,
+        "cwd is /Users/John Smith and/or /tmp",
+        "cwd is ~ and/or /tmp",
+        JOHN,
+        id="U18-pin-the-home-is-cut-before-the-spaced-pass",
+    ),
+    # Bug: the file-extension check is dropped, so the repo's "main" reads as a file.
+    pytest.param(
+        NO_HOME,
+        "in /opt/x for mlx-community/Qwen/main",
+        "in x for mlx-community/Qwen/main",
+        (),
+        id="pin-a-two-part-tail-without-an-extension-is-not-a-file",
+    ),
+    # Bug: an extension may start with a digit, so "Qwen2.5-0.5B" reads as a file. The
+    # tail has two parts, so only the letter rule decides this row.
+    pytest.param(
+        NO_HOME,
+        "in /opt/x for mlx-community/q4/Qwen2.5-0.5B",
+        "in x for mlx-community/q4/Qwen2.5-0.5B",
+        (),
+        id="pin-an-extension-starts-with-a-letter",
+    ),
+    # Bug: "/Users/" is not an anchor, so an account name with a space ends the path
+    # at its space and the general rule leaves "John Smithers/models/m".
+    pytest.param(
+        NO_HOME,
+        "No safetensors found in /Users/John Smithers/models/m",
+        "No safetensors found in m",
+        ("John", "Smithers"),
+        id="pin-a-spaced-account-name-under-users-is-cut",
+    ),
+    # Bug: the file tail may have no folder, so the prose "x for org/" reads as a
+    # spaced folder over "name.json" and the path and prose are cut to the file.
+    pytest.param(
+        NO_HOME,
+        "in /opt/x for org/name.json",
+        "in x for org/name.json",
+        ("opt",),
+        id="pin-a-file-tail-needs-a-folder-before-the-file",
+    ),
+    # Bug: only "." ends a sentence, so "m: see docs/" reads as a spaced folder and
+    # the path and the advice are cut to "setup.md".
+    pytest.param(
+        NO_HOME,
+        "Could not load /opt/models/m: see docs/guide/setup.md",
+        "Could not load m: see docs/guide/setup.md",
+        ("opt", "models"),
+        id="pin-a-colon-before-a-space-ends-a-sentence-too",
+    ),
+    # Bug: the extension must end the name, so punctuation after the file hides it and
+    # the spaced folder stays.
+    pytest.param(
+        NO_HOME,
+        "cannot open /opt/My Models/m/a.json: Permission denied",
+        "cannot open a.json: Permission denied",
+        ("My", "Models"),
+        id="a-colon-after-the-file-keeps-the-cut-and-the-reason",
+    ),
+    pytest.param(
+        NO_HOME,
+        "see /opt/My Models/m/a.json.",
+        "see a.json.",
+        ("My", "Models"),
+        id="a-full-stop-after-the-file-keeps-the-cut",
+    ),
+    pytest.param(
+        NO_HOME,
+        "(see /opt/My Models/m/a.json)",
+        "(see a.json)",
+        ("My", "Models"),
+        id="a-closing-bracket-after-the-file-keeps-the-cut",
+    ),
+    pytest.param(
+        NO_HOME,
+        "see /opt/My Models/m/a.json, then retry",
+        "see a.json, then retry",
+        ("My", "Models"),
+        id="a-comma-after-the-file-keeps-the-cut",
+    ),
+    # Bug: the mark is dropped from the marks allowed after the extension, so the file
+    # no longer reads as a file and the spaced folder stays.
+    pytest.param(
+        NO_HOME,
+        "see /opt/My Models/m/a.json; then retry",
+        "see a.json; then retry",
+        ("My", "Models"),
+        id="a-semicolon-after-the-file-keeps-the-cut",
+    ),
+    pytest.param(
+        NO_HOME,
+        "see /opt/My Models/m/a.json! then retry",
+        "see a.json! then retry",
+        ("My", "Models"),
+        id="an-exclamation-mark-after-the-file-keeps-the-cut",
+    ),
+    pytest.param(
+        NO_HOME,
+        "see /opt/My Models/m/a.json? then retry",
+        "see a.json? then retry",
+        ("My", "Models"),
+        id="a-question-mark-after-the-file-keeps-the-cut",
+    ),
+    pytest.param(
+        NO_HOME,
+        "see /opt/My Models/m/a.json] then retry",
+        "see a.json] then retry",
+        ("My", "Models"),
+        id="a-closing-square-bracket-after-the-file-keeps-the-cut",
+    ),
+    # Bug: an anchored path that ends in "/" has no last part, so nothing is cut and
+    # the volume or user name shows.
+    pytest.param(
+        NO_HOME,
+        "see /Volumes/Alice SSD/models/",
+        "see models/",
+        ALICE_SSD,
+        id="an-anchored-volume-path-ending-in-a-slash-is-cut-to-its-last-folder",
+    ),
+    pytest.param(
+        NO_HOME,
+        "see /Users/John Smith/models/",
+        "see models/",
+        JOHN,
+        id="an-anchored-user-path-ending-in-a-slash-is-cut-to-its-last-folder",
+    ),
+    # The general rule keeps the trailing slash of a folder path; the anchored rows
+    # above keep it the same way.
+    pytest.param(
+        NO_HOME,
+        "see /opt/models/",
+        "see models/",
+        ("opt",),
+        id="pin-a-plain-path-ending-in-a-slash-keeps-the-slash",
+    ),
+    # Bug: a URL scheme reads as prose inside a spaced folder, so the path joins the
+    # URL and both are cut to the URL's file.
+    pytest.param(
+        NO_HOME,
+        "from /opt/x to https://huggingface.co/org/name/resolve/main/config.json",
+        "from x to https://huggingface.co/org/name/resolve/main/config.json",
+        ("opt",),
+        id="a-url-after-a-path-is-kept-whole",
+    ),
+    # Bug: any ":/" reads as a URL scheme, so a colon that starts a second path (a
+    # search path or a mount) ends the volume name and the name shows.
+    pytest.param(
+        NO_HOME,
+        "/Volumes/Alice SSD:/usr/bin",
+        "bin",
+        ALICE_SSD,
+        id="a-colon-and-slash-that-is-no-url-scheme-keeps-the-cut",
+    ),
+    # The limits below are pinned at today's output; a change to any is a decision.
+    # Bug: the word bound is raised to five, so a 5-word volume name is cut.
+    pytest.param(
+        NO_HOME,
+        "/Volumes/My Very Big Backup Drive/m/a.json",
+        "My Very Big Backup Drive/m/a.json",
+        (),
+        id="L1-limit-a-five-word-volume-name-stays",
+    ),
+    # Bug: the word bound is raised to six, so a 6-word volume name is cut. With L1
+    # this shows the limit is five or more words, not five alone.
+    pytest.param(
+        NO_HOME,
+        "/Volumes/My Very Big Old Backup Drive/m/a.json",
+        "My Very Big Old Backup Drive/m/a.json",
+        (),
+        id="limit-a-six-word-volume-name-stays",
+    ),
+    # Limit: a file whose name has no extension starting with a letter is not a file
+    # tail, so the spaced folder stays. Bug: the extension check is dropped.
+    pytest.param(
+        NO_HOME,
+        "see /opt/My Models/m/LICENSE",
+        "see My Models/m/LICENSE",
+        (),
+        id="limit-a-spaced-folder-over-a-file-with-no-extension-stays",
+    ),
+    # Bug: an extension may start with a digit, so "weights.7z" reads as a file.
+    pytest.param(
+        NO_HOME,
+        "see /opt/My Models/m/weights.7z",
+        "see My Models/m/weights.7z",
+        (),
+        id="limit-a-spaced-folder-over-a-file-with-a-digit-led-extension-stays",
+    ),
+    # Limit: a name holding ". " reads as the end of a sentence even under an anchor,
+    # so the path ends at the space. Bug: "." no longer ends a sentence.
+    pytest.param(
+        NO_HOME,
+        "see /Volumes/Dr. Smith/venvs/x.py",
+        "see Dr. Smith/venvs/x.py",
+        (),
+        id="limit-an-anchored-name-holding-a-full-stop-and-a-space-stays",
+    ),
+    # Limit: the same holds under "/Users/", so an account name holding ". " stays.
+    pytest.param(
+        NO_HOME,
+        "see /Users/J. Smith/models/m/config.json",
+        "see J. Smith/models/m/config.json",
+        (),
+        id="limit-an-account-name-holding-a-full-stop-and-a-space-stays",
+    ),
+    # Limit: a file directly in a spaced folder outside the anchors has no folder
+    # between them, so the spaced folder stays. Bug: the file tail needs no folder.
+    pytest.param(
+        NO_HOME,
+        "see /opt/My Models/a.json",
+        "see My Models/a.json",
+        (),
+        id="limit-a-file-directly-in-an-unanchored-spaced-folder-stays",
+    ),
+    # Bug: every folder counts as an anchor, so a spaced folder with no file tail joins.
+    pytest.param(
+        NO_HOME,
+        "No safetensors found in /opt/My Models/m and the cache is empty",
+        "No safetensors found in My Models/m and the cache is empty",
+        (),
+        id="L2-limit-an-unanchored-spaced-folder-with-no-file-tail-stays",
+    ),
+    # Bug: a spaced run may end the path, so the volume name itself is cut away.
+    pytest.param(
+        NO_HOME,
+        "No safetensors found in /Volumes/Alice SSD",
+        "No safetensors found in Alice SSD",
+        (),
+        id="L3-limit-an-unquoted-path-ending-at-a-volume-shows-the-volume-name",
+    ),
+    # Bug: the last folder read before the volume name counts as the path's last
+    # folder, so "Volumes/" replaces the path.
+    pytest.param(
+        NO_HOME,
+        "see /Volumes/Alice SSD/ now",
+        "see Alice SSD/ now",
+        ("Volumes",),
+        id="limit-a-path-ending-at-a-volume-folder-shows-the-volume-name",
+    ),
+    # Bug: a double space joins the words, so the volume name is cut.
+    pytest.param(
+        NO_HOME,
+        "/Volumes/Alice  SSD/x.py",
+        "Alice  SSD/x.py",
+        (),
+        id="L5-limit-a-double-spaced-name-stays",
+    ),
+    # Bug: the file tail may cross a second spaced folder, so the nested path is cut.
+    pytest.param(
+        NO_HOME,
+        "see /opt/My Models/Sub Dir/a.json",
+        "see My Models/Sub Dir/a.json",
+        (),
+        id="L7-limit-a-spaced-folder-nested-in-another-outside-the-anchors-stays",
+    ),
+    # Limit: a backtick is not one of the marks allowed after the extension, so the
+    # file does not read as a file and the spaced folder stays. Bug: the backtick is
+    # allowed.
+    pytest.param(
+        NO_HOME,
+        "see `/opt/My Models/m/a.json`",
+        "see `My Models/m/a.json`",
+        (),
+        id="limit-a-backtick-after-the-file-keeps-the-spaced-folder",
+    ),
+    # Limit: a mark followed by more text in the same word (a line and a column) is
+    # not allowed after the extension, so the spaced folder stays. Bug: digits are
+    # allowed among the marks.
+    pytest.param(
+        NO_HOME,
+        "/opt/My Models/m/a.py:12:5: error",
+        "My Models/m/a.py:12:5: error",
+        (),
+        id="limit-a-line-and-column-after-the-file-keeps-the-spaced-folder",
+    ),
+    # Limit: as with a volume (L3), a path that ends at another account's spaced name
+    # shows the name. Bug: a spaced name may end the path and is cut away.
+    pytest.param(
+        NO_HOME,
+        "see /Users/Other Name",
+        "see Other Name",
+        (),
+        id="limit-a-path-ending-at-another-accounts-spaced-name-shows-the-name",
+    ),
+]
+
+
+@pytest.mark.parametrize(("home", "text", "expected", "names"), SPACED_ROWS)
+def test_an_unquoted_spaced_folder_is_cut_only_on_evidence(
+    home: str,
+    text: str,
+    expected: str,
+    names: tuple[str, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    use_fake_home(monkeypatch, home=home)
+
+    result = redact_local_paths(text)
+
+    assert result == expected
+    assert_none_of(names, result)
+
+
 def test_r18_the_realpath_of_home_is_a_home_spelling(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -736,6 +1282,17 @@ SCALING_SHAPES = [
     pytest.param(_repeated("$HF_HOME"), id="hf-home-token-run"),
     pytest.param(_repeated("x/models--a/snapshots/b"), id="snapshot-literal-with-no-start"),
     pytest.param(_tilde_run_then_snapshot, id="tilde-run-then-one-snapshot"),
+    # Bug: a later same-quote opener no longer closes an earlier start, so every start
+    # reads to the line end.
+    pytest.param(_repeated("'/a "), id="unclosed-quote-start-run"),
+    pytest.param(_repeated("'/a b/"), id="unclosed-quoted-spaced-start-run"),
+    # Guard for the spaced pass: an anchored folder that never closes. No known mutant
+    # turns it red; it is kept as a guard.
+    pytest.param(_repeated("/Volumes/a b "), id="anchored-spaced-run-that-never-closes"),
+    # Spaced folders of the most words the pass accepts. Each unit starts with a space,
+    # so every "/o/" is a path start and the spaced pass reads every unit. Bug: the
+    # file tail crosses whitespace, so every start reads on to the end of the text.
+    pytest.param(_repeated(" /o/a b c d/"), id="four-word-spaced-folder-run"),
 ]
 
 # A linear pass doubles its time when the text doubles (ratio about 2); a quadratic

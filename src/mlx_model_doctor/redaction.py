@@ -89,6 +89,32 @@ _RUN_BREAK = re.compile(r"[\s'\"]+")
 # told apart from prose, and neither can "~5/10".
 _TILDE_USER = re.compile(r"(?<![\w~])~[A-Za-z_][\w.-]*(?=/)")
 
+# A quoted path: a quote, an optional "~" or root token, then "/". It runs to the next
+# same quote on its line that no word character follows (the "'" in "Bob's" is not the
+# close), spaces included. It is cut to its last part only when it holds whitespace and
+# at least two parts; anything else is left to the general rule below.
+_QUOTED_START = re.compile(r"(['\"])(?:~|\$HF_HUB_CACHE|\$HF_HOME)?(?=/)")
+_QUOTED_CLOSE = {quote: re.compile(quote + r"(?!\w)") for quote in "'\""}
+_QUOTED_MIN_PARTS = 2
+_LINE_END = re.compile(r"[\r\n]|\Z")
+_WHITESPACE = re.compile(r"\s")
+
+# An unquoted spaced folder: two to four words joined by single spaces and closed by
+# "/", since a path's last part (the file) never holds a space. It joins its path only
+# when no word before a space ends a sentence and it does not end in a URL scheme
+# ("https://"), and either it sits directly under "/Users/" or "/Volumes/", or a folder
+# and a file with an extension follow it. Punctuation after the extension stays with
+# the file. The word bound keeps each try short; "~" and the root tokens are not
+# anchors.
+_PATH_START = re.compile(r"(?<![\w:/.~])(?:~|\$HF_HUB_CACHE|\$HF_HOME)?/+")
+_SPACED_FOLDER = re.compile(r"[^\s/'\"]+(?: [^\s/'\"]+){1,3}/+")
+_SENTENCE_END = re.compile(r"[.,;:!?] |://")
+_FOLDER = re.compile(r"[^\s/'\"]+/+")
+_LAST_PART = re.compile(r"[^\s/'\"]+")
+_FILE_TAIL = re.compile(r"(?:[^\s/'\"]+/+)+(?P<file>[^\s/'\"]+)")
+_EXTENSION = re.compile(r"\w\.[A-Za-z][A-Za-z0-9]*[.,;:!?)\]]*\Z")
+_ANCHORS = ("Users/", "Volumes/")
+
 # An absolute path: an optional "~" or root token, then a "/" that does not continue a
 # word, a URL, another "/" or a "~", then at least two components. The match is
 # replaced by its last component.
@@ -110,6 +136,8 @@ def redact_local_paths(text: str, *, model_dirs: Sequence[Path | str] = ()) -> s
     reduced = _cut_roots(reduced)
     reduced = _cut_snapshots(reduced)
     reduced = _TILDE_USER.sub("~", reduced)
+    reduced = _cut_quoted_paths(reduced)
+    reduced = _cut_spaced_paths(reduced)
     return _ABSOLUTE_PATH.sub(r"\1", reduced)
 
 
@@ -240,6 +268,99 @@ def _cut_snapshots(
         core = _SNAPSHOT_CORE.search(text, kept)
     pieces.append(text[kept:])
     return "".join(pieces)
+
+
+def _cut_quoted_paths(text: str) -> str:
+    """Cut each quoted path that holds whitespace and two parts to its last part.
+
+    The search resumes after each close quote, acting or not, and the line end is
+    found once per line. Each character is read a constant number of times.
+    """
+    pieces: list[str] = []
+    kept = 0
+    line_end = -1
+    start = _QUOTED_START.search(text)
+    while start is not None:
+        quote, at = start[1], start.end()
+        if at > line_end:
+            line_end = _line_end(text, at)
+        close = _QUOTED_CLOSE[quote].search(text, at, line_end)
+        if close is None:
+            # Linear without a memo: a later start with this quote on the line would
+            # itself close this one, so at most one start per quote fails per line.
+            start = _QUOTED_START.search(text, at)
+            continue
+        span = text[at : close.start()]
+        parts = [part for part in span.split("/") if part]
+        acts = _WHITESPACE.search(span) is not None and len(parts) >= _QUOTED_MIN_PARTS
+        if acts:
+            pieces.append(text[kept : start.start() + 1])
+            pieces.append(parts[-1])
+            kept = close.start()
+        start = _QUOTED_START.search(text, close.end())
+    pieces.append(text[kept:])
+    return "".join(pieces)
+
+
+def _cut_spaced_paths(text: str) -> str:
+    """Cut each unquoted path that a spaced folder joins to its last part.
+
+    Each path is read one part at a time from its start (see ``_read_spaced_path``),
+    and the search resumes where the path ends, acting or not, so a start inside a
+    path read is never read again. Each character is read a constant number of times.
+    """
+    pieces: list[str] = []
+    kept = 0
+    start = _PATH_START.search(text)
+    while start is not None:
+        end, last = _read_spaced_path(text, start)
+        if last is not None:
+            pieces.append(text[kept : start.start()])
+            pieces.append(last)
+            kept = end
+        start = _PATH_START.search(text, end)
+    pieces.append(text[kept:])
+    return "".join(pieces)
+
+
+def _read_spaced_path(text: str, start: re.Match[str]) -> tuple[int, str | None]:
+    """Return where the path at ``start`` ends, and its last part if a spaced folder joined it.
+
+    A spaced folder that does not qualify ends the path at its first space, as the
+    general rule does, and the last part is then ``None``. A joined path that ends in
+    "/" gives its last folder, slash kept as the general rule keeps it, but only a
+    folder read after the join: one that ends at the spaced folder gives ``None``.
+    """
+    at = start.end()
+    plain_root = start[0].startswith("/")
+    joined = False
+    last_folder: str | None = None
+    while True:
+        spaced = _SPACED_FOLDER.match(text, at)
+        if spaced is not None and _SENTENCE_END.search(spaced[0]) is None:
+            anchored = plain_root and text[start.end() : at] in _ANCHORS
+            if anchored:
+                joined, at = True, spaced.end()
+                continue
+            tail = _FILE_TAIL.match(text, spaced.end())
+            if tail is not None and _EXTENSION.search(tail["file"]):
+                return tail.end(), tail["file"]
+        folder = _FOLDER.match(text, at)
+        if folder is not None:
+            if joined:
+                last_folder = folder[0]
+            at = folder.end()
+            continue
+        last = _LAST_PART.match(text, at)
+        if last is None:
+            return at, last_folder
+        return last.end(), last[0] if joined else None
+
+
+def _line_end(text: str, at: int) -> int:
+    """Return the index of the line break after ``at``, or the length of ``text``."""
+    found = _LINE_END.search(text, at)
+    return len(text) if found is None else found.start()
 
 
 def _repo_label(repo: str) -> str:
