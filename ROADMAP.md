@@ -5,6 +5,8 @@ as priorities change.
 
 ## Released
 
+- **v0.11.0** (2026-11-26) — short model names in report headers and `Error:`
+  lines; folder names with spaces cut in more paths.
 - **v0.10.3** (2026-11-25) — failure messages from `--smoke` and `parity mlx`,
   the error line of a failed Hugging Face download, and Hub errors from
   `check hf` and `sample hf` now shorten local folder paths.
