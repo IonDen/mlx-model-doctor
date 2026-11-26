@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal
 
+from mlx_model_doctor.redaction import describe_local_path
+
 Status = Literal["pass", "warn", "fail", "skip"]
 Severity = Literal["info", "low", "medium", "high"]
 VALID_STATUSES = frozenset(("pass", "warn", "fail", "skip"))
@@ -135,10 +137,20 @@ def render_json(report: DoctorReport) -> str:
     return json.dumps(payload, indent=2, sort_keys=True)
 
 
+def _display_target(report: DoctorReport) -> str:
+    """Name the report's model for a human header: a hub id as is, a local path by label."""
+    if report.source == "hf":
+        return report.target
+    identity = describe_local_path(report.target)
+    if identity.kind == "cache snapshot" and identity.revision is not None:
+        return f"{identity.label} (cache snapshot {identity.revision[:7]})"
+    return f"{identity.label} (local folder)"
+
+
 def render_text(report: DoctorReport, *, quiet: bool = False) -> str:
     """Render a report as plain text. When ``quiet``, omit pass/skip result blocks."""
     lines = [
-        f"MLX Model Doctor: {report.target}",
+        f"MLX Model Doctor: {_display_target(report)}",
         "",
         "Summary:",
         *(f"  {key}: {value}" for key, value in report.summary.items()),
@@ -163,7 +175,7 @@ def render_text(report: DoctorReport, *, quiet: bool = False) -> str:
 def render_markdown(report: DoctorReport) -> str:
     """Render a report as Markdown."""
     lines = [
-        f"# MLX Model Doctor: {report.target}",
+        f"# MLX Model Doctor: {_display_target(report)}",
         "",
         "| Status | Count |",
         "|---|---:|",
@@ -207,7 +219,7 @@ def render_github(report: DoctorReport) -> str:
         lines.append(f"::{command} title={title}::{message}")
     summary = report.summary
     notice = _gh_escape_data(
-        f"{report.target} — pass={summary['pass']} warn={summary['warn']} "
+        f"{_display_target(report)} — pass={summary['pass']} warn={summary['warn']} "
         f"fail={summary['fail']} skip={summary['skip']}"
     )
     lines.append(f"::notice title=mlx-model-doctor::{notice}")

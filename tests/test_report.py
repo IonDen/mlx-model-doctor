@@ -1,6 +1,7 @@
 import dataclasses
 import json
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
@@ -14,6 +15,7 @@ from mlx_model_doctor.report import (
     render_text,
     zero_check_reason_for,
 )
+from tests.fakes import use_fake_home
 
 
 def test_zero_check_reason_for_explains_the_empty_run_and_names_the_plugin() -> None:
@@ -345,3 +347,118 @@ def test_github_output_lines_includes_counts_schema_and_exit_code() -> None:
     assert "skip=0" in lines
     assert "schema-version=1.0" in lines
     assert "exit-code=1" in lines
+
+
+# The text, Markdown and GitHub headers of a local check name the model by its short
+# label and kind; JSON ``target`` keeps the full path.
+H_MODEL = "/Users/you/models/qwen-0.5b-4bit"
+H_SNAPSHOT = (
+    "/Users/you/.cache/huggingface/hub/models--mlx-community--Qwen3.5-0.8B-4bit"
+    "/snapshots/da28692b5f139cb0ec58a356b437486b7dac7462"
+)
+
+
+def _header_report(target: str, source: Literal["local", "hf"] = "local") -> DoctorReport:
+    return DoctorReport(
+        target=target,
+        source=source,
+        plugin="text",
+        results=[
+            CheckResult(
+                check_id="text/files.required",
+                title="Required files",
+                status="fail",
+                severity="high",
+                message="Missing config.json",
+            ),
+            CheckResult(
+                check_id="text/config.json",
+                title="Config",
+                status="pass",
+                severity="info",
+                message="ok",
+            ),
+        ],
+    )
+
+
+def test_h1_text_header_names_a_local_folder_by_its_label(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Bug: the text header prints report.target, so the full local path (and the home) shows.
+    use_fake_home(monkeypatch, home="/Users/you")
+
+    first = render_text(_header_report(H_MODEL)).splitlines()[0]
+
+    assert first == "MLX Model Doctor: qwen-0.5b-4bit (local folder)"
+
+
+def test_h2_text_header_names_a_cache_snapshot_by_repo_and_short_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Bug: the suffix drops the revision, or prints it in full instead of its first 7.
+    use_fake_home(monkeypatch, home="/Users/you")
+
+    first = render_text(_header_report(H_SNAPSHOT)).splitlines()[0]
+
+    assert first == "MLX Model Doctor: mlx-community/Qwen3.5-0.8B-4bit (cache snapshot da28692)"
+
+
+def test_h3_hub_report_header_keeps_the_repo_id_without_a_suffix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Bug: an hf report goes through the local-path helper and reads
+    # "Qwen3.5-0.8B-4bit (local folder)".
+    use_fake_home(monkeypatch, home="/Users/you")
+    report = _header_report("mlx-community/Qwen3.5-0.8B-4bit", source="hf")
+
+    assert (
+        render_text(report).splitlines()[0] == "MLX Model Doctor: mlx-community/Qwen3.5-0.8B-4bit"
+    )
+    assert (
+        render_markdown(report).splitlines()[0]
+        == "# MLX Model Doctor: mlx-community/Qwen3.5-0.8B-4bit"
+    )
+    assert render_github(report).splitlines()[-1] == (
+        "::notice title=mlx-model-doctor::mlx-community/Qwen3.5-0.8B-4bit"
+        " — pass=1 warn=0 fail=1 skip=0"
+    )
+
+
+def test_h4_markdown_header_names_a_local_folder_by_its_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Bug: the Markdown header still prints report.target.
+    use_fake_home(monkeypatch, home="/Users/you")
+
+    first = render_markdown(_header_report(H_MODEL)).splitlines()[0]
+
+    assert first == "# MLX Model Doctor: qwen-0.5b-4bit (local folder)"
+
+
+def test_h5_github_notice_names_a_local_folder_by_its_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Bug: the GitHub notice still prints report.target.
+    use_fake_home(monkeypatch, home="/Users/you")
+
+    notice = render_github(_header_report(H_MODEL)).splitlines()[-1]
+
+    assert notice == (
+        "::notice title=mlx-model-doctor::qwen-0.5b-4bit (local folder)"
+        " — pass=1 warn=0 fail=1 skip=0"
+    )
+
+
+def test_h6_json_target_keeps_the_full_local_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Bug: the display label leaks into JSON, which must keep the path as given.
+    use_fake_home(monkeypatch, home="/Users/you")
+
+    assert json.loads(render_json(_header_report(H_MODEL)))["target"] == H_MODEL
+
+
+def test_h7_text_header_names_the_home_as_tilde(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Bug: the header formats the folder's own name ("you") instead of the helper's label.
+    use_fake_home(monkeypatch, home="/Users/you")
+
+    first = render_text(_header_report("/Users/you")).splitlines()[0]
+
+    assert first == "MLX Model Doctor: ~ (local folder)"
