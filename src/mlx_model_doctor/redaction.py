@@ -9,14 +9,56 @@ import os
 import re
 import urllib.parse
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path, PurePath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from mlx_model_doctor.targets import ModelTarget
 
 HF_HUB_CACHE_TOKEN = "$HF_HUB_CACHE"
 HF_HOME_TOKEN = "$HF_HOME"
+
+LocalKind = Literal["local folder", "cache snapshot"]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LocalIdentity:
+    """How a local model path is named: its label, its kind and its revision."""
+
+    label: str
+    kind: LocalKind
+    revision: str | None
+
+
+def describe_local_path(path: str | PurePath) -> LocalIdentity:
+    """Return the label, kind and revision of a local model path.
+
+    The home is ``~``, the Hugging Face hub cache and home are ``$HF_HUB_CACHE`` and
+    ``$HF_HOME``, a cache snapshot is its ``org/name`` with its revision, and any other
+    folder is its own name (``/`` stays ``/``). The roots are the ones the free-text
+    reduction cuts, and a failing lookup skips its root, so this never raises.
+    """
+    model_dir = PurePath(path)
+    written = str(model_dir)
+    for candidates, token in (
+        (_home_candidates(), "~"),
+        (_hub_cache_candidates(), HF_HUB_CACHE_TOKEN),
+        (_hf_home_candidates(), HF_HOME_TOKEN),
+    ):
+        if written in _spellings(candidates, min_parts=3):
+            return LocalIdentity(label=token, kind="local folder", revision=None)
+    repo_folder = model_dir.parent.parent.name
+    repo = _repo_label(repo_folder.removeprefix("models--"))
+    if model_dir.parent.name == "snapshots" and repo_folder.startswith("models--") and repo:
+        return LocalIdentity(label=repo, kind="cache snapshot", revision=model_dir.name)
+    return LocalIdentity(label=model_dir.name or written, kind="local folder", revision=None)
+
+
+def identity_label(path: str | PurePath) -> str:
+    """Return the label of a local model path (see ``describe_local_path``)."""
+    return describe_local_path(path).label
+
 
 # The lookups that can fail on an odd environment (a NUL in a path, no home, no passwd
 # entry). A failing lookup skips its candidate: the reduction runs inside crash
@@ -89,7 +131,7 @@ def _pwd_home() -> str | None:
 def _cut_model_dirs(text: str, model_dirs: Sequence[Path | str]) -> str:
     labels: dict[str, str] = {}
     for model_dir in model_dirs:
-        label = _dir_label(PurePath(model_dir))
+        label = identity_label(model_dir)
         for spelling in _spellings((os.fspath(model_dir),), min_parts=2):
             labels.setdefault(spelling, label)
     return _substitute(text, labels, _placed)
@@ -183,14 +225,6 @@ def _cut_snapshots(
         core = _SNAPSHOT_CORE.search(text, kept)
     pieces.append(text[kept:])
     return "".join(pieces)
-
-
-def _dir_label(model_dir: PurePath) -> str:
-    """Return ``org/name`` for a cache snapshot folder, else the folder's own name."""
-    repo_folder = model_dir.parent.parent.name
-    if model_dir.parent.name == "snapshots" and repo_folder.startswith("models--"):
-        return _repo_label(repo_folder.removeprefix("models--"))
-    return model_dir.name
 
 
 def _repo_label(repo: str) -> str:
