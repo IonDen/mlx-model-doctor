@@ -1160,21 +1160,22 @@ def test_a_sibling_whose_name_starts_with_the_home_name_is_left_to_the_general_r
 
 
 OUTSIDE_HOME = [
-    # Pins today's limit, not the wanted output: a path with a space outside home keeps
-    # its tail after the space.
-    pytest.param("see /opt/My Models/x/a.py", "see My Models/x/a.py", id="space-outside-home"),
-    pytest.param(
-        "see /Users/John Smithers/x/a.py", "see John Smithers/x/a.py", id="home-name-prefix"
-    ),
+    # These rows prove that a path with a spaced folder outside the home no longer
+    # shows that folder: it is cut through to the file name.
+    # A spaced folder anywhere, with a folder and a file below it, is cut to the file.
+    pytest.param("see /opt/My Models/x/a.py", "see a.py", id="space-outside-home-cut"),
+    # A spaced account name directly under "/Users/" is cut to the file, and the home
+    # "/Users/John Smith" does not match the longer name "/Users/John Smithers".
+    pytest.param("see /Users/John Smithers/x/a.py", "see a.py", id="home-name-prefix-cut"),
 ]
 
 
 @pytest.mark.parametrize(("text", "reduced"), OUTSIDE_HOME)
-def test_upstream_error_paths_outside_home_are_reduced_as_before(
+def test_upstream_error_paths_outside_home_are_cut_to_the_file(
     text: str, reduced: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Bug: the home replacement matches a longer name that only starts with the home
-    # ("/Users/John Smithers"), or the general rule changes for paths outside home.
+    # ("/Users/John Smithers"), or a spaced folder outside the home stays visible.
     from mlx_model_doctor.redaction import redact_local_paths
 
     monkeypatch.setenv("HOME", HOME_WITH_SPACE)
