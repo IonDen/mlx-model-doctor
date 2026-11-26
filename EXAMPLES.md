@@ -2,7 +2,7 @@
 
 Mostly real output from `mlx-model-doctor`, captured by running the tool — so you can see exactly what you get before installing it. Captured transcript sections show a command, its actual response, and a short read of what the result means. Command-only examples are marked.
 
-> Every transcript except section 9 was captured with a 0.10.3 development build on 2026-11-24; the transcripts drop the development suffix. The `parity mlx` transcripts (section 9) were captured with 0.9.0 on 2026-09-12. They load models, so they were not re-run. Since 0.9.0, parity gained reading of Hugging Face cache snapshots (0.10.0, section 12) and a refusal of repositories that ship their own loader code (0.10.1). Section 9 keeps its 0.9.0 capture, because re-running it loads models. Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 5 and 6 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
+> Every transcript except section 9 was captured from the 0.11.0 release branch on 2026-11-26; the version line shows the release number. The `parity mlx` transcripts (section 9) were captured with 0.9.0 on 2026-09-12. They load models, so they were not re-run. Since 0.9.0, parity gained reading of Hugging Face cache snapshots (0.10.0, section 12) and a refusal of repositories that ship their own loader code (0.10.1). Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 5 and 6 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
 
 ## Producer pre-upload workflow
 
@@ -96,9 +96,9 @@ PASS info vlm/quantization.shape
 
 ```console
 $ mlx-model-doctor version
-mlx-model-doctor 0.10.3
+mlx-model-doctor 0.11.0
 Python: 3.13.12
-Executable: /path/to/.venv/bin/python3
+Executable: /path/to/.venv/bin/python
 Virtualenv: /path/to/.venv
 Dependencies:
   huggingface-hub: 1.19.0
@@ -218,7 +218,7 @@ PASS info text/quantization.shape
 
 ```console
 $ mlx-model-doctor check local ./model
-MLX Model Doctor: /path/to/model
+MLX Model Doctor: model (local folder)
 
 Summary:
   pass: 6
@@ -453,6 +453,10 @@ CHECKED mlx-community/Apertus-8B-Instruct-2509-bf16
   Signal: tag:mlx
   Results: pass=10 warn=2 fail=0 skip=2
 
+CHECKED mlx-community/Arete-27B-OptiQ-4bit
+  Signal: tag:mlx
+  Results: pass=12 warn=1 fail=0 skip=1
+
 CHECKED mlx-community/AutoGLM-Phone-9B-Multilingual-4bit
   Signal: tag:mlx
   Results: pass=12 warn=1 fail=0 skip=1
@@ -460,10 +464,6 @@ CHECKED mlx-community/AutoGLM-Phone-9B-Multilingual-4bit
 CHECKED mlx-community/DaisyRose-27B-4bit
   Signal: tag:mlx
   Results: pass=12 warn=1 fail=0 skip=1
-
-CHECKED mlx-community/DeepSeek-V4-Flash-4bit
-  Signal: tag:mlx
-  Results: pass=11 warn=1 fail=0 skip=2
 
 CHECKED mlx-community/DeepSeek-V4-Pro-4bit
   Signal: tag:mlx
@@ -473,24 +473,24 @@ CHECKED mlx-community/DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic-OptiQ-4bit
   Signal: tag:mlx
   Results: pass=13 warn=1 fail=0 skip=0
 
-CHECKED mlx-community/DeepSeek-V4.1-Flash-1017-oQ2.5e-mtp
-  Signal: tag:mlx
-  Results: pass=9 warn=3 fail=0 skip=2
-
 CHECKED mlx-community/DeepSeek-V4.1-Flash-1017-oQ2e-mtp
   Signal: tag:mlx
   Results: pass=9 warn=3 fail=0 skip=2
 
-CHECKED mlx-community/FastFrames-S-bf16-mlx
+CHECKED mlx-community/DeepSeek-V4.1-Flash-1017-oQ4e-mtp
   Signal: tag:mlx
-  Results: pass=2 warn=1 fail=2 skip=9
+  Results: pass=9 warn=3 fail=0 skip=2
+
+CHECKED mlx-community/GLM-4.7-Flash-4bit
+  Signal: tag:mlx
+  Results: pass=12 warn=1 fail=0 skip=1
 
 CHECKED mlx-community/GLM-4.7-Flash-8bit
   Signal: tag:mlx
   Results: pass=12 warn=1 fail=0 skip=1
 ```
 
-**Result:** exit code `0`. Nine of the ten candidates come back with no failures; `FastFrames-S-bf16-mlx` has two failed checks. All ten carry at least one warning. The survey exits `0` because it gates on tool errors (`tool-error: 0`) rather than per-model check results. The Hub listing changes as authors upload, so a rerun picks a different sample. Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
+**Result:** exit code `0`. None of the ten candidates has a failed check, and all ten carry at least one warning, so none comes back fully clean. The survey exits `0` because it gates on tool errors (`tool-error: 0`) rather than per-model check results. The Hub listing changes as authors upload, so a rerun picks a different sample. Add `--format json` or `--format markdown` to any `check` / `sample` command for machine-readable output, or `--format github` to a `check` command (next section) for GitHub Actions annotations.
 
 ## 8. `sample hf` with `--max-candidates` and `--signal-filter`
 
@@ -629,7 +629,7 @@ $ mlx-model-doctor check local ./model --format github
 ::error title=text/files.required::Required config file: Missing required config.json.
 ::error title=text/config.json::Config JSON: Missing config.json; cannot validate model configuration.
 ::warning title=text/tokenizer.files::Tokenizer files: No tokenizer artifacts were found.
-::notice title=mlx-model-doctor::/path/to/model — pass=1 warn=1 fail=2 skip=14
+::notice title=mlx-model-doctor::model (local folder) — pass=1 warn=1 fail=2 skip=14
 ```
 
 **Result:** exit code `1`. Each failing or warning check becomes one annotation; passing and skipped checks stay quiet. Inside a GitHub Actions job the same run also writes the full Markdown report to the job summary and the `pass` / `warn` / `fail` / `skip` / `exit-code` / `schema-version` counts to the step outputs, so a later step can read them.
@@ -709,11 +709,11 @@ PASS info text/quantization.shape
 
 ## 12. `check local` on a model in your Hugging Face cache
 
-**Model:** `mlx-community/Qwen3.5-0.8B-4bit`, downloaded with `hf download` (here with huggingface_hub 2.x). The command points at the snapshot folder in the cache. Every file in it is a symlink into the cache's own stored copies, and the tool reads them without a copy to a separate folder. The last path segment is the snapshot's commit hash.
+**Model:** `mlx-community/Qwen3.5-0.8B-4bit`, downloaded with `hf download` (here with huggingface_hub 2.x). The command points at the snapshot folder in the cache. Every file in it is a symlink into the cache's own stored copies, and the tool reads them without a copy to a separate folder. The header names the repository and the first seven characters of the snapshot's commit hash; the JSON `target` field keeps the full snapshot path.
 
 ```console
 $ mlx-model-doctor check local ~/.cache/huggingface/hub/models--mlx-community--Qwen3.5-0.8B-4bit/snapshots/da28692b5f139cb0ec58a356b437486b7dac7462
-MLX Model Doctor: ~/.cache/huggingface/hub/models--mlx-community--Qwen3.5-0.8B-4bit/snapshots/da28692b5f139cb0ec58a356b437486b7dac7462
+MLX Model Doctor: mlx-community/Qwen3.5-0.8B-4bit (cache snapshot da28692)
 
 Summary:
   pass: 14

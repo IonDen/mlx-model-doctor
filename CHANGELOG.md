@@ -5,6 +5,104 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] — 2026-11-26
+
+Text, Markdown and GitHub output now name a local model by its folder.
+`Error:` lines name the folder or file instead of the path, and when they name
+your Python executable or the `--output` path, your home folder shows as `~`.
+Exit codes and the JSON output are the same.
+
+### Changed
+- The first line of a text or Markdown report, the GitHub notice and the job
+  summary name a local model by its folder name and where it came from:
+  `MLX Model Doctor: qwen-0.5b-4bit (local folder)`, or
+  `MLX Model Doctor: mlx-community/Qwen3.5-0.8B-4bit (cache snapshot da28692)`
+  for a model in your Hugging Face cache. They used to print the full path.
+  The `parity mlx` text and Markdown headers show the adapter and fused
+  folders the same way: `wikisql -> qwen-fused` in text and
+  `wikisql vs qwen-fused` in Markdown. A relative ref such as
+  `./wikisql-lora` stays as typed. `check hf` still shows the repo id.
+- In the Python API, the message of a `TargetError` for a missing local
+  folder, and of the `parity mlx` errors for a reference or `--prompts` file,
+  shows the folder or file name. `TargetError.target` still holds the path you
+  passed.
+
+### Fixed
+- `mlx-model-doctor check local /Users/you/models/typo` now prints
+  `Error: Local target must be an existing directory: typo`. A `parity mlx`
+  base, adapter or fused path that is not a folder, and a `--prompts` file
+  that cannot be read, are named the same way.
+  - A `parity mlx` path that starts with `/` or `~` and is not a folder now
+    gets a plain message with no download hint:
+    `Error: cannot use 'typo': it is not a local directory. Check the path for a typo.`
+    A repo id such as `org/name` keeps the hint.
+  - A cache snapshot that is missing keeps its short commit:
+    `Error: Local target must be an existing directory: org/name (cache snapshot deadbee)`.
+  - A `~user` that does not exist now gives an `Error:` line instead of a
+    Python traceback (`~nosuchuser/m` is named as typed).
+  - When an error names your Python executable or the `--output` path, the
+    home folder is shown as `~` and the rest of the path stays
+    (`~/proj/.venv/bin/python`).
+- A folder name with spaces is now cut in three cases: when the path is in
+  quotes (`'/Volumes/Alice SSD/venvs/x.py'` shows `'x.py'`); when the folder
+  sits directly under `/Users` or `/Volumes` (`/Users/John Smithers/models/m`
+  shows `m`, and `/Volumes/Alice SSD/venvs/x.py` shows `x.py`); and when the
+  path goes on through further folders to a file name with an extension and
+  only one folder name has spaces (`/opt/My Models/m/a.json` shows `a.json`).
+  A full stop, comma, semicolon, colon, `!`, `?`, `)` or `]` right after the
+  file name does not stop the cut
+  (`cannot open /opt/My Models/m/a.json: Permission denied` shows
+  `cannot open a.json: Permission denied`). A model folder that is your home
+  folder now shows as `~`.
+
+  Some shapes still show part of the path:
+  - a folder with spaces elsewhere, without quotes, when no file follows it
+    (`/opt/My Models/m` shows `My Models/m`);
+  - a folder with spaces inside another folder with spaces, outside `/Users`
+    and `/Volumes` (`/opt/My Models/Sub Dir/a.json` shows
+    `My Models/Sub Dir/a.json`);
+  - a path that ends at a volume or at another account's folder shows that
+    name (`/Volumes/Alice SSD` shows `Alice SSD`; `/Users/Other Name` shows
+    `Other Name`);
+  - other characters right after the file name: ``see `/opt/My Models/m/a.json` ``
+    shows ``see `My Models/m/a.json` ``, and `/opt/My Models/m/a.py:12:5: error`
+    shows `My Models/m/a.py:12:5: error`;
+  - a quoted path with one part (`'/My Drive'` stays as it is);
+  - a folder name of five or more words (`/Volumes/My Very Big Backup Drive/m/a.json`
+    shows `My Very Big Backup Drive/m/a.json`, and a six-word name stays the
+    same way), or with two spaces in a row (`/Volumes/Alice  SSD/x.py` shows
+    `Alice  SSD/x.py`);
+  - a file with no extension, or an extension that does not start with a
+    letter, under a folder with spaces outside `/Users` and `/Volumes`
+    (`/opt/My Models/m/LICENSE` shows `My Models/m/LICENSE`, and
+    `/opt/My Models/m/weights.7z` shows `My Models/m/weights.7z`);
+  - a folder name under `/Users` or `/Volumes` that holds a full stop and a
+    space (`/Volumes/Dr. Smith/venvs/x.py` shows `Dr. Smith/venvs/x.py`, and
+    `/Users/J. Smith/models/m/config.json` shows
+    `J. Smith/models/m/config.json`);
+  - a file directly inside a folder with spaces outside `/Users` and
+    `/Volumes` (`/opt/My Models/a.json` shows `My Models/a.json`);
+  - another account whose name starts with yours and a space: with your home
+    at `/Users/John Smith`, `/Users/John Smith Jr/x/a.py` shows `~ Jr/x/a.py`;
+  - a quoted path glued straight after a colon (`'name:/Volumes/Alice SSD/m/a.json'`
+    stays whole);
+  - a Python executable or an `--output` path outside your home folder, which
+    keeps its full path (`/opt/py/bin/python`).
+
+  A cut can take words of the message with it when an unquoted folder name
+  with spaces reads as one path with the text after it:
+  `in /opt/x for mlx-community/Qwen/config.json` shows `in config.json`, and
+  `on /Volumes/SSD and/or the cache` shows `on or the cache`, and `Copied /opt/x to models/m/config.json.` shows
+  `Copied config.json.`. A web address
+  after a path stays whole: `from /opt/x to https://huggingface.co/org/name/resolve/main/config.json`
+  shows `from x to https://huggingface.co/org/name/resolve/main/config.json`.
+
+### Unchanged
+- Exit codes, and JSON field names and types.
+- JSON output keeps the full path, home folder included: `target`, and in
+  `parity mlx` JSON the `path` and `original_ref` fields and the `target` of
+  the embedded reports. Check JSON before you share it.
+
 ## [0.10.3] — 2026-11-25
 
 Failure messages now shorten the paths to folders on your machine. Exit codes
