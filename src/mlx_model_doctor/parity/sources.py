@@ -21,7 +21,7 @@ from typing import Protocol
 
 from mlx_model_doctor.errors import ModelDoctorError, TargetError
 from mlx_model_doctor.parity.report import ResolvedIdentity
-from mlx_model_doctor.redaction import redact_local_paths
+from mlx_model_doctor.redaction import describe_local_path, redact_local_paths
 
 # The text smoke list (mlx-lm 0.31.3 utils._download minus "*.py") plus the two files
 # mlx-lm 0.31.3 tuner/utils.py load_adapters reads from an adapter folder.
@@ -83,6 +83,11 @@ def _local_dir_hint(ref: str) -> str:
     return Path(ref).name or ref
 
 
+def _not_a_local_path(label: str) -> str:
+    """Return the message for a local path reference that is not a directory."""
+    return f"cannot use '{label}': it is not a local directory. Check the path for a typo."
+
+
 def _resolve_one(
     ref: str, *, allow_network: bool, downloader: SnapshotDownloader
 ) -> ResolvedIdentity:
@@ -92,14 +97,28 @@ def _resolve_one(
     is treated as a Hugging Face repo id and snapshot-downloaded when
     ``allow_network`` is set (``source="hf"``), or rejected as a setup failure.
     """
-    local_dir = Path(ref).expanduser()
+    shown = ref.rstrip("/") or ref
+    try:
+        local_dir = Path(ref).expanduser()
+    except RuntimeError as exc:
+        # "~user" for a user with no home: name the reference as typed, with no traceback.
+        raise ModelDoctorError(_not_a_local_path(shown)) from exc
     if local_dir.is_dir():
         return ResolvedIdentity(path=str(local_dir.resolve()), original_ref=ref, source="local")
     if not allow_network:
+        if not ref.startswith(("/", "~")):
+            message = (
+                f"cannot use '{shown}': it is not a local directory. Download it first (e.g. "
+                f"`hf download {shown} --local-dir ./{_local_dir_hint(shown)}`) and pass that "
+                "path. If this was meant to be a local path, check it for a typo."
+            )
+            raise ModelDoctorError(redact_local_paths(message, model_dirs=(local_dir,)))
+        identity = describe_local_path(local_dir)
+        if identity.kind == "cache snapshot" and identity.revision is not None:
+            label = f"{identity.label} (cache snapshot {identity.revision[:7]})"
+            raise ModelDoctorError(_not_a_local_path(label))
         raise ModelDoctorError(
-            f"cannot use '{ref}': it is not a local directory. Download it first (e.g. "
-            f"`hf download {ref} --local-dir ./{_local_dir_hint(ref)}`) and pass that path. "
-            "If this was meant to be a local path, check it for a typo."
+            redact_local_paths(_not_a_local_path(shown), model_dirs=(local_dir,))
         )
     snapshot_path = downloader.snapshot(ref)
     return ResolvedIdentity(path=snapshot_path, original_ref=ref, source="hf")

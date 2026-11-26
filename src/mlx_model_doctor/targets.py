@@ -14,7 +14,7 @@ from typing import Literal, Protocol, cast, runtime_checkable
 from urllib.parse import urlparse
 
 from mlx_model_doctor.errors import TargetError
-from mlx_model_doctor.redaction import redact_local_paths
+from mlx_model_doctor.redaction import describe_local_path, redact_local_paths
 from mlx_model_doctor.safetensors_header import (
     _MAX_HEADER_BYTES,
     FileHeader,
@@ -386,6 +386,22 @@ class DefaultHfHub:
             ) from exc
 
 
+def _not_a_local_directory(requested_root: Path) -> TargetError:
+    """Return the error for a missing local folder: the message names it, ``target`` keeps it."""
+    identity = describe_local_path(requested_root)
+    if identity.kind == "cache snapshot" and identity.revision is not None:
+        message = (
+            "Local target must be an existing directory: "
+            f"{identity.label} (cache snapshot {identity.revision[:7]})"
+        )
+    else:
+        message = redact_local_paths(
+            f"Local target must be an existing directory: {requested_root}",
+            model_dirs=(requested_root,),
+        )
+    return TargetError(message, target=str(requested_root), source="local")
+
+
 class LocalTarget:
     """Readable target backed by a local model directory.
 
@@ -412,21 +428,21 @@ class LocalTarget:
 
     def __init__(self, root: str | Path) -> None:
         """Initialize a local target rooted at an existing directory."""
-        requested_root = Path(root).expanduser()
+        try:
+            requested_root = Path(root).expanduser()
+        except RuntimeError as exc:
+            # "~user" for a user with no home: name the path as typed, with no traceback.
+            raise TargetError(
+                f"Local target must be an existing directory: {root}",
+                target=str(root),
+                source="local",
+            ) from exc
         try:
             resolved_root = requested_root.resolve(strict=True)
         except OSError as exc:
-            raise TargetError(
-                f"Local target must be an existing directory: {requested_root}",
-                target=str(requested_root),
-                source="local",
-            ) from exc
+            raise _not_a_local_directory(requested_root) from exc
         if not resolved_root.is_dir():
-            raise TargetError(
-                f"Local target must be an existing directory: {requested_root}",
-                target=str(requested_root),
-                source="local",
-            )
+            raise _not_a_local_directory(requested_root)
         self._root = resolved_root
         self._hf_blobs: Path | None = _hf_cache_blobs_dir(resolved_root)
         self._hf_shared_store: Path | None = (

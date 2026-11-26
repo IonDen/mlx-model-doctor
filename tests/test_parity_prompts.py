@@ -362,8 +362,9 @@ def test_a_base_that_resolves_to_a_file_is_refused_before_the_tokenizer_load(
             resolver=resolver,
         )
 
+    # The refusal names the file, not its path.
     assert str(exc_info.value) == (
-        f"{base_file} is not an existing directory, so it is unknown whether the base "
+        f"{base_file.name} is not an existing directory, so it is unknown whether the base "
         "repository names loader code. The load was refused, so repository code was not "
         "run. Pass an existing model directory, then run again."
     )
