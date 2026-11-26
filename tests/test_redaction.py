@@ -16,7 +16,13 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 import mlx_model_doctor.redaction as redaction
-from mlx_model_doctor.redaction import redact_local_paths, target_model_dirs
+from mlx_model_doctor.redaction import (
+    LocalIdentity,
+    describe_local_path,
+    identity_label,
+    redact_local_paths,
+    target_model_dirs,
+)
 from mlx_model_doctor.targets import HfTarget, LocalTarget
 from tests.fakes import FakeShardHub, use_fake_home
 
@@ -32,6 +38,9 @@ SNAP = (
 GPT2_SNAP = "/Users/John Smith/.cache/huggingface/hub/models--gpt2/snapshots/" + SHA
 REPO = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
 VOL = "/Volumes/Alice SSD/models/m"
+
+HOME_YOU = "/Users/you"
+IL_SHA = "da28692b5f139cb0ec58a356b437486b7dac7462"
 
 JOHN = ("John", "Smith")
 ALICE_SSD = ("Alice", "SSD")
@@ -124,6 +133,22 @@ MODEL_DIR_ROWS = [
         ALICE_SSD,
         id="R26-a-model-dir-with-a-double-slash-is-matched-only-normalised",
     ),
+    pytest.param(
+        (HOME_YOU,),
+        HOME_YOU,
+        "No safetensors found in /Users/you",
+        "No safetensors found in ~",
+        ("you",),
+        id="N1-27-a-model-dir-that-is-the-home-becomes-a-tilde-not-the-user-name",
+    ),
+    pytest.param(
+        (HOME_YOU,),
+        HOME_YOU,
+        "cannot read /Users/you/config.json",
+        "cannot read config.json",
+        ("you",),
+        id="N1-27b-a-file-below-a-home-model-dir-keeps-no-tilde-or-slash",
+    ),
 ]
 
 
@@ -154,6 +179,111 @@ def test_r6_a_relative_model_dir_is_never_replaced_as_text(
     # "/" becomes "/m", and the general rule then cuts "/m/tokenizer.json".
     for text in ("m is missing; got m", "m/tokenizer.json is missing"):
         assert redact_local_paths(text, model_dirs=("m",)) == text
+
+
+IDENTITY_ROWS = [
+    pytest.param(
+        "/Users/you/models/qwen-0.5b-4bit",
+        ("qwen-0.5b-4bit", "local folder", None),
+        HOME_YOU,
+        id="IL1-a-model-folder-is-named-by-its-own-name",
+    ),
+    pytest.param(
+        "/Users/you/.cache/huggingface/hub/models--mlx-community--Qwen3.5-0.8B-4bit"
+        "/snapshots/" + IL_SHA,
+        ("mlx-community/Qwen3.5-0.8B-4bit", "cache snapshot", IL_SHA),
+        HOME_YOU,
+        id="IL2-a-cache-snapshot-is-its-repo-id-with-the-full-revision",
+    ),
+    pytest.param(
+        "/Volumes/Alice SSD/models/m",
+        ("m", "local folder", None),
+        HOME_YOU,
+        id="IL3-a-spaced-volume-keeps-only-the-model-folder-name",
+    ),
+    pytest.param(
+        "/Users/you",
+        ("~", "local folder", None),
+        HOME_YOU,
+        id="IL4-the-home-as-the-model-folder-is-a-tilde-not-the-user-name",
+    ),
+    pytest.param(
+        "/",
+        ("/", "local folder", None),
+        HOME_YOU,
+        id="IL5-the-root-folder-is-named-by-its-path-not-an-empty-label",
+    ),
+    pytest.param(
+        "/Volumes/Alice SSD/hf/models--gpt2/snapshots/" + IL_SHA,
+        ("gpt2", "cache snapshot", IL_SHA),
+        HOME_YOU,
+        id="IL6-a-snapshot-outside-the-hub-cache-is-still-a-cache-snapshot",
+    ),
+    pytest.param(
+        "/Users/you/.cache/huggingface/hub",
+        ("$HF_HUB_CACHE", "local folder", None),
+        HOME_YOU,
+        id="IL7-the-hub-cache-as-the-model-folder-is-its-variable-name",
+    ),
+    pytest.param(
+        "/Users/you/.cache/huggingface",
+        ("$HF_HOME", "local folder", None),
+        HOME_YOU,
+        id="IL7b-the-hf-home-as-the-model-folder-is-its-variable-name",
+    ),
+    pytest.param(
+        "/Volumes/Alice SSD",
+        ("Alice SSD", "local folder", None),
+        HOME_YOU,
+        id="IL8-a-volume-as-the-model-folder-keeps-the-volume-name",
+    ),
+    pytest.param(
+        "/Users/you/models/m/",
+        ("m", "local folder", None),
+        HOME_YOU,
+        id="IL10-a-trailing-slash-does-not-empty-the-label",
+    ),
+    pytest.param(
+        "/x/models--/snapshots/abc",
+        ("abc", "local folder", None),
+        HOME_YOU,
+        id="a-snapshot-shape-with-an-empty-repo-name-is-a-plain-folder-not-an-empty-label",
+    ),
+    pytest.param(
+        "/Users/you/models--mine/exports/v1",
+        ("v1", "local folder", None),
+        HOME_YOU,
+        id="a-models-folder-without-a-snapshots-parent-is-a-plain-folder",
+    ),
+    pytest.param(
+        "/runs/exp1/snapshots/step-1000",
+        ("step-1000", "local folder", None),
+        HOME_YOU,
+        id="a-snapshots-parent-without-a-models-folder-is-a-plain-folder",
+    ),
+    pytest.param(
+        "/root",
+        ("root", "local folder", None),
+        "/root",
+        id="a-one-component-home-as-the-model-folder-keeps-its-name-not-a-tilde",
+    ),
+]
+
+
+@pytest.mark.parametrize(("path", "expected", "home"), IDENTITY_ROWS)
+def test_a_local_path_gets_one_label_kind_and_revision(
+    path: str,
+    expected: tuple[str, str, str | None],
+    home: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    use_fake_home(monkeypatch, home=home)
+
+    identity = describe_local_path(path)
+
+    assert isinstance(identity, LocalIdentity)
+    assert (identity.label, identity.kind, identity.revision) == expected
+    assert identity_label(path) == expected[0]
 
 
 SNAPSHOT_ROWS = [
