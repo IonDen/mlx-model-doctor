@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] — 2026-11-28
+
+This release changes documentation only. The CLI, exit codes, JSON output,
+report text and Python API behave exactly as in 0.11.0. The README now opens
+with the problem the tool solves and who needs it, and its reference sections
+moved to pages under `docs/`. PyPI shows this README for the first time with
+0.11.1.
+
+### Documentation
+- The reference pages are `docs/checks.md`, `docs/smoke-safety.md`,
+  `docs/parity.md`, `docs/output-contract.md` and `docs/stability.md`.
+- `EXAMPLES.md` shows output captured with 0.11.1, except the `parity mlx`
+  section.
+
+### Known limits
+- The tool shortens your home folder to `~`, the Hugging Face home to
+  `$HF_HOME` and the hub cache to `$HF_HUB_CACHE`. When one of them ends a
+  longer path with nothing in between, only that folder is shortened, and the
+  folder before it can stay visible: `open /data/run/Users/you failed` shows
+  `open run~ failed`. This holds for every shortened message, with or without a
+  model folder, and it is not new in 0.11.0. The tool's own messages do not
+  join two paths, but another library's message can, and so can a real path
+  such as `'/Volumes/Backup/Users/you'`, which shows `'Backup~'`. 0.11.1
+  changes no behavior; one test pins one such case. A fix needs a wider change
+  to how paths are shortened.
+
 ## [0.11.0] — 2026-11-26
 
 Text, Markdown and GitHub output now name a local model by its folder.
@@ -91,7 +117,7 @@ Exit codes and the JSON output are the same.
 
   A cut can take words of the message with it when an unquoted folder name
   with spaces reads as one path with the text after it:
-  `in /opt/x for mlx-community/Qwen/config.json` shows `in config.json`, and
+  `in /opt/x for mlx-community/Qwen/config.json` shows `in config.json`;
   `on /Volumes/SSD and/or the cache` shows `on or the cache`, and `Copied /opt/x to models/m/config.json.` shows
   `Copied config.json.`. A web address
   after a path stays whole: `from /opt/x to https://huggingface.co/org/name/resolve/main/config.json`

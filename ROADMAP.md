@@ -5,6 +5,9 @@ as priorities change.
 
 ## Released
 
+- **v0.11.1** (2026-11-28) — documentation only: the README opens with the
+  problem the tool solves, and its reference sections moved to pages under
+  `docs/`. No code change.
 - **v0.11.0** (2026-11-26) — short model names in report headers and `Error:`
   lines; folder names with spaces cut in more paths.
 - **v0.10.3** (2026-11-25) — failure messages from `--smoke` and `parity mlx`,
