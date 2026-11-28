@@ -181,6 +181,26 @@ def test_r6_a_relative_model_dir_is_never_replaced_as_text(
         assert redact_local_paths(text, model_dirs=("m",)) == text
 
 
+def test_known_limit_a_root_glued_after_a_folder_shows_that_folder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Known limit: a text glues a folder, the HF home and the home together with no
+    # separator. A root written at the end of a longer path is shortened on its own,
+    # with or without a model folder, so the folder before it stays visible.
+    # The expected string records today's output on purpose, so any change to the
+    # redaction of this case, better or worse, turns this row red. A fix of the cut
+    # order should replace this row as a labelled spec change.
+    use_fake_home(monkeypatch, home="/Users/quorra", pwd_home="/Users/quorra")
+    monkeypatch.setenv("HF_HOME", "/Volumes/Zedhf Vaultx/hf")
+    text = "/Kevinx/Volumes/Zedhf Vaultx/hf/Users/quorra"
+
+    # Red when the home as model folder changes the output, as a cut that takes the
+    # whole glued path and gives "~" does.
+    assert redact_local_paths(text, model_dirs=("/Users/quorra",)) == "/Kevinx$HF_HOME~"
+    # Red when the home is no longer a root of its own: the account name then shows.
+    assert redact_local_paths(text) == "/Kevinx$HF_HOME~"
+
+
 IDENTITY_ROWS = [
     pytest.param(
         "/Users/you/models/qwen-0.5b-4bit",
