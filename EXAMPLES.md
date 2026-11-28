@@ -2,7 +2,7 @@
 
 Mostly real output from `mlx-model-doctor`, captured by running the tool — so you can see exactly what you get before installing it. Captured transcript sections show a command, its actual response, and a short read of what the result means. Command-only examples are marked.
 
-> Every transcript except section 9 was captured from the 0.11.0 release branch on 2026-11-26; the version line shows the release number. The `parity mlx` transcripts (section 9) were captured with 0.9.0 on 2026-09-12. They load models, so they were not re-run. Since 0.9.0, parity gained reading of Hugging Face cache snapshots (0.10.0, section 12) and a refusal of repositories that ship their own loader code (0.10.1). Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 5 and 6 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
+> Every transcript except section 9 was captured with 0.11.1 on 2026-11-28; the version line shows the release number. The `parity mlx` transcripts (section 9) were captured with 0.9.0 on 2026-09-12. They load models, so they were not re-run. Since 0.9.0, parity gained reading of Hugging Face cache snapshots (0.10.0, section 12) and a refusal of repositories that ship their own loader code (0.10.1). Your venv paths will differ, and the Hugging Face examples (`check hf`, `sample hf`) are live snapshots of the Hub, so they drift over time — that's why they're dated. The two deliberately-broken repos in sections 5 and 6 (`ybelkada/opt-350m-lora` and `TheBloke/Llama-2-7B-GGUF`) are long-standing archival repos, picked because they keep failing the same way.
 
 ## Producer pre-upload workflow
 
@@ -96,7 +96,7 @@ PASS info vlm/quantization.shape
 
 ```console
 $ mlx-model-doctor version
-mlx-model-doctor 0.11.0
+mlx-model-doctor 0.11.1
 Python: 3.13.12
 Executable: /path/to/.venv/bin/python
 Virtualenv: /path/to/.venv
@@ -449,43 +449,43 @@ Summary:
   checked: 10
   tool-error: 0
 
-CHECKED mlx-community/Apertus-8B-Instruct-2509-bf16
-  Signal: tag:mlx
-  Results: pass=10 warn=2 fail=0 skip=2
-
-CHECKED mlx-community/Arete-27B-OptiQ-4bit
-  Signal: tag:mlx
-  Results: pass=12 warn=1 fail=0 skip=1
-
 CHECKED mlx-community/AutoGLM-Phone-9B-Multilingual-4bit
   Signal: tag:mlx
   Results: pass=12 warn=1 fail=0 skip=1
 
-CHECKED mlx-community/DaisyRose-27B-4bit
+CHECKED mlx-community/DeepSeek-R1-Distill-Llama-70B
   Signal: tag:mlx
-  Results: pass=12 warn=1 fail=0 skip=1
+  Results: pass=10 warn=1 fail=0 skip=3
 
-CHECKED mlx-community/DeepSeek-V4-Pro-4bit
+CHECKED mlx-community/DeepSeek-V4-Pro-bf16
   Signal: tag:mlx
   Results: pass=11 warn=1 fail=0 skip=2
-
-CHECKED mlx-community/DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic-OptiQ-4bit
-  Signal: tag:mlx
-  Results: pass=13 warn=1 fail=0 skip=0
-
-CHECKED mlx-community/DeepSeek-V4.1-Flash-1017-oQ2e-mtp
-  Signal: tag:mlx
-  Results: pass=9 warn=3 fail=0 skip=2
 
 CHECKED mlx-community/DeepSeek-V4.1-Flash-1017-oQ4e-mtp
   Signal: tag:mlx
   Results: pass=9 warn=3 fail=0 skip=2
 
+CHECKED mlx-community/Devstral-Small-2-24B-Instruct-2512-OptiQ-4bit
+  Signal: tag:mlx
+  Results: pass=12 warn=1 fail=0 skip=1
+
 CHECKED mlx-community/GLM-4.7-Flash-4bit
   Signal: tag:mlx
   Results: pass=12 warn=1 fail=0 skip=1
 
-CHECKED mlx-community/GLM-4.7-Flash-8bit
+CHECKED mlx-community/IndexTTS-2-fp16
+  Signal: tag:mlx
+  Results: pass=5 warn=2 fail=0 skip=7
+
+CHECKED mlx-community/Inkling-2-Mini-4bit
+  Signal: tag:mlx
+  Results: pass=11 warn=2 fail=0 skip=1
+
+CHECKED mlx-community/Inkling-2-Mini-oQ2.5e-mtp
+  Signal: tag:mlx
+  Results: pass=12 warn=1 fail=0 skip=1
+
+CHECKED mlx-community/Inkling-2-Mini-oQ3e-mtp
   Signal: tag:mlx
   Results: pass=12 warn=1 fail=0 skip=1
 ```
@@ -510,6 +510,10 @@ Summary:
   checked: 5
   tool-error: 0
 
+CHECKED mlx-community/35b-beta-long-8bit
+  Signal: tag:mlx
+  Results: pass=13 warn=0 fail=0 skip=1
+
 CHECKED mlx-community/ACE-Step-1.5-turbo-bf16
   Signal: tag:mlx
   Results: pass=5 warn=2 fail=0 skip=7
@@ -525,13 +529,9 @@ CHECKED mlx-community/ALMA-7B-R-4bit-mlx
 CHECKED mlx-community/AlphaMonarch-7B-mlx
   Signal: tag:mlx
   Results: pass=10 warn=1 fail=0 skip=3
-
-CHECKED mlx-community/AlphaMonarch-7B-mlx-4bit
-  Signal: tag:mlx
-  Results: pass=12 warn=0 fail=0 skip=2
 ```
 
-**Result:** exit code `0`. With `--max-candidates 500`, the survey scans deeper into the catalog (500 repos instead of the default window), and `--signal-filter tag:mlx` keeps only repos whose primary signal is the `mlx` tag. Compared with the run in section 7, the list starts at ACE-Step-1.5-turbo-bf16 instead of Apertus-8B-Instruct-2509-bf16. Use `--no-cache` to bypass the listing cache, or `--cache-ttl` to change its TTL (default: 1 hour).
+**Result:** exit code `0`. With `--max-candidates 500`, the survey scans deeper into the catalog (500 repos instead of the default window), and `--signal-filter tag:mlx` keeps only repos whose primary signal is the `mlx` tag. Compared with the run in section 7, the list starts at 35b-beta-long-8bit instead of AutoGLM-Phone-9B-Multilingual-4bit, and 35b-beta-long-8bit is the one repo here with no warning. Use `--no-cache` to bypass the listing cache, or `--cache-ttl` to change its TTL (default: 1 hour).
 
 ## 9. `parity mlx` — did fusing the adapter keep its behavior?
 

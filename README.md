@@ -92,7 +92,7 @@ PASS info text/quantization.shape
   Quantization shape: Quantized tensor shapes are consistent with config bits/group_size.
 ```
 
-A clean repository exits `0`; a failed check exits `1`. This output was captured with 0.11.0 on 2026-11-26. [EXAMPLES.md](https://github.com/IonDen/mlx-model-doctor/blob/master/EXAMPLES.md) has more, including repositories that fail.
+A clean repository exits `0`; a failed check exits `1`. This output was captured with 0.11.1 on 2026-11-28. [EXAMPLES.md](https://github.com/IonDen/mlx-model-doctor/blob/master/EXAMPLES.md) has more, including repositories that fail.
 
 ## Install
 
@@ -263,14 +263,14 @@ For a vision-language model, opt into the VLM profile:
     plugin: vlm
 ```
 
-Add `version: "==0.11.0"` to pin the tool to a release; without it the action installs the latest published version.
+Add `version: "==0.11.1"` to pin the tool to a release; without it the action installs the latest published version.
 
 For a model directory you keep in git, validate it on every commit with the pre-commit hook:
 
 ```yaml
 repos:
   - repo: https://github.com/IonDen/mlx-model-doctor
-    rev: v0.11.0
+    rev: v0.11.1
     hooks:
       - id: mlx-model-doctor
         args: ["path/to/model"]
@@ -290,7 +290,7 @@ The checks encode behavior from specific upstream versions (MLX, transformers, s
 
 ## Status
 
-Beta, 0.11.0, released on PyPI. This version names a local model by its folder in text, Markdown and GitHub output and in the `parity mlx` headers, and shortens the paths in `Error:` lines. JSON output keeps the full path, and exit codes and JSON fields are unchanged. See [CHANGELOG.md](https://github.com/IonDen/mlx-model-doctor/blob/master/CHANGELOG.md) for every release and [ROADMAP.md](https://github.com/IonDen/mlx-model-doctor/blob/master/ROADMAP.md) for what is planned.
+Beta, 0.11.1, released on PyPI. This version changes the README and the pages under `docs/`, not the code: the CLI, exit codes, JSON output and Python API behave as in 0.11.0. See [CHANGELOG.md](https://github.com/IonDen/mlx-model-doctor/blob/master/CHANGELOG.md) for every release and [ROADMAP.md](https://github.com/IonDen/mlx-model-doctor/blob/master/ROADMAP.md) for what is planned.
 
 Questions and shared results go to [GitHub Discussions](https://github.com/IonDen/mlx-model-doctor/discussions); bugs go to [Issues](https://github.com/IonDen/mlx-model-doctor/issues).
 
